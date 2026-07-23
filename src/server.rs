@@ -1,6 +1,6 @@
 use std::{
     ffi::OsString,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read as _, Write},
     net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs},
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver, Sender},
@@ -97,6 +97,7 @@ impl CommandSpec {
         if config.runtime.jinja {
             args.push("--jinja".into());
         }
+        args.push("--metrics".into());
         push_pair(&mut args, "--host", config.server.host.as_str());
         push_pair(&mut args, "--port", config.server.port.to_string());
         args.extend(config.server.extra_args.iter().map(OsString::from));
@@ -135,6 +136,16 @@ fn shell_quote(value: &OsString) -> String {
 #[derive(Debug)]
 pub enum ServerEvent {
     Log(String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ServerMetrics {
+    pub prompt_tokens: Option<f64>,
+    pub generated_tokens: Option<f64>,
+    pub prompt_tokens_per_second: Option<f64>,
+    pub generated_tokens_per_second: Option<f64>,
+    pub requests_processing: Option<f64>,
+    pub requests_deferred: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -247,8 +258,27 @@ fn stream_lines<R: std::io::Read + Send + 'static>(
 }
 
 pub fn endpoint_healthy(config: &Config) -> bool {
-    let timeout = Duration::from_millis(250);
-    let host = config.server.host.as_str();
+    http_get(config, "/health", Duration::from_millis(250)).is_some_and(|(status, _)| status == 200)
+}
+
+pub fn fetch_metrics(config: &Config) -> Option<ServerMetrics> {
+    let (status, body) = http_get(config, "/metrics", Duration::from_millis(350))?;
+    (status == 200).then(|| ServerMetrics {
+        prompt_tokens: metric_value(&body, "llamacpp:prompt_tokens_total"),
+        generated_tokens: metric_value(&body, "llamacpp:tokens_predicted_total"),
+        prompt_tokens_per_second: metric_value(&body, "llamacpp:prompt_tokens_seconds"),
+        generated_tokens_per_second: metric_value(&body, "llamacpp:predicted_tokens_seconds"),
+        requests_processing: metric_value(&body, "llamacpp:requests_processing"),
+        requests_deferred: metric_value(&body, "llamacpp:requests_deferred"),
+    })
+}
+
+fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, String)> {
+    let host = match config.server.host.as_str() {
+        "0.0.0.0" => "127.0.0.1",
+        "::" => "::1",
+        host => host,
+    };
     let address = host
         .parse::<IpAddr>()
         .ok()
@@ -257,26 +287,50 @@ pub fn endpoint_healthy(config: &Config) -> bool {
     let Some(mut stream) =
         address.and_then(|address| TcpStream::connect_timeout(&address, timeout).ok())
     else {
-        return false;
+        return None;
     };
     if stream.set_read_timeout(Some(timeout)).is_err()
         || stream.set_write_timeout(Some(timeout)).is_err()
     {
-        return false;
+        return None;
     }
     let request = format!(
-        "GET /health HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
-        config.server.host, config.server.port
+        "GET {path} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
+        config.server.host, config.server.port,
     );
-    if stream.write_all(request.as_bytes()).is_err() {
-        return false;
-    }
-    let mut status_line = String::new();
-    let Ok(read) = BufReader::new(&mut stream).read_line(&mut status_line) else {
-        return false;
-    };
-    read > 0
-        && (status_line.starts_with("HTTP/1.1 200 ") || status_line.starts_with("HTTP/1.0 200 "))
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut response = String::new();
+    (&mut stream)
+        .take(256 * 1024)
+        .read_to_string(&mut response)
+        .ok()?;
+    let status = response
+        .lines()
+        .next()?
+        .split_ascii_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()?;
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or_default()
+        .to_string();
+    Some((status, body))
+}
+
+fn metric_value(body: &str, name: &str) -> Option<f64> {
+    body.lines()
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let mut fields = line.split_ascii_whitespace();
+            let metric = fields.next()?.split('{').next()?;
+            if metric == name {
+                fields.next()?.parse().ok()
+            } else {
+                None
+            }
+        })
 }
 
 #[cfg(test)]
@@ -322,6 +376,7 @@ mod tests {
                 "0",
                 "--no-mmproj",
                 "--jinja",
+                "--metrics",
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -373,6 +428,25 @@ mod tests {
     fn health_requires_http_200() {
         assert!(probe_test_health("200 OK"));
         assert!(!probe_test_health("503 Service Unavailable"));
+    }
+
+    #[test]
+    fn prometheus_metrics_are_parsed() {
+        let body = "\
+llamacpp:prompt_tokens_total 128
+llamacpp:tokens_predicted_total 42
+llamacpp:predicted_tokens_seconds 3.5
+llamacpp:requests_processing 1
+";
+        assert_eq!(
+            metric_value(body, "llamacpp:tokens_predicted_total"),
+            Some(42.0)
+        );
+        assert_eq!(
+            metric_value(body, "llamacpp:predicted_tokens_seconds"),
+            Some(3.5)
+        );
+        assert_eq!(metric_value(body, "missing"), None);
     }
 
     fn probe_test_health(status: &str) -> bool {

@@ -8,8 +8,10 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     config::{Config, DEFAULT_MODEL, ModelSource},
-    server::{CommandSpec, ServerEvent, ServerProcess, endpoint_healthy},
-    system::{Machine, executable_exists},
+    server::{
+        CommandSpec, ServerEvent, ServerMetrics, ServerProcess, endpoint_healthy, fetch_metrics,
+    },
+    system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
 };
 
 const MAX_LOG_LINES: usize = 2_000;
@@ -19,6 +21,7 @@ pub enum View {
     Dashboard,
     Configure,
     Logs,
+    Stats,
     Help,
 }
 
@@ -172,13 +175,19 @@ pub struct App {
     pub should_quit: bool,
     pub endpoint_online: bool,
     pub startup_frame: usize,
+    pub process_usage: Option<ProcessUsage>,
+    pub server_metrics: Option<ServerMetrics>,
+    process_monitor: ProcessMonitor,
     missing_server_prompt: bool,
     last_probe: Instant,
+    last_stats_refresh: Instant,
 }
 
 impl App {
-    pub fn new(config: Config, config_path: PathBuf) -> Self {
+    pub fn new(mut config: Config, config_path: PathBuf) -> Self {
         let executable_found = executable_exists(&config.server.executable);
+        let initial_model = config.model.source.clone();
+        config.remember_model(initial_model);
         let (last_hf_model, last_local_model) = match &config.model.source {
             ModelSource::HuggingFace(id) => (id.clone(), PathBuf::new()),
             ModelSource::Local(path) => (DEFAULT_MODEL.into(), path.clone()),
@@ -210,8 +219,12 @@ impl App {
             should_quit: false,
             endpoint_online: false,
             startup_frame: 0,
+            process_usage: None,
+            server_metrics: None,
+            process_monitor: ProcessMonitor::default(),
             missing_server_prompt: !executable_found,
             last_probe: Instant::now() - Duration::from_secs(2),
+            last_stats_refresh: Instant::now() - Duration::from_secs(2),
         }
     }
 
@@ -317,9 +330,11 @@ impl App {
                 "Use \u{2190}\u{2192} to switch source; then edit the field below."
             }
             (SettingField::Model, ModelSource::HuggingFace(_)) => {
-                "Enter a Hugging Face repository such as owner/model."
+                "Enter owner/model, or press r to cycle recent models."
             }
-            (SettingField::Model, ModelSource::Local(_)) => "Enter the full path to a .gguf file.",
+            (SettingField::Model, ModelSource::Local(_)) => {
+                "Enter a full .gguf path, or press r to cycle recent models."
+            }
             (SettingField::EstimatedSize, ModelSource::Local(_)) => {
                 "Calculated automatically from the GGUF file."
             }
@@ -413,6 +428,7 @@ impl App {
             View::Dashboard => self.handle_dashboard_key(key.code),
             View::Configure => self.handle_config_key(key.code),
             View::Logs => self.handle_logs_key(key.code),
+            View::Stats => self.handle_stats_key(key.code),
             View::Help => {
                 if matches!(
                     key.code,
@@ -437,6 +453,12 @@ impl App {
             KeyCode::Char('r') => self.restart(),
             KeyCode::Char('c') => self.view = View::Configure,
             KeyCode::Char('l') => self.view = View::Logs,
+            KeyCode::Char('t') => {
+                self.view = View::Stats;
+                self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
+            }
+            KeyCode::Char('y') => self.copy_endpoint(),
+            KeyCode::Char('Y') => self.copy_command(),
             KeyCode::Char('?') => self.view = View::Help,
             _ => {}
         }
@@ -472,6 +494,9 @@ impl App {
                 }
             }
             KeyCode::Char('s') => self.save(),
+            KeyCode::Char('r') if self.selected_field() == SettingField::Model => {
+                self.select_next_recent_model();
+            }
             _ => {}
         }
     }
@@ -492,6 +517,16 @@ impl App {
             KeyCode::PageDown => self.log_offset = self.log_offset.saturating_sub(10),
             KeyCode::Home => self.log_offset = self.logs.len().saturating_sub(1),
             KeyCode::End => self.log_offset = 0,
+            _ => {}
+        }
+    }
+
+    fn handle_stats_key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Esc | KeyCode::Char('t') => self.view = View::Dashboard,
+            KeyCode::Char('y') => self.copy_endpoint(),
+            KeyCode::Char('Y') => self.copy_command(),
+            KeyCode::Char('q') => self.should_quit = true,
             _ => {}
         }
     }
@@ -530,6 +565,8 @@ impl App {
                 self.process = None;
                 self.running_config = None;
                 self.endpoint_online = false;
+                self.process_usage = None;
+                self.server_metrics = None;
                 self.status = if status.success() {
                     ServerStatus::Stopped
                 } else {
@@ -563,6 +600,20 @@ impl App {
                 }
             }
         }
+
+        if self.view == View::Stats
+            && self.process.is_some()
+            && self.last_stats_refresh.elapsed() >= Duration::from_secs(1)
+        {
+            let process_id = self.process.as_ref().map(ServerProcess::id);
+            self.process_usage = process_id.and_then(|pid| self.process_monitor.refresh(pid));
+            self.server_metrics = if self.endpoint_online {
+                self.running_config.as_ref().and_then(fetch_metrics)
+            } else {
+                None
+            };
+            self.last_stats_refresh = Instant::now();
+        }
     }
 
     pub fn start(&mut self) {
@@ -587,6 +638,7 @@ impl App {
                 self.endpoint_online = false;
                 self.startup_frame = 0;
                 self.last_probe = Instant::now() - Duration::from_secs(2);
+                self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
             }
             Err(error) => {
                 self.status = ServerStatus::Failed;
@@ -621,6 +673,8 @@ impl App {
             }
         }
         self.endpoint_online = false;
+        self.process_usage = None;
+        self.server_metrics = None;
     }
 
     pub fn restart(&mut self) {
@@ -697,6 +751,9 @@ impl App {
         };
         match self.apply_editor_value(editor.field, editor.value.trim()) {
             Ok(()) => {
+                if editor.field == SettingField::Model {
+                    self.remember_current_model();
+                }
                 self.editor = None;
                 self.editor_error = None;
                 self.mark_setting_changed(editor.field);
@@ -891,6 +948,50 @@ impl App {
         };
     }
 
+    fn remember_current_model(&mut self) {
+        let source = self.config.model.source.clone();
+        self.config.remember_model(source);
+    }
+
+    fn select_next_recent_model(&mut self) {
+        if self.config.recent_models.len() < 2 {
+            self.status_detail = "No other recent models yet".into();
+            return;
+        }
+        let current = &self.config.model.source;
+        let next_index = self
+            .config
+            .recent_models
+            .iter()
+            .position(|recent| recent == current)
+            .map(|index| (index + 1) % self.config.recent_models.len())
+            .unwrap_or(0);
+        let selected = self.config.recent_models[next_index].clone();
+        match &selected {
+            ModelSource::HuggingFace(id) => self.last_hf_model = id.clone(),
+            ModelSource::Local(path) => self.last_local_model = path.clone(),
+        }
+        self.config.model.source = selected;
+        self.mark_setting_changed(SettingField::Model);
+    }
+
+    fn copy_endpoint(&mut self) {
+        let endpoint = self.displayed_config().api_endpoint();
+        self.copy_text("API endpoint", &endpoint);
+    }
+
+    fn copy_command(&mut self) {
+        let command = CommandSpec::from_config(self.displayed_config()).display();
+        self.copy_text("launch command", &command);
+    }
+
+    fn copy_text(&mut self, label: &str, text: &str) {
+        self.status_detail = match copy_to_clipboard(text) {
+            Ok(()) => format!("Copied {label}"),
+            Err(error) => format!("Could not copy {label}: {error}"),
+        };
+    }
+
     fn push_log(&mut self, line: String) {
         if self.logs.len() == MAX_LOG_LINES {
             self.logs.pop_front();
@@ -1011,6 +1112,16 @@ mod tests {
         let app = App::new(Config::default(), "test.toml".into());
         assert_eq!(app.view, View::Dashboard);
         assert_eq!(app.status, ServerStatus::Stopped);
+    }
+
+    #[test]
+    fn recent_model_shortcut_cycles_saved_models() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        let current = app.config.model.source.clone();
+        let local = ModelSource::Local("models/small.gguf".into());
+        app.config.recent_models = vec![current, local.clone()];
+        app.select_next_recent_model();
+        assert_eq!(app.config.model.source, local);
     }
 
     #[test]

@@ -33,6 +33,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         View::Dashboard => dashboard(frame, area, app),
         View::Configure => configure(frame, area, app),
         View::Logs => logs(frame, area, app),
+        View::Stats => stats(frame, area, app),
         View::Help => {
             dashboard(frame, area, app);
             help_overlay(frame);
@@ -166,6 +167,7 @@ fn dashboard(frame: &mut Frame, area: Rect, app: &App) {
                     "start"
                 },
             ),
+            ("t", "stats"),
             ("c", "configure"),
             ("l", "logs"),
             ("?", "help"),
@@ -280,11 +282,11 @@ fn configure(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(app.status_detail.as_str()).style(status_detail_style(app.status)),
         rows[4],
     );
-    footer(
-        frame,
-        rows[5],
-        &[("enter", "set"), ("s", "save"), ("esc", "back")],
-    );
+    let mut keys = vec![("enter", "set"), ("s", "save"), ("esc", "back")];
+    if app.selected_field() == SettingField::Model {
+        keys.insert(1, ("r", "recent"));
+    }
+    footer(frame, rows[5], &keys);
 }
 
 fn logs(frame: &mut Frame, area: Rect, app: &App) {
@@ -325,6 +327,138 @@ fn logs(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+fn stats(frame: &mut Frame, area: Rect, app: &App) {
+    let rows = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Length(2),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(2),
+    ])
+    .split(area);
+    section_header(
+        frame,
+        rows[0],
+        "server stats",
+        "live  ·  refreshes every second",
+    );
+    frame.render_widget(
+        Paragraph::new(app.status_detail.as_str()).style(status_detail_style(app.status)),
+        rows[1],
+    );
+
+    let config = app.displayed_config();
+    info_line(
+        frame,
+        rows[2],
+        "endpoint",
+        format!(
+            "{}  ·  {}",
+            config.api_endpoint(),
+            if app.endpoint_online {
+                "online"
+            } else {
+                "offline"
+            }
+        ),
+        if app.endpoint_online { MINT } else { MUTED },
+    );
+    let pid = app
+        .process
+        .as_ref()
+        .map(|process| process.id().to_string())
+        .unwrap_or_else(|| "not running".into());
+    info_line(frame, rows[3], "pid", pid, INK);
+
+    let usage = app.process_usage.as_ref();
+    info_line(
+        frame,
+        rows[4],
+        "uptime",
+        usage
+            .map(|usage| format_duration(usage.uptime_seconds))
+            .unwrap_or_else(|| "not available".into()),
+        INK,
+    );
+    info_line(
+        frame,
+        rows[5],
+        "process",
+        usage
+            .map(|usage| {
+                format!(
+                    "{:.1}% CPU  ·  {:.2} GiB resident  ·  {:.1} GiB virtual",
+                    usage.cpu_percent, usage.resident_memory_gib, usage.virtual_memory_gib
+                )
+            })
+            .unwrap_or_else(|| "waiting for process sample".into()),
+        INK,
+    );
+
+    let metrics = app.server_metrics.as_ref();
+    let metrics_unavailable = if app.endpoint_online {
+        "metrics not exposed by this server"
+    } else {
+        "metrics unavailable until the endpoint is ready"
+    };
+    info_line(
+        frame,
+        rows[6],
+        "requests",
+        metrics
+            .map(|metrics| {
+                format!(
+                    "{} active  ·  {} queued",
+                    format_metric_count(metrics.requests_processing),
+                    format_metric_count(metrics.requests_deferred)
+                )
+            })
+            .unwrap_or_else(|| metrics_unavailable.into()),
+        metrics.map_or(MUTED, |_| INK),
+    );
+    info_line(
+        frame,
+        rows[7],
+        "tokens",
+        metrics
+            .map(|metrics| {
+                format!(
+                    "{} prompt  ·  {} generated",
+                    format_metric_count(metrics.prompt_tokens),
+                    format_metric_count(metrics.generated_tokens)
+                )
+            })
+            .unwrap_or_else(|| metrics_unavailable.into()),
+        metrics.map_or(MUTED, |_| INK),
+    );
+    info_line(
+        frame,
+        rows[8],
+        "throughput",
+        metrics
+            .map(|metrics| {
+                format!(
+                    "{} prompt  ·  {} generation",
+                    format_metric_rate(metrics.prompt_tokens_per_second),
+                    format_metric_rate(metrics.generated_tokens_per_second)
+                )
+            })
+            .unwrap_or_else(|| metrics_unavailable.into()),
+        metrics.map_or(MUTED, |_| MINT),
+    );
+    footer(
+        frame,
+        rows[10],
+        &[("y", "copy url"), ("Y", "copy command"), ("esc", "back")],
+    );
+}
+
 fn help_overlay(frame: &mut Frame) {
     let area = centered_rect(58, 62, frame.area());
     frame.render_widget(Clear, area);
@@ -334,8 +468,11 @@ fn help_overlay(frame: &mut Frame) {
     let text = Text::from(vec![
         help_line("s", "start or stop the server"),
         help_line("c", "configure the launch profile"),
+        help_line("t", "view live server stats"),
         help_line("l", "read server output"),
         help_line("r", "restart the server"),
+        help_line("y", "copy the OpenAI-compatible URL"),
+        help_line("Y", "copy the resolved launch command"),
         help_line("q", "quit and stop the managed server"),
         Line::from(""),
         Line::from(Span::styled(
@@ -497,6 +634,32 @@ fn format_tokens(tokens: u32) -> String {
     }
 }
 
+fn format_duration(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    let seconds = seconds % 60;
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else {
+        format!("{minutes}m {seconds}s")
+    }
+}
+
+fn format_metric_count(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.0}"))
+        .unwrap_or_else(|| "—".into())
+}
+
+fn format_metric_rate(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.1} tok/s"))
+        .unwrap_or_else(|| "—".into())
+}
+
 fn plural(value: u16, singular: &'static str, plural: &'static str) -> &'static str {
     if value == 1 { singular } else { plural }
 }
@@ -540,6 +703,27 @@ mod tests {
         assert!(text.contains("ggml-org/gpt-oss-120b-GGUF"));
         assert!(text.contains("configure"));
         assert!(text.contains("logs"));
+    }
+
+    #[test]
+    fn stats_screen_exposes_process_and_copy_controls() {
+        let backend = TestBackend::new(100, 26);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.dismiss_server_prompt();
+        app.view = View::Stats;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("server stats"));
+        assert!(text.contains("not running"));
+        assert!(text.contains("copy url"));
+        assert!(text.contains("copy command"));
     }
 
     #[test]

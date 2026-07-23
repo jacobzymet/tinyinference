@@ -15,6 +15,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub model: ModelConfig,
     pub runtime: RuntimeConfig,
+    pub recent_models: Vec<ModelSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -33,7 +34,7 @@ pub struct ModelConfig {
     pub estimated_size_gib: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", content = "value", rename_all = "lowercase")]
 pub enum ModelSource {
     HuggingFace(String),
@@ -134,6 +135,26 @@ impl Config {
 
     pub fn endpoint(&self) -> String {
         format!("http://{}:{}", self.server.host, self.server.port)
+    }
+
+    pub fn api_endpoint(&self) -> String {
+        let host = match self.server.host.as_str() {
+            "0.0.0.0" => "127.0.0.1",
+            "::" => "::1",
+            host => host,
+        };
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host.to_string()
+        };
+        format!("http://{host}:{}/v1", self.server.port)
+    }
+
+    pub fn remember_model(&mut self, source: ModelSource) {
+        self.recent_models.retain(|recent| recent != &source);
+        self.recent_models.insert(0, source);
+        self.recent_models.truncate(8);
     }
 
     pub fn validate(&self) -> Vec<String> {
@@ -253,6 +274,34 @@ mod tests {
         cfg.runtime.batch_size = 4;
         cfg.runtime.micro_batch_size = 8;
         assert!(cfg.validate().iter().any(|e| e.contains("micro-batch")));
+    }
+
+    #[test]
+    fn recent_models_are_unique_bounded_and_most_recent_first() {
+        let mut config = Config::default();
+        for index in 0..10 {
+            config.remember_model(ModelSource::HuggingFace(format!("owner/model-{index}")));
+        }
+        config.remember_model(ModelSource::HuggingFace("owner/model-5".into()));
+        let repeated = ModelSource::HuggingFace("owner/model-5".into());
+        assert_eq!(config.recent_models.len(), 8);
+        assert_eq!(config.recent_models.first(), Some(&repeated));
+        assert!(
+            config
+                .recent_models
+                .iter()
+                .skip(1)
+                .all(|model| model != &repeated)
+        );
+    }
+
+    #[test]
+    fn copied_api_endpoint_is_connectable() {
+        let mut config = Config::default();
+        config.server.host = "0.0.0.0".into();
+        assert_eq!(config.api_endpoint(), "http://127.0.0.1:8080/v1");
+        config.server.host = "::".into();
+        assert_eq!(config.api_endpoint(), "http://[::1]:8080/v1");
     }
 
     #[test]

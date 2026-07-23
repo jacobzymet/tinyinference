@@ -57,6 +57,10 @@ Switch **Model source**, then edit the next row to enter either a Hugging Face
 `owner/model` repository or a full local `.gguf` path. A local model's size is
 detected automatically.
 
+When the model row is selected, press `r` to cycle through up to eight recently
+used Hugging Face repositories and local GGUF paths. Recent models are stored
+with the rest of the configuration when you save.
+
 Settings are saved in the platform configuration directory. To use a portable
 profile, copy the example and pass it explicitly:
 
@@ -83,11 +87,21 @@ cargo run -- --print-command
 | `r` | Restart the server |
 | `c` | Configure |
 | `l` | View logs |
+| `t` | View live server statistics |
+| `y` | Copy the OpenAI-compatible `/v1` URL |
+| `Y` | Copy the resolved `llama-server` command |
 | `?` | Help |
 | `q` | Quit and stop the managed server |
 | `Up` / `Down` or `k` / `j` | Select a setting |
 | `Left` / `Right` or `h` / `l` | Adjust a setting |
 | `Enter` | Type an exact value or toggle |
+
+The statistics screen shows endpoint state, PID, uptime, process CPU and
+resident RAM, plus request and token counters and throughput from
+`llama-server`. tinyinference enables llama.cpp's local metrics endpoint for
+managed servers; metrics remain marked unavailable until the server is ready.
+Clipboard copy uses `clip.exe` on Windows, `pbcopy` on macOS, and `wl-copy`,
+`xclip`, or `xsel` on Linux.
 
 ## How low-RAM operation works
 

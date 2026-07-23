@@ -1,6 +1,12 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    io::Write,
+    path::Path,
+    process::{Command, Stdio},
+};
 
-use sysinfo::System;
+use anyhow::{Context, Result, bail};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use crate::config::Config;
 
@@ -20,6 +26,33 @@ pub struct MemoryProfile {
     pub mapped_model_gib: f64,
     pub available_gib: f64,
     pub total_gib: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProcessUsage {
+    pub cpu_percent: f32,
+    pub resident_memory_gib: f64,
+    pub virtual_memory_gib: f64,
+    pub uptime_seconds: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct ProcessMonitor {
+    system: System,
+}
+
+impl ProcessMonitor {
+    pub fn refresh(&mut self, process_id: u32) -> Option<ProcessUsage> {
+        let pid = Pid::from_u32(process_id);
+        self.system
+            .refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        self.system.process(pid).map(|process| ProcessUsage {
+            cpu_percent: process.cpu_usage(),
+            resident_memory_gib: process.memory() as f64 / GIB,
+            virtual_memory_gib: process.virtual_memory() as f64 / GIB,
+            uptime_seconds: process.run_time(),
+        })
+    }
 }
 
 impl Machine {
@@ -86,6 +119,57 @@ pub fn executable_exists(path: &Path) -> bool {
             .iter()
             .any(|name| fs::metadata(dir.join(name)).is_ok())
     })
+}
+
+#[cfg(windows)]
+pub fn copy_to_clipboard(text: &str) -> Result<()> {
+    pipe_to_clipboard("clip.exe", &[], text)
+}
+
+#[cfg(target_os = "macos")]
+pub fn copy_to_clipboard(text: &str) -> Result<()> {
+    pipe_to_clipboard("pbcopy", &[], text)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn copy_to_clipboard(text: &str) -> Result<()> {
+    let candidates: [(&str, &[&str]); 3] = [
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+    ];
+    for (program, args) in candidates {
+        if pipe_to_clipboard(program, args, text).is_ok() {
+            return Ok(());
+        }
+    }
+    bail!("clipboard unavailable; install wl-copy, xclip, or xsel")
+}
+
+#[cfg(not(any(windows, unix)))]
+pub fn copy_to_clipboard(_text: &str) -> Result<()> {
+    bail!("clipboard is not supported on this platform")
+}
+
+fn pipe_to_clipboard(program: &str, args: &[&str], text: &str) -> Result<()> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("could not start {program}"))?;
+    child
+        .stdin
+        .as_mut()
+        .context("clipboard input was unavailable")?
+        .write_all(text.as_bytes())
+        .context("could not write to the clipboard")?;
+    let status = child.wait().context("clipboard command did not finish")?;
+    if !status.success() {
+        bail!("{program} exited unsuccessfully");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
