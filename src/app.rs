@@ -171,6 +171,7 @@ pub struct App {
     last_local_model: PathBuf,
     pub should_quit: bool,
     pub endpoint_online: bool,
+    pub startup_frame: usize,
     missing_server_prompt: bool,
     last_probe: Instant,
 }
@@ -208,6 +209,7 @@ impl App {
             last_local_model,
             should_quit: false,
             endpoint_online: false,
+            startup_frame: 0,
             missing_server_prompt: !executable_found,
             last_probe: Instant::now() - Duration::from_secs(2),
         }
@@ -495,6 +497,10 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        if self.status == ServerStatus::Starting {
+            self.startup_frame = self.startup_frame.wrapping_add(1);
+        }
+
         let new_logs = self
             .process
             .as_ref()
@@ -551,6 +557,7 @@ impl App {
                 ServerStatus::Starting
             };
             if self.endpoint_online {
+                self.startup_frame = 0;
                 if let Some(config) = &self.running_config {
                     self.status_detail = format!("Listening at {}", config.endpoint());
                 }
@@ -576,8 +583,9 @@ impl App {
                 self.process = Some(process);
                 self.running_config = Some(launch_config);
                 self.status = ServerStatus::Starting;
-                self.status_detail = format!("llama-server started as PID {pid}");
+                self.status_detail = format!("Waking llama-server (PID {pid})");
                 self.endpoint_online = false;
+                self.startup_frame = 0;
                 self.last_probe = Instant::now() - Duration::from_secs(2);
             }
             Err(error) => {

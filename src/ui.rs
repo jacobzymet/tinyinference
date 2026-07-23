@@ -184,11 +184,19 @@ fn header(frame: &mut Frame, area: Rect, app: &App) {
     );
     let color = status_color(app.status);
     frame.render_widget(
-        Paragraph::new(format!("● {}", app.status.label()))
+        Paragraph::new(format!("{} {}", status_marker(app), app.status.label()))
             .style(Style::default().fg(color))
             .alignment(Alignment::Right),
         area,
     );
+}
+
+fn status_marker(app: &App) -> &'static str {
+    match app.status {
+        ServerStatus::Starting => ["·", "✧", "✦", "✧"][(app.startup_frame / 2) % 4],
+        ServerStatus::Ready => "●",
+        ServerStatus::Stopping | ServerStatus::Stopped | ServerStatus::Failed => "·",
+    }
 }
 
 fn info_line(frame: &mut Frame, area: Rect, label: &str, value: String, color: Color) {
@@ -532,6 +540,14 @@ mod tests {
         assert!(text.contains("ggml-org/gpt-oss-120b-GGUF"));
         assert!(text.contains("configure"));
         assert!(text.contains("logs"));
+    }
+
+    #[test]
+    fn starting_status_uses_a_pulsing_star() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.status = ServerStatus::Starting;
+        app.startup_frame = 4;
+        assert_eq!(status_marker(&app), "✦");
     }
 
     #[test]
