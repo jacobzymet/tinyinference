@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_MODEL: &str = "ggml-org/gpt-oss-120b-GGUF";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
@@ -56,16 +56,6 @@ pub struct RuntimeConfig {
     pub context_checkpoints: u32,
     pub multimodal_projector: bool,
     pub jinja: bool,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            model: ModelConfig::default(),
-            runtime: RuntimeConfig::default(),
-        }
-    }
 }
 
 impl Default for ServerConfig {
@@ -176,10 +166,10 @@ impl Config {
             ModelSource::Local(path) => {
                 if !path.is_file() {
                     errors.push(format!("model file does not exist: {}", path.display()));
-                } else if let Some(paths) = split_gguf_paths(path) {
-                    if let Some(missing) = paths.iter().find(|shard| !shard.is_file()) {
-                        errors.push(format!("model shard does not exist: {}", missing.display()));
-                    }
+                } else if let Some(paths) = split_gguf_paths(path)
+                    && let Some(missing) = paths.iter().find(|shard| !shard.is_file())
+                {
+                    errors.push(format!("model shard does not exist: {}", missing.display()));
                 }
             }
             _ => {}

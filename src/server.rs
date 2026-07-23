@@ -109,7 +109,7 @@ impl CommandSpec {
 
     pub fn display(&self) -> String {
         std::iter::once(shell_quote(&self.program))
-            .chain(self.args.iter().map(|arg| shell_quote(arg)))
+            .chain(self.args.iter().map(shell_quote))
             .collect::<Vec<_>>()
             .join(" ")
     }

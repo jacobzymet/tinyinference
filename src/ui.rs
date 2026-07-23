@@ -490,7 +490,7 @@ fn status_detail_style(status: ServerStatus) -> Style {
 }
 
 fn format_tokens(tokens: u32) -> String {
-    if tokens >= 1024 && tokens % 1024 == 0 {
+    if tokens >= 1024 && tokens.is_multiple_of(1024) {
         format!("{}K", tokens / 1024)
     } else {
         tokens.to_string()
