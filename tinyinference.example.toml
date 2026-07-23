@@ -1,0 +1,27 @@
+[server]
+executable = "llama-server"
+host = "127.0.0.1"
+port = 8080
+extra_args = []
+
+[model]
+estimated_size_gib = 59.1
+
+[model.source]
+kind = "huggingface"
+value = "ggml-org/gpt-oss-120b-GGUF"
+
+[runtime]
+context_size = 8192
+batch_size = 8
+micro_batch_size = 8
+parallel = 1
+cpu_only = true
+mmap = true
+fit = false
+repack = false
+warmup = false
+cache_ram_mib = 0
+context_checkpoints = 0
+multimodal_projector = false
+jinja = true

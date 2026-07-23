@@ -1,0 +1,10 @@
+/target
+/.idea
+/.vscode
+*.log
+*.rs.bk
+.DS_Store
+Thumbs.db
+
+# Optional project-local launch profile; the committed example remains tracked.
+/tinyinference.toml
