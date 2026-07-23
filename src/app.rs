@@ -607,11 +607,11 @@ impl App {
         {
             let process_id = self.process.as_ref().map(ServerProcess::id);
             self.process_usage = process_id.and_then(|pid| self.process_monitor.refresh(pid));
-            self.server_metrics = if self.endpoint_online {
-                self.running_config.as_ref().and_then(fetch_metrics)
-            } else {
-                None
-            };
+            if !self.endpoint_online {
+                self.server_metrics = None;
+            } else if let Some(metrics) = self.running_config.as_ref().and_then(fetch_metrics) {
+                self.server_metrics = Some(metrics);
+            }
             self.last_stats_refresh = Instant::now();
         }
     }
