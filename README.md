@@ -2,9 +2,7 @@
 
 A minimal Rust TUI for launching and managing `llama-server` with GGUF models.
 
-It is designed to make large, capable LLMs runnable on low-spec, low-RAM
-machines without a GPU, using CPU inference and file-backed model weights. It
-will not be fast.
+It is designed to make large, capable LLMs runnable on low-spec, low-RAM machines without a GPU, using CPU inference and file-backed model weights. **It will not be fast, in fact, it will often be painfully slow. The point is that it runs at all on low-spec hardware, which is pretty cool.**
 
 ## Requirements
 
