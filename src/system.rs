@@ -59,20 +59,28 @@ pub fn executable_exists(path: &Path) -> bool {
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
     };
-    let mut names = vec![path.to_path_buf()];
-    #[cfg(windows)]
-    {
-        if path.extension().is_none() {
-            let extensions =
-                std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
-            names = extensions
-                .to_string_lossy()
-                .split(';')
-                .filter(|ext| !ext.is_empty())
-                .map(|ext| path.with_extension(ext.trim_start_matches('.')))
-                .collect();
+    let names = {
+        let default = vec![path.to_path_buf()];
+        #[cfg(windows)]
+        {
+            if path.extension().is_none() {
+                let extensions =
+                    std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+                extensions
+                    .to_string_lossy()
+                    .split(';')
+                    .filter(|ext| !ext.is_empty())
+                    .map(|ext| path.with_extension(ext.trim_start_matches('.')))
+                    .collect()
+            } else {
+                default
+            }
         }
-    }
+        #[cfg(not(windows))]
+        {
+            default
+        }
+    };
     std::env::split_paths(&paths).any(|dir| {
         names
             .iter()
