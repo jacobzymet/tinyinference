@@ -95,7 +95,7 @@ With `mmap`, model weights are read-only file-backed pages, so the GGUF file
 does not need to fit entirely in resident RAM. RAM is still needed for the KV
 cache, compute buffers, and server state; with little RAM, storage I/O can make
 inference extremely slow. `gpt-oss-120b` has 117B total parameters but
-activates 5.1B per token.
+activates 5.1B per token, so it is a good default choice for tinyinference.
 
 The server binds to `127.0.0.1` by default and has no authentication. Configure
 authentication and firewalling before exposing it to a network.
