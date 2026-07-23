@@ -284,11 +284,8 @@ fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, Stri
         .ok()
         .map(|ip| SocketAddr::new(ip, config.server.port))
         .or_else(|| (host, config.server.port).to_socket_addrs().ok()?.next());
-    let Some(mut stream) =
-        address.and_then(|address| TcpStream::connect_timeout(&address, timeout).ok())
-    else {
-        return None;
-    };
+    let mut stream =
+        address.and_then(|address| TcpStream::connect_timeout(&address, timeout).ok())?;
     if stream.set_read_timeout(Some(timeout)).is_err()
         || stream.set_write_timeout(Some(timeout)).is_err()
     {
