@@ -5,10 +5,12 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Row, Table, Wrap},
 };
+use std::borrow::Cow;
+
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
-    app::{App, ServerStatus, SettingField, View},
+    app::{App, Download, ServerStatus, SettingField, View},
     config::Config,
 };
 
@@ -90,14 +92,7 @@ fn dashboard(frame: &mut Frame, area: Rect, app: &App) {
     .split(area);
 
     header(frame, rows[0], app);
-    let (notice, notice_style) = if app.has_pending_changes() {
-        (
-            "Settings changed \u{00b7} restart to apply",
-            Style::default().fg(ICE),
-        )
-    } else {
-        (app.status_detail.as_str(), status_detail_style(app.status))
-    };
+    let (notice, notice_style) = notice(app);
     frame.render_widget(Paragraph::new(notice).style(notice_style), rows[1]);
 
     frame.render_widget(
@@ -108,16 +103,19 @@ fn dashboard(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let memory = app.machine.memory_profile(config);
-    info_line(
-        frame,
-        rows[3],
-        "storage",
-        format!(
-            "{:.1} GiB mapped from disk · not required to fit in RAM",
-            memory.mapped_model_gib
+    match app.active_download() {
+        Some(download) => info_line(frame, rows[3], "download", download_progress(download), ICE),
+        None => info_line(
+            frame,
+            rows[3],
+            "storage",
+            format!(
+                "{:.1} GiB mapped from disk · not required to fit in RAM",
+                memory.mapped_model_gib
+            ),
+            ICE,
         ),
-        ICE,
-    );
+    }
     info_line(
         frame,
         rows[4],
@@ -195,6 +193,7 @@ fn header(frame: &mut Frame, area: Rect, app: &App) {
 
 fn status_marker(app: &App) -> &'static str {
     match app.status {
+        ServerStatus::Downloading => ["·", "↓", "↡", "↓"][(app.startup_frame / 2) % 4],
         ServerStatus::Starting => ["·", "✧", "✦", "✧"][(app.startup_frame / 2) % 4],
         ServerStatus::Ready => "●",
         ServerStatus::Stopping | ServerStatus::Stopped | ServerStatus::Failed => "·",
@@ -209,6 +208,94 @@ fn info_line(frame: &mut Frame, area: Rect, label: &str, value: String, color: C
         ])),
         area,
     );
+}
+
+/// The one line every screen leads with: what the server is doing right now.
+fn notice(app: &App) -> (Cow<'_, str>, Style) {
+    if let Some(download) = app.active_download() {
+        return (download_summary(download).into(), Style::default().fg(ICE));
+    }
+    if app.has_pending_changes() {
+        return (
+            "Settings changed \u{00b7} restart to apply".into(),
+            Style::default().fg(ICE),
+        );
+    }
+    (
+        app.status_detail.as_str().into(),
+        status_detail_style(app.status),
+    )
+}
+
+/// What is being fetched, named as precisely as Hugging Face allows.
+fn download_summary(download: &Download) -> String {
+    match &download.file {
+        Some(file) => format!("Downloading {file} \u{00b7} {}", download.repo),
+        None => format!("Downloading {}", download.repo),
+    }
+}
+
+/// Live progress: how far along, how fast, and how much longer.
+fn download_progress(download: &Download) -> String {
+    let mut parts = Vec::new();
+    match (download.fraction(), download.total) {
+        (Some(fraction), Some(total)) => {
+            parts.push(format!(
+                "{}  {:.0}%",
+                progress_bar(fraction, 20),
+                fraction * 100.0
+            ));
+            parts.push(format!(
+                "{} of {}",
+                format_bytes(download.downloaded),
+                format_bytes(total)
+            ));
+        }
+        // Nothing has landed yet, or the repository listing is unavailable.
+        _ if download.downloaded == 0 => parts.push("preparing".into()),
+        _ => parts.push(format!("{} fetched", format_bytes(download.downloaded))),
+    }
+    if let Some(rate) = download.rate() {
+        parts.push(format!("{}/s", format_bytes(rate.round() as u64)));
+    }
+    if let Some(eta) = download.eta() {
+        parts.push(format!("{} left", format_eta(eta.as_secs())));
+    }
+    parts.join("  \u{00b7}  ")
+}
+
+fn progress_bar(fraction: f64, width: usize) -> String {
+    let filled = (fraction.clamp(0.0, 1.0) * width as f64).round() as usize;
+    format!(
+        "{}{}",
+        "\u{2588}".repeat(filled),
+        "\u{2591}".repeat(width - filled)
+    )
+}
+
+/// Time remaining, which is usually short enough that minutes only get in the
+/// way; `format_duration` always spells them out because uptime needs them.
+fn format_eta(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format_duration(seconds)
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [(&str, f64); 4] = [
+        ("TiB", 1024.0 * 1024.0 * 1024.0 * 1024.0),
+        ("GiB", 1024.0 * 1024.0 * 1024.0),
+        ("MiB", 1024.0 * 1024.0),
+        ("KiB", 1024.0),
+    ];
+    for (unit, scale) in UNITS {
+        if bytes as f64 >= scale {
+            return format!("{:.1} {unit}", bytes as f64 / scale);
+        }
+    }
+    format!("{bytes} B")
 }
 
 fn access_summary(config: &Config) -> String {
@@ -348,10 +435,8 @@ fn stats(frame: &mut Frame, area: Rect, app: &App) {
         "server stats",
         "live  ·  refreshes every second",
     );
-    frame.render_widget(
-        Paragraph::new(app.status_detail.as_str()).style(status_detail_style(app.status)),
-        rows[1],
-    );
+    let (notice, notice_style) = notice(app);
+    frame.render_widget(Paragraph::new(notice).style(notice_style), rows[1]);
 
     let config = app.displayed_config();
     info_line(
@@ -612,17 +697,17 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 fn status_color(status: ServerStatus) -> Color {
     match status {
         ServerStatus::Ready => MINT,
-        ServerStatus::Starting | ServerStatus::Stopping => ICE,
+        ServerStatus::Downloading | ServerStatus::Starting | ServerStatus::Stopping => ICE,
         ServerStatus::Failed => CORAL,
         ServerStatus::Stopped => MUTED,
     }
 }
 
 fn status_detail_style(status: ServerStatus) -> Style {
-    Style::default().fg(if status == ServerStatus::Failed {
-        CORAL
-    } else {
-        MUTED
+    Style::default().fg(match status {
+        ServerStatus::Failed => CORAL,
+        ServerStatus::Downloading => ICE,
+        _ => MUTED,
     })
 }
 
@@ -732,6 +817,71 @@ mod tests {
         app.status = ServerStatus::Starting;
         app.startup_frame = 4;
         assert_eq!(status_marker(&app), "✦");
+    }
+
+    #[test]
+    fn downloading_status_shows_measured_progress_instead_of_a_bare_start() {
+        let backend = TestBackend::new(100, 26);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.dismiss_server_prompt();
+        app.status = ServerStatus::Downloading;
+        app.startup_frame = 4;
+        let mut download = Download::new("tinyinference/uncached", true, None);
+        download.file = Some("gpt-oss-120b-MXFP4.gguf".into());
+        download.total = Some(63_387_346_208);
+        download.downloaded = 63_387_346_208 / 4;
+        app.download = Some(download);
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("downloading"));
+        assert!(text.contains("gpt-oss-120b-MXFP4.gguf"));
+        assert!(text.contains("14.8 GiB of 59.0 GiB"));
+        assert!(text.contains("25%"));
+        assert!(text.contains("\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2591}"));
+        assert!(!text.contains("mapped from disk"));
+        assert_eq!(status_marker(&app), "\u{21a1}");
+    }
+
+    #[test]
+    fn a_download_without_a_listing_still_reports_the_bytes() {
+        let mut download = Download::new("tinyinference/uncached", true, None);
+        download.downloaded = 5 * 1024 * 1024;
+        assert_eq!(download_progress(&download), "5.0 MiB fetched");
+        download.downloaded = 0;
+        assert_eq!(download_progress(&download), "preparing");
+        assert_eq!(
+            download_summary(&download),
+            "Downloading tinyinference/uncached"
+        );
+    }
+
+    #[test]
+    fn progress_bar_fills_proportionally() {
+        assert_eq!(progress_bar(0.0, 4), "\u{2591}\u{2591}\u{2591}\u{2591}");
+        assert_eq!(progress_bar(0.5, 4), "\u{2588}\u{2588}\u{2591}\u{2591}");
+        assert_eq!(progress_bar(2.0, 4), "\u{2588}\u{2588}\u{2588}\u{2588}");
+    }
+
+    #[test]
+    fn a_short_wait_is_reported_in_seconds() {
+        assert_eq!(format_eta(9), "9s");
+        assert_eq!(format_eta(59), "59s");
+        assert_eq!(format_eta(90), "1m 30s");
+    }
+
+    #[test]
+    fn sizes_are_reported_in_readable_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(999), "999 B");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(63_387_346_208), "59.0 GiB");
     }
 
     #[test]

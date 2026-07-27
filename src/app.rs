@@ -7,7 +7,9 @@ use std::{
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
+    cache,
     config::{Config, DEFAULT_MODEL, ModelSource},
+    hub,
     server::{
         CommandSpec, ServerEvent, ServerMetrics, ServerProcess, endpoint_healthy, fetch_metrics,
     },
@@ -28,6 +30,7 @@ pub enum View {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerStatus {
     Stopped,
+    Downloading,
     Starting,
     Ready,
     Stopping,
@@ -38,11 +41,141 @@ impl ServerStatus {
     pub fn label(self) -> &'static str {
         match self {
             Self::Stopped => "stopped",
+            Self::Downloading => "downloading",
             Self::Starting => "starting",
             Self::Ready => "ready",
             Self::Stopping => "stopping",
             Self::Failed => "failed",
         }
+    }
+}
+
+/// How long a transfer rate is averaged over, and how often the cache is read.
+const RATE_WINDOW: Duration = Duration::from_secs(5);
+const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Live progress of the model fetch llama-server performs before it can load.
+///
+/// The bytes come from the cache directory, which is the only place a download
+/// is visible; the size to measure them against comes from the repository
+/// listing, matched to the file being written by its object id.
+#[derive(Debug)]
+pub struct Download {
+    pub repo: String,
+    /// Name of the file being fetched, once the listing identifies it.
+    pub file: Option<String>,
+    pub downloaded: u64,
+    /// Real size of the download, from Hugging Face.
+    pub total: Option<u64>,
+    active: bool,
+    oids: Vec<String>,
+    files: Vec<hub::RemoteFile>,
+    listing: Option<hub::PendingListing>,
+    samples: VecDeque<(Instant, u64)>,
+    last_poll: Instant,
+}
+
+impl Download {
+    pub(crate) fn new(repo: &str, active: bool, listing: Option<hub::PendingListing>) -> Self {
+        let downloaded = cache::scan(repo).total_bytes();
+        Self {
+            repo: repo.to_string(),
+            file: None,
+            downloaded,
+            total: None,
+            active,
+            oids: Vec::new(),
+            files: Vec::new(),
+            listing,
+            samples: VecDeque::from([(Instant::now(), downloaded)]),
+            last_poll: Instant::now(),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Bytes per second over the recent window, once there is enough history.
+    pub fn rate(&self) -> Option<f64> {
+        let (first_at, first_bytes) = *self.samples.front()?;
+        let (last_at, last_bytes) = *self.samples.back()?;
+        let seconds = last_at.duration_since(first_at).as_secs_f64();
+        (seconds >= 1.0).then(|| last_bytes.saturating_sub(first_bytes) as f64 / seconds)
+    }
+
+    pub fn fraction(&self) -> Option<f64> {
+        self.total
+            .filter(|total| *total > 0)
+            .map(|total| (self.downloaded as f64 / total as f64).clamp(0.0, 1.0))
+    }
+
+    /// Time left at the current rate.
+    pub fn eta(&self) -> Option<Duration> {
+        let remaining = self.total?.saturating_sub(self.downloaded);
+        let rate = self.rate().filter(|rate| *rate > 1.0)?;
+        Some(Duration::from_secs_f64(remaining as f64 / rate))
+    }
+
+    /// Re-read the cache, and the listing if it has arrived.
+    fn poll(&mut self) {
+        if self.last_poll.elapsed() < POLL_INTERVAL {
+            return;
+        }
+        self.last_poll = Instant::now();
+        if let Some(files) = self.listing.as_mut().and_then(hub::PendingListing::take) {
+            self.files = files;
+            self.listing = None;
+        }
+
+        let scan = cache::scan(&self.repo);
+        self.resolve_target(&scan);
+        let downloaded = if self.oids.is_empty() {
+            scan.total_bytes()
+        } else {
+            scan.bytes_of(&self.oids)
+        };
+        let in_flight = scan.in_flight().next().is_some();
+        self.active = if in_flight || downloaded > self.downloaded {
+            true
+        } else if self.total.is_some_and(|total| downloaded >= total) {
+            false
+        } else {
+            self.active
+        };
+        self.downloaded = downloaded;
+
+        let now = Instant::now();
+        self.samples.push_back((now, downloaded));
+        while self
+            .samples
+            .front()
+            .is_some_and(|(at, _)| now.duration_since(*at) > RATE_WINDOW)
+        {
+            self.samples.pop_front();
+        }
+    }
+
+    /// Match the file being written to the repository listing, which turns the
+    /// blob on disk into a name and an exact size.
+    fn resolve_target(&mut self, scan: &cache::CacheScan) {
+        if self.total.is_some() || self.files.is_empty() {
+            return;
+        }
+        let Some(blob) = scan.in_flight().next().or_else(|| scan.blobs.first()) else {
+            return;
+        };
+        let Some(wanted) = self.files.iter().find(|file| file.oid == blob.oid) else {
+            return;
+        };
+        let family = hub::family(&self.files, &wanted.path);
+        self.total = Some(family.iter().map(|file| file.size).sum());
+        self.oids = family.iter().map(|file| file.oid.clone()).collect();
+        self.file = Some(wanted.path.clone());
+    }
+
+    fn finish(&mut self) {
+        self.active = false;
     }
 }
 
@@ -174,6 +307,7 @@ pub struct App {
     last_local_model: PathBuf,
     pub should_quit: bool,
     pub endpoint_online: bool,
+    pub download: Option<Download>,
     pub startup_frame: usize,
     pub process_usage: Option<ProcessUsage>,
     pub server_metrics: Option<ServerMetrics>,
@@ -218,6 +352,7 @@ impl App {
             last_local_model,
             should_quit: false,
             endpoint_online: false,
+            download: None,
             startup_frame: 0,
             process_usage: None,
             server_metrics: None,
@@ -532,7 +667,10 @@ impl App {
     }
 
     pub fn tick(&mut self) {
-        if self.status == ServerStatus::Starting {
+        if matches!(
+            self.status,
+            ServerStatus::Starting | ServerStatus::Downloading
+        ) {
             self.startup_frame = self.startup_frame.wrapping_add(1);
         }
 
@@ -543,6 +681,7 @@ impl App {
             .unwrap_or_default();
         for event in new_logs {
             let ServerEvent::Log(line) = event;
+            self.observe_startup_line(&line);
             self.push_log(line);
         }
 
@@ -565,6 +704,7 @@ impl App {
                 self.process = None;
                 self.running_config = None;
                 self.endpoint_online = false;
+                self.download = None;
                 self.process_usage = None;
                 self.server_metrics = None;
                 self.status = if status.success() {
@@ -585,19 +725,33 @@ impl App {
             Ok(None) => {}
         }
 
+        // Downloads are polled far more often than the endpoint, so the
+        // progress figures move while a multi-gigabyte fetch is running.
+        if self.process.is_some()
+            && !self.endpoint_online
+            && let Some(download) = self.download.as_mut()
+        {
+            download.poll();
+            if download.is_active() {
+                self.status = ServerStatus::Downloading;
+            } else if self.status == ServerStatus::Downloading {
+                self.status = ServerStatus::Starting;
+                self.status_detail = "Model is on disk; loading weights".into();
+            }
+        }
+
         if self.process.is_some() && self.last_probe.elapsed() >= Duration::from_secs(1) {
             self.endpoint_online = self.running_config.as_ref().is_some_and(endpoint_healthy);
             self.last_probe = Instant::now();
-            self.status = if self.endpoint_online {
-                ServerStatus::Ready
-            } else {
-                ServerStatus::Starting
-            };
             if self.endpoint_online {
+                self.download = None;
                 self.startup_frame = 0;
+                self.status = ServerStatus::Ready;
                 if let Some(config) = &self.running_config {
                     self.status_detail = format!("Listening at {}", config.endpoint());
                 }
+            } else if self.status != ServerStatus::Downloading {
+                self.status = ServerStatus::Starting;
             }
         }
 
@@ -631,10 +785,17 @@ impl App {
         match ServerProcess::start(&launch_config) {
             Ok(process) => {
                 let pid = process.id();
+                self.download = watch_download(&launch_config);
                 self.process = Some(process);
                 self.running_config = Some(launch_config);
-                self.status = ServerStatus::Starting;
-                self.status_detail = format!("Waking llama-server (PID {pid})");
+                if self.active_download().is_some() {
+                    self.status = ServerStatus::Downloading;
+                    self.status_detail = "Fetching the model from Hugging Face".into();
+                    self.push_log("model is not in the local cache; downloading".into());
+                } else {
+                    self.status = ServerStatus::Starting;
+                    self.status_detail = format!("Waking llama-server (PID {pid})");
+                }
                 self.endpoint_online = false;
                 self.startup_frame = 0;
                 self.last_probe = Instant::now() - Duration::from_secs(2);
@@ -645,6 +806,24 @@ impl App {
                 self.status_detail = error.to_string();
                 self.push_log(format!("[launch failed] {error:#}"));
             }
+        }
+    }
+
+    /// The download llama-server is running right now, if any.
+    pub fn active_download(&self) -> Option<&Download> {
+        self.download
+            .as_ref()
+            .filter(|download| download.is_active())
+    }
+
+    /// llama-server loading the weights means any download is over. The tick
+    /// that follows reports the change, as it does for a download that the
+    /// cache shows finishing.
+    fn observe_startup_line(&mut self, line: &str) {
+        if let Some(download) = self.download.as_mut()
+            && cache::is_model_load_line(line)
+        {
+            download.finish();
         }
     }
 
@@ -673,6 +852,7 @@ impl App {
             }
         }
         self.endpoint_online = false;
+        self.download = None;
         self.process_usage = None;
         self.server_metrics = None;
     }
@@ -1000,6 +1180,24 @@ impl App {
     }
 }
 
+/// Watch a Hugging Face launch for a download.
+///
+/// The cache decides whether the indicator starts out visible, so a first run
+/// is announced immediately instead of a second later; llama-server may also
+/// re-fetch a model that looks cached, which the watch picks up from growth on
+/// disk. Local models are never downloaded.
+fn watch_download(config: &Config) -> Option<Download> {
+    let ModelSource::HuggingFace(repo) = &config.model.source else {
+        return None;
+    };
+    let active = cache::looks_incomplete(repo, config.model.estimated_size_gib);
+    Some(Download::new(
+        repo,
+        active,
+        Some(hub::list_files_async(repo)),
+    ))
+}
+
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
 }
@@ -1242,6 +1440,96 @@ mod tests {
             app.setting_value(SettingField::Model),
             r"C:\models\custom.gguf"
         );
+    }
+
+    fn remote(path: &str, oid: &str, size: u64) -> hub::RemoteFile {
+        hub::RemoteFile {
+            path: path.into(),
+            oid: oid.into(),
+            size,
+        }
+    }
+
+    fn download_of(files: Vec<hub::RemoteFile>) -> Download {
+        let mut download = Download::new("owner/model", true, None);
+        download.files = files;
+        download
+    }
+
+    #[test]
+    fn only_hugging_face_launches_are_watched_for_a_download() {
+        let mut config = Config::default();
+        config.model.source = ModelSource::Local("model.gguf".into());
+        assert!(watch_download(&config).is_none());
+    }
+
+    #[test]
+    fn the_file_being_written_gives_the_real_name_and_size() {
+        let mut download = download_of(vec![
+            remote("model-Q4.gguf", "aaa", 400),
+            remote("model-Q8.gguf", "bbb", 800),
+        ]);
+        download.resolve_target(&cache::CacheScan {
+            blobs: vec![cache::CachedBlob {
+                oid: "bbb".into(),
+                bytes: 200,
+                in_flight: true,
+            }],
+            flat_bytes: 0,
+        });
+        assert_eq!(download.file.as_deref(), Some("model-Q8.gguf"));
+        assert_eq!(download.total, Some(800));
+        assert_eq!(download.oids, ["bbb"]);
+    }
+
+    #[test]
+    fn a_split_model_is_measured_across_every_shard() {
+        let mut download = download_of(vec![
+            remote("m-00001-of-00002.gguf", "aaa", 10),
+            remote("m-00002-of-00002.gguf", "bbb", 20),
+            remote("unrelated.gguf", "ccc", 5000),
+        ]);
+        download.resolve_target(&cache::CacheScan {
+            blobs: vec![cache::CachedBlob {
+                oid: "aaa".into(),
+                bytes: 10,
+                in_flight: true,
+            }],
+            flat_bytes: 0,
+        });
+        assert_eq!(download.total, Some(30));
+        assert_eq!(download.oids, ["aaa", "bbb"]);
+    }
+
+    #[test]
+    fn progress_rate_and_estimate_come_from_the_measured_bytes() {
+        let mut download = download_of(Vec::new());
+        download.total = Some(1_000);
+        download.downloaded = 250;
+        let now = Instant::now();
+        download.samples = VecDeque::from([(now - Duration::from_secs(4), 50), (now, 250)]);
+        assert_eq!(download.fraction(), Some(0.25));
+        assert_eq!(download.rate(), Some(50.0));
+        assert_eq!(download.eta(), Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn a_rate_needs_more_than_one_sample() {
+        let mut download = download_of(Vec::new());
+        download.samples = VecDeque::from([(Instant::now(), 10)]);
+        assert_eq!(download.rate(), None);
+        assert_eq!(download.eta(), None);
+        assert_eq!(download.fraction(), None);
+    }
+
+    #[test]
+    fn loading_the_weights_ends_the_download() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.download = Some(Download::new(DEFAULT_MODEL, true, None));
+        assert!(app.active_download().is_some());
+
+        app.observe_startup_line("srv    load_model: loading model");
+        assert!(app.active_download().is_none());
     }
 
     #[test]

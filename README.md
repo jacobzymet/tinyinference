@@ -94,6 +94,14 @@ cargo run -- --print-command
 | `Left` / `Right` or `h` / `l` | Adjust a setting |
 | `Enter` | Type an exact value or toggle |
 
+When a Hugging Face model has to be fetched, the status reads `downloading`
+instead of `starting`, with a progress bar, transfer rate, and time remaining.
+`llama-server` prints nothing while it downloads, so progress is measured from
+the cached file as it grows; its real size comes from the Hugging Face file
+listing, matched to the file being written by its object id. The status changes
+to `starting` once the weights begin loading. Without network access the bytes
+fetched are still reported, only without a percentage.
+
 The statistics screen shows endpoint state, PID, uptime, process CPU and
 resident RAM, plus request and token counters and throughput from
 `llama-server`. tinyinference enables llama.cpp's local metrics endpoint for
