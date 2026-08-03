@@ -639,7 +639,7 @@ impl App {
             (SettingField::Fit, _) => "Off prevents llama.cpp from changing the requested profile.",
             (SettingField::Repack, _) => "Off avoids a separate repacked weight copy.",
             (SettingField::Warmup, _) => {
-                "Off avoids touching model pages before the first request."
+                "On touches model pages at startup for smoother first-token behavior."
             }
             (SettingField::CacheRam, _) => "Host prompt-cache limit in MiB; zero disables it.",
             (SettingField::Checkpoints, _) => "Saved context states per slot; zero disables them.",

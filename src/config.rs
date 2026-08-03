@@ -95,7 +95,7 @@ impl Default for RuntimeConfig {
             mmap: true,
             fit: false,
             repack: false,
-            warmup: false,
+            warmup: true,
             cache_ram_mib: 0,
             context_checkpoints: 0,
             multimodal_projector: false,
@@ -428,7 +428,7 @@ mod tests {
         assert!(cfg.runtime.mmap);
         assert!(!cfg.runtime.fit);
         assert!(!cfg.runtime.repack);
-        assert!(!cfg.runtime.warmup);
+        assert!(cfg.runtime.warmup);
         assert_eq!(cfg.runtime.context_size, 8192);
         assert_eq!(cfg.runtime.cache_ram_mib, 0);
         assert_eq!(cfg.runtime.context_checkpoints, 0);

@@ -395,7 +395,7 @@ mod tests {
                 "off",
                 "--mmap",
                 "--no-repack",
-                "--no-warmup",
+                "--warmup",
                 "--ctx-size",
                 "8192",
                 "--batch-size",
