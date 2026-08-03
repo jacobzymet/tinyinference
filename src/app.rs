@@ -11,6 +11,7 @@ use crate::{
     config::{
         CACHE_TYPES, Config, DEFAULT_MODEL, ModelSource, RuntimePreset, normalize_cache_type,
     },
+    fetch::{self, FetchEvent},
     hub,
     server::{
         CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
@@ -21,25 +22,12 @@ use crate::{
 
 const MAX_LOG_LINES: usize = 2_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelPickerGroup {
-    Recent,
-    Cached,
-}
-
-impl ModelPickerGroup {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Recent => "Recent",
-            Self::Cached => "Cached on this machine",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerEntry {
-    pub group: ModelPickerGroup,
     pub source: ModelSource,
+    pub recent: bool,
+    pub on_disk: bool,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -279,6 +267,115 @@ impl Download {
     }
 }
 
+/// Managed library download started from the Models tab (not llama-server).
+pub struct LibraryFetch {
+    pub repo: String,
+    pub file: Option<String>,
+    pub downloaded: u64,
+    pub total: Option<u64>,
+    pub error: Option<String>,
+    pub done: bool,
+    pending: Option<fetch::PendingFetch>,
+    samples: VecDeque<(Instant, u64)>,
+}
+
+impl LibraryFetch {
+    fn new(repo: &str, pending: fetch::PendingFetch) -> Self {
+        Self {
+            repo: repo.to_string(),
+            file: None,
+            downloaded: 0,
+            total: None,
+            error: None,
+            done: false,
+            pending: Some(pending),
+            samples: VecDeque::from([(Instant::now(), 0)]),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.done && self.error.is_none()
+    }
+
+    pub fn rate(&self) -> Option<f64> {
+        let (first_at, first_bytes) = *self.samples.front()?;
+        let (last_at, last_bytes) = *self.samples.back()?;
+        let seconds = last_at.duration_since(first_at).as_secs_f64();
+        (seconds >= 1.0).then(|| last_bytes.saturating_sub(first_bytes) as f64 / seconds)
+    }
+
+    pub fn fraction(&self) -> Option<f64> {
+        self.total
+            .filter(|total| *total > 0)
+            .map(|total| (self.downloaded as f64 / total as f64).clamp(0.0, 1.0))
+    }
+
+    pub fn eta(&self) -> Option<Duration> {
+        let remaining = self.total?.saturating_sub(self.downloaded);
+        let rate = self.rate().filter(|rate| *rate > 1.0)?;
+        Some(Duration::from_secs_f64(remaining as f64 / rate))
+    }
+
+    fn poll(&mut self) {
+        let mut finished = false;
+        let mut failed = None;
+        loop {
+            let event = self.pending.as_ref().and_then(fetch::PendingFetch::take);
+            let Some(event) = event else {
+                break;
+            };
+            match event {
+                FetchEvent::Started { file, total, .. } => {
+                    self.file = Some(file);
+                    self.total = Some(total);
+                }
+                FetchEvent::Progress {
+                    downloaded,
+                    total,
+                    file,
+                } => {
+                    self.file = Some(file);
+                    self.total = Some(total);
+                    self.downloaded = downloaded;
+                    let now = Instant::now();
+                    self.samples.push_back((now, downloaded));
+                    while self
+                        .samples
+                        .front()
+                        .is_some_and(|(at, _)| now.duration_since(*at) > RATE_WINDOW)
+                    {
+                        self.samples.pop_front();
+                    }
+                }
+                FetchEvent::Finished { bytes } => {
+                    self.downloaded = bytes;
+                    if self.total.is_none() {
+                        self.total = Some(bytes);
+                    }
+                    finished = true;
+                }
+                FetchEvent::Error(error) => {
+                    failed = Some(error);
+                }
+            }
+        }
+        if let Some(error) = failed {
+            self.error = Some(error);
+            self.done = true;
+            self.pending = None;
+        } else if finished {
+            self.done = true;
+            self.pending = None;
+        }
+    }
+
+    fn cancel(&mut self) {
+        if let Some(pending) = self.pending.as_ref() {
+            pending.cancel();
+        }
+    }
+}
+
 fn is_model_file(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".gguf")
 }
@@ -438,7 +535,6 @@ struct RemoteModelSize {
     pub error: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct App {
     pub config: Config,
     pub config_path: PathBuf,
@@ -470,6 +566,8 @@ pub struct App {
     discovered_models: Vec<cache::DiscoveredModel>,
     pending_discover: Option<cache::PendingDiscover>,
     last_discover: Instant,
+    /// Models-tab managed download into the local hub cache.
+    pub library_fetch: Option<LibraryFetch>,
 }
 
 impl App {
@@ -517,6 +615,7 @@ impl App {
             discovered_models: Vec::new(),
             pending_discover: Some(cache::discover_models_async()),
             last_discover: Instant::now(),
+            library_fetch: None,
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -557,11 +656,11 @@ impl App {
                 ModelSource::Local(_) => "Local GGUF".into(),
             },
             SettingField::Model => match &self.config.model.source {
-                ModelSource::HuggingFace(id) if id.trim().is_empty() => {
-                    "<enter owner/model>".into()
-                }
                 ModelSource::Local(path) if path.as_os_str().is_empty() => {
                     "<enter path to .gguf>".into()
+                }
+                ModelSource::HuggingFace(id) if id.trim().is_empty() => {
+                    "<add a model in Models>".into()
                 }
                 _ => self.config.model_label(),
             },
@@ -611,7 +710,12 @@ impl App {
                 ModelSource::HuggingFace(_) => "hugging_face".into(),
                 ModelSource::Local(_) => "local".into(),
             },
-            SettingField::Model => self.config.model_label(),
+            SettingField::Model => match &self.config.model.source {
+                ModelSource::Local(path) if path.as_os_str().is_empty() => String::new(),
+                ModelSource::HuggingFace(id) if id.trim().is_empty() => String::new(),
+                ModelSource::HuggingFace(id) => id.clone(),
+                ModelSource::Local(path) => path.display().to_string(),
+            },
             SettingField::EstimatedSize => self
                 .mapped_model_gib()
                 .map(|size| format!("{size:.1}"))
@@ -689,10 +793,10 @@ impl App {
         match (field, &self.config.model.source) {
             (SettingField::SourceKind, _) => "Switch between Hugging Face and a local GGUF file.",
             (SettingField::Model, ModelSource::HuggingFace(_)) => {
-                "Enter owner/model, or pick a recent / autodiscovered model above."
+                "Use Add model on the Models tab, or pick one from the library."
             }
             (SettingField::Model, ModelSource::Local(_)) => {
-                "Enter a full .gguf path, or pick a recent / autodiscovered model above."
+                "Use Add model on the Models tab, or pick a local GGUF from the library."
             }
             (SettingField::EstimatedSize, ModelSource::Local(_)) => {
                 "Calculated automatically from the GGUF file."
@@ -731,6 +835,7 @@ impl App {
     pub fn tick(&mut self) {
         self.poll_remote_model_size();
         self.poll_discovered_models();
+        self.poll_library_fetch();
 
         let new_logs = self
             .process
@@ -1008,6 +1113,142 @@ impl App {
             .filter(|download| download.is_active())
     }
 
+    /// Managed Models-tab download, if one is in progress or just finished with an error.
+    pub fn active_library_fetch(&self) -> Option<&LibraryFetch> {
+        self.library_fetch.as_ref().filter(|fetch| {
+            fetch.is_active() || fetch.error.is_some() || (fetch.done && fetch.error.is_none())
+        })
+    }
+
+    /// Add a model to the library and optionally start downloading it.
+    pub fn add_model(
+        &mut self,
+        kind: &str,
+        value: &str,
+        download: bool,
+    ) -> std::result::Result<(), String> {
+        let source = match kind {
+            "hugging_face" | "huggingface" | "hf" => {
+                let repo = hub::normalize_repo_id(value).map_err(|error| format!("{error:#}"))?;
+                self.last_hf_model = repo.clone();
+                ModelSource::HuggingFace(repo)
+            }
+            "local" => {
+                let path = PathBuf::from(value.trim());
+                if path.as_os_str().is_empty() {
+                    return Err("Enter a full .gguf path.".into());
+                }
+                self.last_local_model = path.clone();
+                ModelSource::Local(path)
+            }
+            _ => return Err("Choose Hugging Face or Local GGUF.".into()),
+        };
+        self.config.model.source = source.clone();
+        self.config.remember_model(source.clone());
+        self.sync_remote_model_size();
+        self.mark_setting_changed(SettingField::Model);
+        if download {
+            match &source {
+                ModelSource::HuggingFace(repo) => self.start_library_download(repo)?,
+                ModelSource::Local(_) => {}
+            }
+        }
+        self.persist_config();
+        Ok(())
+    }
+
+    pub fn start_library_download_for_index(
+        &mut self,
+        index: usize,
+    ) -> std::result::Result<(), String> {
+        let source = self
+            .library_entries()
+            .get(index)
+            .map(|entry| entry.source.clone())
+            .ok_or_else(|| "That model is no longer in your library.".to_string())?;
+        let ModelSource::HuggingFace(repo) = source else {
+            return Err("Only Hugging Face models can be downloaded into the cache.".into());
+        };
+        self.start_library_download(&repo)
+    }
+
+    pub fn start_library_download_by_label(
+        &mut self,
+        label: &str,
+    ) -> std::result::Result<(), String> {
+        let source = self
+            .library_entries()
+            .into_iter()
+            .find(|entry| source_label(&entry.source) == label)
+            .map(|entry| entry.source)
+            .ok_or_else(|| "That model is no longer in your library.".to_string())?;
+        let ModelSource::HuggingFace(repo) = source else {
+            return Err("Only Hugging Face models can be downloaded into the cache.".into());
+        };
+        self.start_library_download(&repo)
+    }
+
+    pub fn start_library_download(&mut self, repo: &str) -> std::result::Result<(), String> {
+        if self
+            .library_fetch
+            .as_ref()
+            .is_some_and(|fetch| fetch.is_active())
+        {
+            return Err("A download is already in progress.".into());
+        }
+        if self.process.is_some() {
+            return Err("Stop the server before downloading a model into the cache.".into());
+        }
+        let repo = hub::normalize_repo_id(repo).map_err(|error| format!("{error:#}"))?;
+        if cache::has_local_files(&ModelSource::HuggingFace(repo.clone()))
+            && !cache::looks_incomplete(&repo, self.config.model.estimated_size_gib)
+        {
+            self.status_detail = format!("{repo} is already on disk");
+            return Ok(());
+        }
+        let pending = fetch::fetch_primary_gguf_async(&repo);
+        self.library_fetch = Some(LibraryFetch::new(&repo, pending));
+        self.status_detail = format!("Downloading {repo}");
+        self.push_log(format!("downloading {repo} into the local Hugging Face cache"));
+        Ok(())
+    }
+
+    pub fn cancel_library_download(&mut self) -> std::result::Result<(), String> {
+        let Some(fetch) = self.library_fetch.as_mut() else {
+            return Err("No download is in progress.".into());
+        };
+        if !fetch.is_active() {
+            return Err("No download is in progress.".into());
+        }
+        let repo = fetch.repo.clone();
+        fetch.cancel();
+        self.status_detail = format!("Cancelling download of {repo}");
+        self.push_log(format!("cancelling download of {repo}"));
+        Ok(())
+    }
+
+    fn poll_library_fetch(&mut self) {
+        let Some(fetch) = self.library_fetch.as_mut() else {
+            return;
+        };
+        let was_active = fetch.is_active();
+        fetch.poll();
+        if was_active && fetch.done {
+            if let Some(error) = fetch.error.clone() {
+                self.status_detail = format!("Download failed: {error}");
+                self.push_log(format!("download failed: {error}"));
+            } else {
+                let repo = fetch.repo.clone();
+                let gib = fetch.downloaded as f64 / (1024.0 * 1024.0 * 1024.0);
+                self.status_detail = format!("Downloaded {repo} ({gib:.2} GiB)");
+                self.push_log(format!("downloaded {repo} ({gib:.2} GiB)"));
+                self.pending_discover = Some(cache::discover_models_async());
+                self.last_discover = Instant::now();
+                self.sync_remote_model_size();
+            }
+        }
+    }
+
     /// llama-server loading the weights means any download is over. The tick
     /// that follows reports the change, as it does for a download that the
     /// cache shows finishing.
@@ -1109,6 +1350,15 @@ impl App {
                 self.status = ServerStatus::Failed;
                 self.status_detail = error.to_string();
             }
+        }
+    }
+
+    /// Persist config without replacing the current status line (used after library edits).
+    fn persist_config(&mut self) {
+        if let Err(error) = self.config.save(&self.config_path) {
+            self.status = ServerStatus::Failed;
+            self.status_detail = error.to_string();
+            self.push_log(format!("failed to save config: {error}"));
         }
     }
 
@@ -1434,47 +1684,249 @@ impl App {
         self.config.remember_model(source);
     }
 
-    /// Recent models first, then autodiscovered cache entries not already listed.
-    pub fn model_picker_entries(&self) -> Vec<ModelPickerEntry> {
-        let mut entries = Vec::new();
-        for source in &self.config.recent_models {
-            entries.push(ModelPickerEntry {
-                group: ModelPickerGroup::Recent,
-                source: source.clone(),
-            });
-        }
-        for discovered in &self.discovered_models {
-            let source = match &discovered.source {
-                cache::DiscoveredSource::HuggingFace(repo) => {
-                    ModelSource::HuggingFace(repo.clone())
+    /// Explicitly managed library entries (`recent_models` only).
+    pub fn library_entries(&self) -> Vec<ModelPickerEntry> {
+        self.config
+            .recent_models
+            .iter()
+            .filter(|source| match source {
+                ModelSource::HuggingFace(id) => !id.trim().is_empty(),
+                ModelSource::Local(path) => !path.as_os_str().is_empty(),
+            })
+            .cloned()
+            .map(|source| self.entry_for(source, true))
+            .collect()
+    }
+
+    /// Autodiscovered cache models that are not already in the library.
+    pub fn available_entries(&self) -> Vec<ModelPickerEntry> {
+        self.discovered_models
+            .iter()
+            .filter_map(|discovered| {
+                let source = match &discovered.source {
+                    cache::DiscoveredSource::HuggingFace(repo) => {
+                        ModelSource::HuggingFace(repo.clone())
+                    }
+                    cache::DiscoveredSource::Local(path) => ModelSource::Local(path.clone()),
+                };
+                if self.config.recent_models.iter().any(|recent| {
+                    sources_equivalent(recent, &source)
+                }) {
+                    return None;
                 }
-                cache::DiscoveredSource::Local(path) => ModelSource::Local(path.clone()),
-            };
-            if entries.iter().any(|entry| entry.source == source) {
-                continue;
-            }
-            entries.push(ModelPickerEntry {
-                group: ModelPickerGroup::Cached,
-                source,
-            });
+                Some(ModelPickerEntry {
+                    source,
+                    recent: false,
+                    on_disk: true,
+                    bytes: discovered.bytes,
+                })
+            })
+            .collect()
+    }
+
+    /// Back-compat alias used by older call sites/tests.
+    pub fn model_picker_entries(&self) -> Vec<ModelPickerEntry> {
+        self.library_entries()
+    }
+
+    fn entry_for(&self, source: ModelSource, recent: bool) -> ModelPickerEntry {
+        let discovered_bytes = self
+            .discovered_models
+            .iter()
+            .find(|model| match (&model.source, &source) {
+                (
+                    cache::DiscoveredSource::HuggingFace(left),
+                    ModelSource::HuggingFace(right),
+                ) => left == right,
+                (cache::DiscoveredSource::Local(left), ModelSource::Local(right)) => left == right,
+                _ => false,
+            })
+            .map(|model| model.bytes)
+            .unwrap_or(0);
+        let on_disk = cache::has_local_files(&source);
+        let bytes = if discovered_bytes > 0 {
+            discovered_bytes
+        } else if on_disk {
+            cache::local_bytes(&source)
+        } else {
+            0
+        };
+        ModelPickerEntry {
+            source,
+            recent,
+            on_disk,
+            bytes,
         }
-        entries
     }
 
     pub fn select_recent_model(&mut self, index: usize) -> std::result::Result<(), String> {
         let selected = self
-            .model_picker_entries()
+            .library_entries()
             .get(index)
             .map(|entry| entry.source.clone())
-            .ok_or_else(|| "That model is no longer available.".to_string())?;
-        match &selected {
+            .ok_or_else(|| "That model is no longer in your library.".to_string())?;
+        self.activate_model(selected);
+        self.persist_config();
+        Ok(())
+    }
+
+    pub fn select_library_model_by_label(
+        &mut self,
+        label: &str,
+    ) -> std::result::Result<(), String> {
+        let selected = self
+            .library_entries()
+            .into_iter()
+            .find(|entry| source_label(&entry.source) == label)
+            .map(|entry| entry.source)
+            .ok_or_else(|| "That model is no longer in your library.".to_string())?;
+        self.activate_model(selected);
+        self.persist_config();
+        Ok(())
+    }
+
+    pub fn import_available_model(&mut self, label: &str) -> std::result::Result<(), String> {
+        let source = self
+            .available_entries()
+            .into_iter()
+            .find(|entry| source_label(&entry.source) == label)
+            .map(|entry| entry.source)
+            .ok_or_else(|| "That on-disk model is no longer available.".to_string())?;
+        self.config.remember_model(source.clone());
+        self.activate_model(source);
+        self.persist_config();
+        Ok(())
+    }
+
+    pub fn can_delete_picker_model(&self, index: usize) -> bool {
+        if self.process.is_some() {
+            return false;
+        }
+        self.library_entries().get(index).is_some()
+    }
+
+    pub fn delete_picker_model(&mut self, index: usize) -> std::result::Result<(), String> {
+        let label = self
+            .library_entries()
+            .get(index)
+            .map(|entry| source_label(&entry.source))
+            .ok_or_else(|| "That model is no longer in your library.".to_string())?;
+        self.delete_library_model_by_label(&label)
+    }
+
+    pub fn delete_library_model_by_label(
+        &mut self,
+        label: &str,
+    ) -> std::result::Result<(), String> {
+        if self.process.is_some() {
+            return Err("Stop the server before removing a model.".into());
+        }
+        let source = self
+            .library_entries()
+            .into_iter()
+            .find(|entry| source_label(&entry.source) == label)
+            .map(|entry| entry.source)
+            .ok_or_else(|| "That model is no longer in your library.".to_string())?;
+
+        let mut freed_gib = 0.0;
+        if cache::has_local_files(&source) {
+            let report = cache::delete_local_files(&source)?;
+            freed_gib = report.freed_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            self.push_log(format!(
+                "deleted local cache for {label} ({} path{}, {freed_gib:.2} GiB)",
+                report.removed_paths.len(),
+                if report.removed_paths.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+
+        let was_active = sources_equivalent(&self.config.model.source, &source);
+        self.config
+            .recent_models
+            .retain(|recent| !sources_equivalent(recent, &source));
+        self.discovered_models.retain(|model| match &model.source {
+            cache::DiscoveredSource::HuggingFace(repo) => {
+                !sources_equivalent(&ModelSource::HuggingFace(repo.clone()), &source)
+            }
+            cache::DiscoveredSource::Local(path) => {
+                !sources_equivalent(&ModelSource::Local(path.clone()), &source)
+            }
+        });
+        if was_active {
+            self.activate_fallback_model();
+        }
+        self.pending_discover = Some(cache::discover_models_async());
+        self.last_discover = Instant::now();
+        self.status_detail = if freed_gib > 0.0 {
+            format!("Removed {label} ({freed_gib:.2} GiB freed)")
+        } else {
+            format!("Removed {label}")
+        };
+        self.push_log(format!("removed {label} from the model library"));
+        self.persist_config();
+        Ok(())
+    }
+
+    pub fn delete_available_model_by_label(
+        &mut self,
+        label: &str,
+    ) -> std::result::Result<(), String> {
+        if self.process.is_some() {
+            return Err("Stop the server before deleting cached files.".into());
+        }
+        let source = self
+            .available_entries()
+            .into_iter()
+            .find(|entry| source_label(&entry.source) == label)
+            .map(|entry| entry.source)
+            .ok_or_else(|| "That on-disk model is no longer available.".to_string())?;
+        let report = cache::delete_local_files(&source)?;
+        let gib = report.freed_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        self.discovered_models.retain(|model| match &model.source {
+            cache::DiscoveredSource::HuggingFace(repo) => {
+                !sources_equivalent(&ModelSource::HuggingFace(repo.clone()), &source)
+            }
+            cache::DiscoveredSource::Local(path) => {
+                !sources_equivalent(&ModelSource::Local(path.clone()), &source)
+            }
+        });
+        self.pending_discover = Some(cache::discover_models_async());
+        self.last_discover = Instant::now();
+        self.status_detail = format!("Deleted cached files for {label} ({gib:.2} GiB)");
+        self.push_log(format!("deleted cached files for {label} ({gib:.2} GiB)"));
+        self.persist_config();
+        Ok(())
+    }
+
+    fn activate_model(&mut self, source: ModelSource) {
+        match &source {
             ModelSource::HuggingFace(id) => self.last_hf_model = id.clone(),
             ModelSource::Local(path) => self.last_local_model = path.clone(),
         }
-        self.config.model.source = selected;
+        self.config.model.source = source;
         self.sync_remote_model_size();
         self.mark_setting_changed(SettingField::Model);
-        Ok(())
+    }
+
+    fn activate_fallback_model(&mut self) {
+        if let Some(fallback) = self.config.recent_models.first().cloned() {
+            self.activate_model(fallback);
+            return;
+        }
+        // Library is empty — do not resurrect the deleted default model.
+        self.config.model.source = ModelSource::HuggingFace(String::new());
+        self.remote_model_size = None;
+        self.mark_setting_changed(SettingField::Model);
+    }
+
+    pub fn has_active_model(&self) -> bool {
+        match &self.config.model.source {
+            ModelSource::HuggingFace(id) => !id.trim().is_empty(),
+            ModelSource::Local(path) => !path.as_os_str().is_empty(),
+        }
     }
 
     fn poll_discovered_models(&mut self) {
@@ -1586,6 +2038,26 @@ fn watch_download(config: &Config) -> Option<Download> {
     ))
 }
 
+fn source_label(source: &ModelSource) -> String {
+    match source {
+        ModelSource::HuggingFace(id) => id.clone(),
+        ModelSource::Local(path) => path.display().to_string(),
+    }
+}
+
+fn sources_equivalent(left: &ModelSource, right: &ModelSource) -> bool {
+    match (left, right) {
+        (ModelSource::Local(a), ModelSource::Local(b)) => a == b,
+        (ModelSource::HuggingFace(a), ModelSource::HuggingFace(b)) => {
+            fn strip(value: &str) -> &str {
+                value.split(':').next().unwrap_or(value)
+            }
+            a == b || strip(a) == strip(b)
+        }
+        _ => false,
+    }
+}
+
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
 }
@@ -1692,8 +2164,45 @@ mod tests {
     }
 
     #[test]
-    fn picker_appends_autodiscovered_models_after_recent() {
-        let mut app = App::new(Config::default(), "test.toml".into());
+    fn delete_removes_model_from_library_and_does_not_resurrect_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("weights.gguf");
+        std::fs::write(&path, vec![0; 32]).unwrap();
+        let mut app = App::new(Config::default(), dir.path().join("config.toml"));
+        let local = ModelSource::Local(path.clone());
+        app.config.model.source = local.clone();
+        app.config.recent_models = vec![local.clone()];
+        app.discovered_models.clear();
+        app.delete_library_model_by_label(&path.display().to_string())
+            .unwrap();
+        assert!(!path.exists());
+        assert!(app.config.recent_models.is_empty());
+        assert!(app.library_entries().is_empty());
+        assert!(!app.has_active_model());
+        assert!(app.status_detail.contains("Removed"));
+        let reloaded = Config::load(&app.config_path).unwrap();
+        assert!(reloaded.recent_models.is_empty());
+    }
+
+    #[test]
+    fn delete_falls_back_to_remaining_library_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(Config::default(), dir.path().join("config.toml"));
+        let missing = ModelSource::HuggingFace("tinyinference/never-cached".into());
+        let other = ModelSource::HuggingFace("owner/other-GGUF".into());
+        app.config.model.source = missing.clone();
+        app.config.recent_models = vec![missing.clone(), other.clone()];
+        app.delete_library_model_by_label("tinyinference/never-cached")
+            .unwrap();
+        assert!(!app.config.recent_models.contains(&missing));
+        assert_eq!(app.config.model.source, other);
+        assert_eq!(app.library_entries().len(), 1);
+    }
+
+    #[test]
+    fn available_models_exclude_library_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(Config::default(), dir.path().join("config.toml"));
         let recent = app.config.model.source.clone();
         app.config.recent_models = vec![recent.clone()];
         app.discovered_models = vec![
@@ -1709,20 +2218,19 @@ mod tests {
                 bytes: 50,
             },
         ];
-        let entries = app.model_picker_entries();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].group, ModelPickerGroup::Recent);
-        assert_eq!(entries[0].source, recent);
-        assert_eq!(entries[1].group, ModelPickerGroup::Cached);
+        assert_eq!(app.library_entries().len(), 1);
+        let available = app.available_entries();
+        assert_eq!(available.len(), 1);
         assert_eq!(
-            entries[1].source,
+            available[0].source,
             ModelSource::HuggingFace("owner/cached-GGUF".into())
         );
-        app.select_recent_model(1).unwrap();
-        assert_eq!(
-            app.config.model.source,
-            ModelSource::HuggingFace("owner/cached-GGUF".into())
-        );
+        app.import_available_model("owner/cached-GGUF").unwrap();
+        assert!(app
+            .library_entries()
+            .iter()
+            .any(|entry| entry.source == ModelSource::HuggingFace("owner/cached-GGUF".into())));
+        assert!(app.available_entries().is_empty());
     }
 
     #[test]

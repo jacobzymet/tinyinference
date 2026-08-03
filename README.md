@@ -58,18 +58,21 @@ On macOS or Linux, use:
 
 ## Configuration
 
-Open the **Configure** tab to edit the model, `llama-server` path, host, port,
-and runtime settings. Use **Save** to write the configuration to disk.
+Open the **Models** tab to manage your model library. Open **Configure** for the
+`llama-server` path, host, port, runtime preset, and other server settings. Use
+**Save** on Configure to write runtime settings to disk; library changes
+(add / use / remove / import) save automatically.
 
-Switch **Model source**, then edit the model field to enter either a Hugging Face
-`owner/model` repository or a full local `.gguf` path. A local model's size is
-detected automatically.
-
-The **Models** dropdown lists up to eight previously used Hugging Face
-repositories and local GGUF paths, and autodiscovers GGUF models already present
-in the local Hugging Face hub / llama.cpp cache (including downloads performed by
-`llama-server`). Recent picks are stored with the rest of the configuration when
-you save.
+On **Models**:
+- **My models** is your explicit library. **Add model** registers a Hugging Face
+  `owner/model` (URL paste works) or a local `.gguf` path. Hugging Face models
+  can download into the local hub cache with live progress.
+- **Use**, **Download**, and **Remove** act on library entries. Remove deletes
+  the entry and local cache files after confirmation, and does not bring the
+  default model back.
+- **Found on disk** lists autodiscovered GGUF caches that are not in your
+  library yet. **Import** adds one to the library; **Delete files** removes the
+  cache only.
 
 Settings are saved in the platform configuration directory. To use a portable
 profile, copy the example and pass it explicitly:
@@ -109,12 +112,13 @@ cargo run -- --print-command
 | --- | --- |
 | Start / stop | Header button |
 | Restart | Header button |
-| Configure | Configure tab |
+| Manage models | Models tab |
+| Configure runtime / server | Configure tab |
 | View logs | Logs tab |
 | Live statistics | Stats tab |
 | Copy OpenAI-compatible `/v1` URL | Dashboard |
 | Copy resolved `llama-server` command | Dashboard |
-| Save settings | Configure tab or Dashboard |
+| Save settings | Models, Configure, or Dashboard |
 
 When a Hugging Face model has to be fetched, the status reads `downloading`
 instead of `starting`, with a progress bar, transfer rate, and time remaining.

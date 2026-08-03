@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 use crate::{
-    app::{App, Download, ServerStatus, SettingField},
+    app::{App, Download, LibraryFetch, ServerStatus, SettingField},
     config::RuntimePreset,
     server::ServerProcess,
 };
@@ -46,6 +46,13 @@ pub async fn serve(app: SharedApp, addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/settings", post(update_setting))
         .route("/api/settings/{field}/toggle", post(toggle_setting))
         .route("/api/settings/model/select", post(select_model))
+        .route("/api/settings/model/delete", post(delete_model))
+        .route("/api/models/add", post(add_model))
+        .route("/api/models/select", post(select_model_by_id))
+        .route("/api/models/delete", post(delete_model_by_id))
+        .route("/api/models/import", post(import_model))
+        .route("/api/models/download", post(download_model))
+        .route("/api/models/download/cancel", post(cancel_download_model))
         .route("/api/copy/endpoint", post(copy_endpoint))
         .route("/api/copy/command", post(copy_command))
         .route("/api/dismiss-prompt", post(dismiss_prompt))
@@ -151,6 +158,86 @@ async fn select_model(
     Ok(Json(AppState::from_app(&app)))
 }
 
+async fn delete_model(
+    State(app): State<SharedApp>,
+    Json(body): Json<SelectRecentModel>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.delete_picker_model(body.index)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
+}
+
+async fn select_model_by_id(
+    State(app): State<SharedApp>,
+    Json(body): Json<ModelIdRequest>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.select_library_model_by_label(&body.id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
+}
+
+async fn delete_model_by_id(
+    State(app): State<SharedApp>,
+    Json(body): Json<ModelIdRequest>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    match body.scope.as_deref() {
+        Some("available") => app
+            .delete_available_model_by_label(&body.id)
+            .map_err(ApiError::bad_request)?,
+        _ => app
+            .delete_library_model_by_label(&body.id)
+            .map_err(ApiError::bad_request)?,
+    }
+    Ok(Json(AppState::from_app(&app)))
+}
+
+async fn import_model(
+    State(app): State<SharedApp>,
+    Json(body): Json<ModelIdRequest>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.import_available_model(&body.id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
+}
+
+async fn add_model(
+    State(app): State<SharedApp>,
+    Json(body): Json<AddModelRequest>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.add_model(&body.kind, &body.value, body.download)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
+}
+
+async fn download_model(
+    State(app): State<SharedApp>,
+    Json(body): Json<ModelIdRequest>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    if body.id.is_empty() {
+        app.start_library_download_for_index(body.index.unwrap_or(0))
+            .map_err(ApiError::bad_request)?;
+    } else {
+        app.start_library_download_by_label(&body.id)
+            .map_err(ApiError::bad_request)?;
+    }
+    Ok(Json(AppState::from_app(&app)))
+}
+
+async fn cancel_download_model(
+    State(app): State<SharedApp>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.cancel_library_download()
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
+}
+
 async fn copy_endpoint(State(app): State<SharedApp>) -> Result<Json<CopyResponse>, ApiError> {
     let mut app = app.lock().map_err(|_| ApiError::lock())?;
     let value = app.copy_endpoint();
@@ -194,6 +281,24 @@ struct SelectRecentModel {
     index: usize,
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelIdRequest {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    index: Option<usize>,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddModelRequest {
+    kind: String,
+    value: String,
+    #[serde(default)]
+    download: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct CopyResponse {
     value: String,
@@ -218,9 +323,13 @@ struct AppState {
     machine: MachineState,
     mapped_size: MappedSizeState,
     download: Option<DownloadState>,
+    library_download: Option<DownloadState>,
     process: Option<ProcessState>,
     metrics: Option<MetricsState>,
     recent_models: Vec<RecentModelState>,
+    library: Vec<RecentModelState>,
+    available: Vec<RecentModelState>,
+    has_active_model: bool,
     settings: Vec<SettingState>,
     cache_type_help: Vec<ChoiceHelp>,
     presets: Vec<PresetState>,
@@ -246,13 +355,21 @@ struct MappedSizeState {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct RecentModelState {
     index: usize,
-    group: &'static str,
+    id: String,
     kind: &'static str,
     label: String,
     selected: bool,
+    recent: bool,
+    on_disk: bool,
+    deletable: bool,
+    downloadable: bool,
+    downloading: bool,
+    bytes: u64,
+    size_display: Option<String>,
+    status: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -322,6 +439,11 @@ impl AppState {
         let config = app.displayed_config();
         let memory = app.machine.memory_profile(config);
         let download = app.active_download().map(DownloadState::from_download);
+        let library_download = app
+            .library_fetch
+            .as_ref()
+            .filter(|fetch| fetch.is_active() || fetch.error.is_some())
+            .map(DownloadState::from_library_fetch);
         let settings = SettingField::ALL
             .iter()
             .copied()
@@ -356,26 +478,84 @@ impl AppState {
             .collect();
         let active_preset = app.active_runtime_preset().map(RuntimePreset::id);
         let mapped_size = MappedSizeState::from_app(app);
-        let recent_models = app
-            .model_picker_entries()
+        let server_running = app.process.is_some();
+        let fetch_repo = app
+            .library_fetch
+            .as_ref()
+            .filter(|fetch| fetch.is_active())
+            .map(|fetch| fetch.repo.clone());
+        let fetch_total = app.library_fetch.as_ref().and_then(|fetch| {
+            if fetch.is_active() || fetch.done {
+                fetch.total
+            } else {
+                None
+            }
+        });
+        let mapped_bytes = app.mapped_model_gib().map(|gib| (gib * 1024.0 * 1024.0 * 1024.0) as u64);
+        let map_entry = |index: usize, entry: crate::app::ModelPickerEntry| {
+            let (kind, label) = match &entry.source {
+                crate::config::ModelSource::HuggingFace(id) => ("Hugging Face", id.clone()),
+                crate::config::ModelSource::Local(path) => {
+                    ("Local GGUF", path.display().to_string())
+                }
+            };
+            let downloading = fetch_repo.as_ref().is_some_and(|repo| {
+                matches!(
+                    &entry.source,
+                    crate::config::ModelSource::HuggingFace(id)
+                        if repos_match(id, repo)
+                )
+            });
+            let size_bytes = if downloading {
+                fetch_total.filter(|total| *total > 0).unwrap_or(entry.bytes)
+            } else if entry.bytes > 0 {
+                entry.bytes
+            } else if entry.source == app.config.model.source {
+                mapped_bytes.unwrap_or(0)
+            } else {
+                0
+            };
+            let size_display = format_size_label(size_bytes);
+            let status = if downloading {
+                "Downloading"
+            } else if entry.on_disk {
+                "Ready"
+            } else {
+                "Not downloaded"
+            };
+            let is_hf = matches!(
+                &entry.source,
+                crate::config::ModelSource::HuggingFace(_)
+            );
+            RecentModelState {
+                index,
+                id: label.clone(),
+                kind,
+                label,
+                selected: app.has_active_model() && entry.source == app.config.model.source,
+                recent: entry.recent,
+                on_disk: entry.on_disk,
+                deletable: !server_running && !downloading,
+                downloadable: is_hf && !server_running && !entry.on_disk && fetch_repo.is_none(),
+                downloading,
+                bytes: size_bytes,
+                size_display,
+                status,
+            }
+        };
+        let library: Vec<RecentModelState> = app
+            .library_entries()
             .into_iter()
             .enumerate()
-            .map(|(index, entry)| {
-                let (kind, label) = match &entry.source {
-                    crate::config::ModelSource::HuggingFace(id) => ("Hugging Face", id.clone()),
-                    crate::config::ModelSource::Local(path) => {
-                        ("Local GGUF", path.display().to_string())
-                    }
-                };
-                RecentModelState {
-                    index,
-                    group: entry.group.label(),
-                    kind,
-                    label,
-                    selected: entry.source == app.config.model.source,
-                }
-            })
+            .map(|(index, entry)| map_entry(index, entry))
             .collect();
+        let available: Vec<RecentModelState> = app
+            .available_entries()
+            .into_iter()
+            .enumerate()
+            .map(|(index, entry)| map_entry(index, entry))
+            .collect();
+        let recent_models = library.clone();
 
         Self {
             status: app.status,
@@ -401,7 +581,13 @@ impl AppState {
                 access_summary: access_summary(config),
             },
             mapped_size,
-            download,
+            download: download.or_else(|| {
+                app.library_fetch
+                    .as_ref()
+                    .filter(|fetch| fetch.is_active())
+                    .map(DownloadState::from_library_fetch)
+            }),
+            library_download,
             process: app.process_usage.as_ref().map(|usage| ProcessState {
                 cpu_percent: usage.cpu_percent,
                 resident_memory_gib: usage.resident_memory_gib,
@@ -417,6 +603,9 @@ impl AppState {
                 requests_deferred: metrics.requests_deferred,
             }),
             recent_models,
+            library,
+            available,
+            has_active_model: app.has_active_model(),
             settings,
             cache_type_help,
             presets,
@@ -484,6 +673,45 @@ impl DownloadState {
             summary: download_summary(download),
             progress: download_progress(download),
         }
+    }
+
+    fn from_library_fetch(fetch: &LibraryFetch) -> Self {
+        Self {
+            repo: fetch.repo.clone(),
+            file: fetch.file.clone(),
+            downloaded: fetch.downloaded,
+            total: fetch.total,
+            fraction: fetch.fraction(),
+            rate: fetch.rate(),
+            eta_seconds: fetch.eta().map(|eta| eta.as_secs()),
+            listing_error: fetch.error.clone(),
+            summary: match &fetch.file {
+                Some(file) => format!("Downloading {file} · {}", fetch.repo),
+                None => format!("Downloading {}", fetch.repo),
+            },
+            progress: library_download_progress(fetch),
+        }
+    }
+}
+
+fn library_download_progress(fetch: &LibraryFetch) -> String {
+    let downloaded = format_bytes(fetch.downloaded);
+    match (fetch.total, fetch.rate(), fetch.eta()) {
+        (Some(total), Some(rate), Some(eta)) => format!(
+            "{downloaded} / {} · {}/s · ETA {}",
+            format_bytes(total),
+            format_bytes(rate as u64),
+            format_eta(eta.as_secs())
+        ),
+        (Some(total), Some(rate), None) => {
+            format!(
+                "{downloaded} / {} · {}/s",
+                format_bytes(total),
+                format_bytes(rate as u64)
+            )
+        }
+        (Some(total), None, _) => format!("{downloaded} / {}", format_bytes(total)),
+        _ => downloaded,
     }
 }
 
@@ -598,6 +826,26 @@ fn format_duration(seconds: u64) -> String {
         format!("{minutes}m {secs}s")
     } else {
         format!("{secs}s")
+    }
+}
+
+fn repos_match(left: &str, right: &str) -> bool {
+    fn strip(value: &str) -> &str {
+        value.split(':').next().unwrap_or(value)
+    }
+    left == right || strip(left) == strip(right)
+}
+
+fn format_size_label(bytes: u64) -> Option<String> {
+    if bytes == 0 {
+        return None;
+    }
+    let gib = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+    if gib >= 0.01 {
+        Some(format!("{gib:.2} GiB"))
+    } else {
+        let mib = bytes as f64 / (1024.0 * 1024.0);
+        Some(format!("{mib:.1} MiB"))
     }
 }
 

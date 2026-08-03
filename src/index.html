@@ -184,13 +184,13 @@
       font-size: var(--text-sm);
       font-weight: 500;
       cursor: pointer;
-      transition: transform var(--dur-short) var(--ease-out),
-                  background var(--dur-short) var(--ease-out),
-                  border-color var(--dur-short) var(--ease-out);
+      transition: background var(--dur-short) var(--ease-out),
+                  border-color var(--dur-short) var(--ease-out),
+                  opacity var(--dur-short) var(--ease-out);
     }
-    .btn:hover { transform: translateY(-1px); border-color: var(--color-accent); }
-    .btn:active { transform: none; }
-    .btn:disabled, .btn.is-disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .btn:hover { border-color: var(--color-accent); }
+    .btn:active { opacity: 0.88; }
+    .btn:disabled, .btn.is-disabled { opacity: 0.45; cursor: not-allowed; }
     .btn-primary {
       background: var(--color-accent);
       border-color: var(--color-accent);
@@ -476,6 +476,159 @@
     .dialog h2 { font-size: var(--text-lg); margin-bottom: 0.35rem; }
     .dialog p { margin: 0 0 var(--space-md); color: var(--color-ink-2); font-size: var(--text-sm); }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 0.35rem; }
+    .model-library {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .model-section {
+      display: grid;
+      gap: 0.65rem;
+    }
+    .model-section-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      align-items: end;
+      justify-content: space-between;
+    }
+    .model-section-head h3 {
+      font-size: var(--text-lg);
+      margin-top: 0.15rem;
+    }
+    .model-section-head .field-input {
+      flex: 1;
+      min-width: 10rem;
+      max-width: 16rem;
+    }
+    .model-card {
+      border: 1px solid var(--color-rule);
+      border-radius: var(--radius-panel);
+      background: var(--color-paper);
+      padding: 0.7rem 0.8rem;
+      display: grid;
+      gap: 0.45rem;
+      grid-template-columns: 1fr auto;
+      align-items: start;
+    }
+    .model-card.is-active {
+      border-color: color-mix(in oklch, var(--color-accent) 45%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 8%, var(--color-paper));
+    }
+    .model-card-main { min-width: 0; display: grid; gap: 0.35rem; }
+    .model-card-title {
+      font-family: var(--font-mono);
+      font-size: var(--text-sm);
+      color: var(--color-ink);
+      overflow-wrap: anywhere;
+      min-width: 0;
+    }
+    .model-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      color: var(--color-muted);
+      font-size: var(--text-xs);
+    }
+    .model-pill {
+      border: 1px solid var(--color-rule);
+      border-radius: 999px;
+      padding: 0.1rem 0.45rem;
+      font-family: var(--font-mono);
+      letter-spacing: 0.02em;
+    }
+    .model-pill.is-ok {
+      color: var(--color-ok);
+      border-color: color-mix(in oklch, var(--color-ok) 40%, var(--color-rule));
+    }
+    .model-pill.is-warn {
+      color: var(--color-warn);
+      border-color: color-mix(in oklch, var(--color-warn) 40%, var(--color-rule));
+    }
+    .model-pill.is-accent {
+      color: var(--color-accent);
+      border-color: color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
+    }
+    .model-card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      justify-content: flex-end;
+    }
+    .model-card-progress {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 0.3rem;
+    }
+    .model-empty {
+      color: var(--color-muted);
+      font-size: var(--text-sm);
+      margin: 0;
+      text-align: center;
+      padding: var(--space-md) var(--space-sm);
+    }
+    .model-empty .btn { margin-top: var(--space-sm); }
+    .active-model-card {
+      display: grid;
+      gap: 0.65rem;
+    }
+    .active-model-card .model-title {
+      font-size: var(--text-lg);
+      margin: 0;
+    }
+    @media (max-width: 40rem) {
+      .model-card {
+        grid-template-columns: 1fr;
+      }
+      .model-card-actions { justify-content: flex-start; }
+    }
+    .segmented {
+      display: inline-flex;
+      border: 1px solid var(--color-rule);
+      border-radius: var(--radius-input);
+      overflow: hidden;
+      margin-bottom: var(--space-sm);
+    }
+    .segmented button {
+      border: 0;
+      background: transparent;
+      color: var(--color-muted);
+      padding: 0.4rem 0.75rem;
+      cursor: pointer;
+      font-size: var(--text-sm);
+    }
+    .segmented button.is-active {
+      background: color-mix(in oklch, var(--color-accent) 16%, var(--color-paper));
+      color: var(--color-ink);
+    }
+    .download-banner {
+      border: 1px solid color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 10%, var(--color-paper-2));
+      border-radius: var(--radius-panel);
+      padding: 0.75rem 0.85rem;
+      display: grid;
+      gap: 0.45rem;
+    }
+    .download-banner-row {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--space-sm);
+      align-items: center;
+      font-size: var(--text-sm);
+    }
+    .download-banner-row strong {
+      color: var(--color-ink);
+      font-weight: 600;
+    }
+    .field-check {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin-top: var(--space-sm);
+      font-size: var(--text-sm);
+      color: var(--color-ink-2);
+    }
+    .field-check input { margin-top: 0.2rem; }
 
     .cmdk-backdrop {
       position: fixed; inset: 0;
@@ -521,7 +674,6 @@
     }
     @media (prefers-reduced-motion: reduce) {
       .reveal { opacity: 1; transform: none; transition: none; }
-      .btn:hover { transform: none; }
       .progress-bar { transition: none; }
     }
   </style>
@@ -532,6 +684,7 @@
       <a class="wordmark" href="#dashboard" id="wordmark">tiny<span>inference</span></a>
       <ul class="top-nav" role="tablist" aria-label="Stages">
         <li><button type="button" class="is-active" data-stage="dashboard" role="tab" aria-selected="true">Dash</button></li>
+        <li><button type="button" data-stage="models" role="tab" aria-selected="false">Models</button></li>
         <li><button type="button" data-stage="configure" role="tab" aria-selected="false">Config</button></li>
         <li><button type="button" data-stage="logs" role="tab" aria-selected="false">Logs</button></li>
         <li><button type="button" data-stage="stats" role="tab" aria-selected="false">Stats</button></li>
@@ -597,6 +750,75 @@
       </div>
     </section>
 
+    <section id="models" class="stage-panel is-hidden reveal" data-stage-panel>
+      <div class="stage-head">
+        <div>
+          <p class="eyebrow">Manage</p>
+          <h2>Models</h2>
+        </div>
+        <div class="mast-actions">
+          <button type="button" class="btn btn-primary" id="btnAddModel">Add model</button>
+        </div>
+      </div>
+      <div class="stack">
+        <div id="modelDownloadBanner" class="download-banner is-hidden">
+          <div class="download-banner-row">
+            <strong id="modelDownloadSummary">Downloading…</strong>
+            <button type="button" class="btn btn-ghost" id="btnCancelDownload">Cancel</button>
+          </div>
+          <div id="modelDownloadProgress" class="setting-hint">—</div>
+          <div class="progress"><div id="modelDownloadBar" class="progress-bar"></div></div>
+        </div>
+
+        <div class="panel active-model-card">
+          <div class="eyebrow">Selected for launch</div>
+          <h3 class="model-title" id="modelsActiveLabel">—</h3>
+          <div id="modelsActiveMeta" class="model-card-meta"></div>
+          <div class="size-panel">
+            <div class="eyebrow">Mapped file size</div>
+            <div id="mappedSizeValue" class="size-value is-muted">—</div>
+            <div id="mappedSizeDetail" class="setting-hint">—</div>
+          </div>
+          <div class="model-card-actions" style="justify-content:flex-start">
+            <button type="button" class="btn btn-primary" id="btnStartFromModels">Start server</button>
+            <button type="button" class="btn btn-ghost" id="btnChangeActiveModel">Add different model</button>
+          </div>
+          <p id="modelsError" class="text-error is-hidden"></p>
+        </div>
+
+        <div class="panel model-section">
+          <div class="model-section-head">
+            <div>
+              <p class="eyebrow">Library</p>
+              <h3>My models</h3>
+            </div>
+            <input class="field-input" id="modelFilter" type="search" placeholder="Filter…" autocomplete="off">
+          </div>
+          <div class="setting-hint">
+            Models you added. Use one to select it for launch, download Hugging Face weights into the local cache, or remove a model from the library (and delete its local files).
+          </div>
+          <div id="modelLibrary" class="model-library"></div>
+          <div id="modelLibraryEmpty" class="model-empty is-hidden">
+            <p>Your library is empty. Add a Hugging Face repo or a local .gguf path.</p>
+            <button type="button" class="btn btn-primary" id="btnAddModelEmpty">Add model</button>
+          </div>
+        </div>
+
+        <div id="availableSection" class="panel model-section is-hidden">
+          <div class="model-section-head">
+            <div>
+              <p class="eyebrow">On this machine</p>
+              <h3>Found on disk</h3>
+            </div>
+          </div>
+          <div class="setting-hint">
+            GGUF models discovered in the Hugging Face hub / llama.cpp cache that are not in your library yet. Import to manage them here, or delete the cached files.
+          </div>
+          <div id="modelAvailable" class="model-library"></div>
+        </div>
+      </div>
+    </section>
+
     <section id="configure" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
         <div>
@@ -609,21 +831,11 @@
         </div>
       </div>
       <div class="panel stack-md">
-        <div id="recentModelsBlock" class="is-hidden">
-          <label class="field-label" for="recentModels">Models</label>
-          <select class="field-select" id="recentModels"></select>
-          <div class="setting-hint">Recent picks you have used, plus GGUF models autodiscovered from the local Hugging Face hub / llama.cpp cache (including llama-server downloads).</div>
-        </div>
         <div>
           <label class="field-label" for="runtimePreset">Runtime preset</label>
           <select class="field-select" id="runtimePreset"></select>
           <ul id="runtimePresetHelp" class="choice-help"></ul>
           <div id="runtimePresetWarning" class="preset-warning is-hidden" role="alert"></div>
-        </div>
-        <div class="size-panel">
-          <div class="eyebrow">Model file size</div>
-          <div id="mappedSizeValue" class="size-value is-muted">—</div>
-          <div id="mappedSizeDetail" class="setting-hint">—</div>
         </div>
         <div id="settingsForm" class="settings-grid"></div>
         <p id="settingsError" class="text-error is-hidden"></p>
@@ -662,6 +874,46 @@
     </div>
   </div>
 
+  <div id="deleteModelModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="deleteModelTitle">
+    <div class="dialog">
+      <h2 id="deleteModelTitle">Remove model?</h2>
+      <p id="deleteModelBody">This removes the model from your library and deletes local cache files. Nothing on Hugging Face is deleted.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="btnCancelDeleteModel">Cancel</button>
+        <button type="button" class="btn btn-danger" id="btnConfirmDeleteModel">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="addModelModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="addModelTitle">
+    <div class="dialog" style="width:min(28rem,100%)">
+      <h2 id="addModelTitle">Add a model</h2>
+      <div class="segmented" role="tablist" aria-label="Model source">
+        <button type="button" class="is-active" data-add-kind="hugging_face">Hugging Face</button>
+        <button type="button" data-add-kind="local">Local GGUF</button>
+      </div>
+      <div id="addModelHfFields">
+        <label class="field-label" for="addModelValueHf">Repository</label>
+        <input class="field-input" id="addModelValueHf" type="text" placeholder="owner/model or Hugging Face URL" autocomplete="off" spellcheck="false">
+        <div class="setting-hint">Paste owner/model, a quant tag like owner/model:Q4_K_M, or a huggingface.co link.</div>
+        <label class="field-check">
+          <input type="checkbox" id="addModelDownload" checked>
+          <span>Download now into the local cache (shows live progress)</span>
+        </label>
+      </div>
+      <div id="addModelLocalFields" class="is-hidden">
+        <label class="field-label" for="addModelValueLocal">GGUF path</label>
+        <input class="field-input" id="addModelValueLocal" type="text" placeholder="C:\models\model.gguf" autocomplete="off" spellcheck="false">
+        <div class="setting-hint">Full path to a .gguf file already on this machine.</div>
+      </div>
+      <p id="addModelError" class="text-error is-hidden"></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="btnCancelAddModel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btnConfirmAddModel">Add model</button>
+      </div>
+    </div>
+  </div>
+
   <div id="cmdk" class="cmdk-backdrop is-hidden" role="dialog" aria-modal="true" aria-label="Command palette">
     <div class="cmdk">
       <input id="cmdkInput" type="text" placeholder="Jump or run a command…" autocomplete="off">
@@ -676,11 +928,93 @@
     let activeStage = 'dashboard';
     let cmdkIndex = 0;
     let cmdkItems = [];
+    let modelFilter = '';
+    let addModelKind = 'hugging_face';
+    let lastLibrarySignature = '';
+    const MODEL_SETTING_FIELDS = new Set(['source_kind', 'model']);
 
     const missingModal = {
       show() { document.getElementById('missingServerModal').classList.remove('is-hidden'); },
       hide() { document.getElementById('missingServerModal').classList.add('is-hidden'); },
     };
+
+    const deleteModelModal = {
+      id: null,
+      scope: 'library',
+      show(model, scope = 'library') {
+        this.id = model.id || model.label;
+        this.scope = scope;
+        const title = document.getElementById('deleteModelTitle');
+        const body = document.getElementById('deleteModelBody');
+        const confirm = document.getElementById('btnConfirmDeleteModel');
+        if (scope === 'available') {
+          title.textContent = 'Delete cached files?';
+          body.textContent = `Delete local files for ${model.label}? This does not remove anything on Hugging Face.`;
+          confirm.textContent = 'Delete files';
+        } else {
+          title.textContent = 'Remove model?';
+          body.textContent = model.kind === 'Hugging Face'
+            ? `Remove ${model.label} from your library and delete its local cache files? You can add and download it again later.`
+            : `Remove ${model.label} from your library and delete the local GGUF file? This cannot be undone.`;
+          confirm.textContent = 'Remove';
+        }
+        document.getElementById('deleteModelModal').classList.remove('is-hidden');
+      },
+      hide() {
+        this.id = null;
+        this.scope = 'library';
+        document.getElementById('deleteModelModal').classList.add('is-hidden');
+      },
+    };
+
+    const addModelModal = {
+      show(prefill = '') {
+        document.getElementById('addModelError').classList.add('is-hidden');
+        setAddModelKind(addModelKind);
+        if (addModelKind === 'hugging_face') {
+          document.getElementById('addModelValueHf').value = prefill;
+          document.getElementById('addModelDownload').checked = true;
+        } else {
+          document.getElementById('addModelValueLocal').value = prefill;
+        }
+        document.getElementById('addModelModal').classList.remove('is-hidden');
+        setTimeout(() => {
+          const input = addModelKind === 'hugging_face'
+            ? document.getElementById('addModelValueHf')
+            : document.getElementById('addModelValueLocal');
+          input?.focus();
+          input?.select();
+        }, 40);
+      },
+      hide() {
+        document.getElementById('addModelModal').classList.add('is-hidden');
+      },
+    };
+
+    function setAddModelKind(kind) {
+      addModelKind = kind;
+      document.querySelectorAll('#addModelModal [data-add-kind]').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.dataset.addKind === kind);
+      });
+      document.getElementById('addModelHfFields').classList.toggle('is-hidden', kind !== 'hugging_face');
+      document.getElementById('addModelLocalFields').classList.toggle('is-hidden', kind !== 'local');
+    }
+
+    function showModelsError(error) {
+      const el = document.getElementById('modelsError');
+      el.textContent = error.message || String(error);
+      el.classList.remove('is-hidden');
+    }
+
+    function clearModelsError() {
+      document.getElementById('modelsError').classList.add('is-hidden');
+    }
+
+    function showAddModelError(error) {
+      const el = document.getElementById('addModelError');
+      el.textContent = error.message || String(error);
+      el.classList.remove('is-hidden');
+    }
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
@@ -796,7 +1130,9 @@
         next.machine.physical_cpus;
       document.getElementById('configPathLine').textContent = 'Config · ' + next.config_path;
 
-      renderRecentModels(next);
+      renderActiveModel(next);
+      renderLibraryDownload(next);
+      renderModelLibrary(next);
       renderPresets(next);
       renderSettings(next);
       renderLogs(next);
@@ -809,34 +1145,322 @@
       if (!next.missing_server) missingModal.hide();
     }
 
-    function renderRecentModels(next) {
-      const block = document.getElementById('recentModelsBlock');
-      const select = document.getElementById('recentModels');
-      if (document.activeElement === select) return;
-      if (!next.recent_models.length) {
-        block.classList.add('is-hidden');
-        select.innerHTML = '';
+    function libraryModels(next) {
+      return next.library || next.recent_models || [];
+    }
+
+    function availableModels(next) {
+      return next.available || [];
+    }
+
+    function matchesFilter(model) {
+      if (!modelFilter) return true;
+      const q = modelFilter.toLowerCase();
+      return model.label.toLowerCase().includes(q)
+        || model.kind.toLowerCase().includes(q)
+        || model.status.toLowerCase().includes(q);
+    }
+
+    function modelPills(model) {
+      const pills = [
+        `<span class="model-pill">${escapeHtml(model.kind)}</span>`,
+        `<span class="model-pill ${model.downloading ? 'is-accent' : model.on_disk ? 'is-ok' : 'is-warn'}">${escapeHtml(model.status)}</span>`,
+      ];
+      if (model.size_display) {
+        pills.push(`<span class="model-pill" data-size-pill>${escapeHtml(model.size_display)}</span>`);
+      }
+      if (model.selected) pills.push('<span class="model-pill is-accent">Selected</span>');
+      return pills.join('');
+    }
+
+    function librarySignature(next) {
+      const pack = (models, scope) => models.map((model) => [
+        scope,
+        model.id || model.label,
+        model.selected ? 1 : 0,
+        model.on_disk ? 1 : 0,
+        model.downloadable ? 1 : 0,
+        model.deletable ? 1 : 0,
+        model.downloading ? 1 : 0,
+        model.kind,
+        model.downloading ? 'Downloading' : model.status,
+      ].join('\x1f')).join('\x1e');
+      return [
+        modelFilter,
+        pack(libraryModels(next), 'library'),
+        pack(availableModels(next), 'available'),
+      ].join('|');
+    }
+
+    function findModelCard(id) {
+      const cards = document.querySelectorAll('.model-card[data-id]');
+      for (const card of cards) {
+        if (card.dataset.id === id) return card;
+      }
+      return null;
+    }
+
+    function patchModelLibraryLive(next) {
+      const models = [...libraryModels(next), ...availableModels(next)];
+      for (const model of models) {
+        const id = model.id || model.label;
+        const card = findModelCard(id);
+        if (!card) continue;
+        const meta = card.querySelector('.model-card-meta');
+        if (meta) {
+          let sizePill = meta.querySelector('[data-size-pill]');
+          if (model.size_display) {
+            if (!sizePill) {
+              sizePill = document.createElement('span');
+              sizePill.className = 'model-pill';
+              sizePill.dataset.sizePill = '';
+              meta.appendChild(sizePill);
+            }
+            if (sizePill.textContent !== model.size_display) {
+              sizePill.textContent = model.size_display;
+            }
+          } else if (sizePill) {
+            sizePill.remove();
+          }
+          const statusPill = meta.querySelectorAll('.model-pill')[1];
+          if (statusPill && !statusPill.dataset.sizePill) {
+            const cls = model.downloading ? 'is-accent' : model.on_disk ? 'is-ok' : 'is-warn';
+            statusPill.className = 'model-pill ' + cls;
+            if (statusPill.textContent !== model.status) statusPill.textContent = model.status;
+          }
+        }
+        let progress = card.querySelector('.model-card-progress');
+        if (model.downloading && next.library_download) {
+          const pct = next.library_download.fraction != null ? (next.library_download.fraction * 100) : 0;
+          const text = next.library_download.progress || 'Starting…';
+          if (!progress) {
+            progress = document.createElement('div');
+            progress.className = 'model-card-progress';
+            progress.innerHTML = '<div class="setting-hint"></div><div class="progress"><div class="progress-bar"></div></div>';
+            card.appendChild(progress);
+          }
+          const hint = progress.querySelector('.setting-hint');
+          const bar = progress.querySelector('.progress-bar');
+          if (hint && hint.textContent !== text) hint.textContent = text;
+          if (bar) bar.style.width = pct + '%';
+        } else if (progress) {
+          progress.remove();
+        }
+      }
+    }
+
+    function handleModelActionClick(event) {
+      const btn = event.target.closest('button[data-action]');
+      if (!btn || btn.disabled || !state) return;
+      const root = btn.closest('#modelLibrary, #modelAvailable');
+      if (!root) return;
+      event.preventDefault();
+      const scope = root.id === 'modelAvailable' ? 'available' : 'library';
+      const id = btn.dataset.id;
+      const models = scope === 'available' ? availableModels(state) : libraryModels(state);
+      const model = models.find((item) => (item.id || item.label) === id);
+      if (!model) return;
+      if (btn.dataset.action === 'use') selectLibraryModel(id);
+      if (btn.dataset.action === 'download') downloadLibraryModel(id);
+      if (btn.dataset.action === 'import') importAvailableModel(id);
+      if (btn.dataset.action === 'delete' && model.deletable) {
+        deleteModelModal.show(model, scope);
+      }
+    }
+
+    function renderActiveModel(next) {
+      const hasModel = !!next.has_active_model;
+      document.getElementById('modelsActiveLabel').textContent = hasModel ? (next.model || '—') : 'No model selected';
+      const active = libraryModels(next).find((model) => model.selected);
+      const meta = document.getElementById('modelsActiveMeta');
+      const signature = (!hasModel || !active)
+        ? 'empty'
+        : [active.id || active.label, active.kind, active.status, active.on_disk ? 1 : 0, active.downloading ? 1 : 0, active.selected ? 1 : 0].join('|');
+      if (meta.dataset.signature !== signature) {
+        meta.dataset.signature = signature;
+        meta.innerHTML = (!hasModel || !active)
+          ? '<span class="model-pill is-warn">Add or import a model to launch</span>'
+          : modelPills(active);
+      } else if (active?.size_display) {
+        let sizePill = meta.querySelector('[data-size-pill]');
+        if (!sizePill) {
+          sizePill = document.createElement('span');
+          sizePill.className = 'model-pill';
+          sizePill.dataset.sizePill = '';
+          meta.appendChild(sizePill);
+        }
+        if (sizePill.textContent !== active.size_display) {
+          sizePill.textContent = active.size_display;
+        }
+      }
+      const startBtn = document.getElementById('btnStartFromModels');
+      startBtn.textContent = next.running ? 'Server running' : 'Start server';
+      startBtn.disabled = !!next.running || !hasModel;
+    }
+
+    function renderLibraryDownload(next) {
+      const banner = document.getElementById('modelDownloadBanner');
+      const download = next.library_download;
+      if (!download || download.listing_error) {
+        if (download?.listing_error) {
+          banner.classList.remove('is-hidden');
+          document.getElementById('modelDownloadSummary').textContent = 'Download failed';
+          document.getElementById('modelDownloadProgress').textContent = download.listing_error;
+          document.getElementById('modelDownloadBar').style.width = '0%';
+          document.getElementById('btnCancelDownload').classList.add('is-hidden');
+          return;
+        }
+        banner.classList.add('is-hidden');
         return;
       }
-      block.classList.remove('is-hidden');
-      const selected = next.recent_models.find((model) => model.selected);
-      const groups = [];
-      for (const model of next.recent_models) {
-        const group = model.group || 'Recent';
-        let bucket = groups.find((item) => item.label === group);
-        if (!bucket) {
-          bucket = { label: group, models: [] };
-          groups.push(bucket);
+      banner.classList.remove('is-hidden');
+      document.getElementById('btnCancelDownload').classList.remove('is-hidden');
+      document.getElementById('modelDownloadSummary').textContent = download.summary;
+      document.getElementById('modelDownloadProgress').textContent = download.progress;
+      const pct = download.fraction != null ? (download.fraction * 100) : 0;
+      document.getElementById('modelDownloadBar').style.width = pct + '%';
+    }
+
+    function renderLibraryCard(model, next, scope) {
+      const id = model.id || model.label;
+      const actions = [];
+      if (scope === 'available') {
+        actions.push(`<button type="button" class="btn btn-primary" data-action="import" data-id="${escapeHtml(id)}">Import</button>`);
+        actions.push(`<button type="button" class="btn btn-ghost" data-action="delete" data-id="${escapeHtml(id)}" ${model.deletable ? '' : 'disabled'}>Delete files</button>`);
+      } else {
+        if (model.downloadable) {
+          actions.push(`<button type="button" class="btn btn-primary" data-action="download" data-id="${escapeHtml(id)}">Download</button>`);
         }
-        bucket.models.push(model);
+        if (!model.selected) {
+          actions.push(`<button type="button" class="btn btn-ghost" data-action="use" data-id="${escapeHtml(id)}">Use</button>`);
+        } else {
+          actions.push('<button type="button" class="btn btn-ghost" disabled>Selected</button>');
+        }
+        actions.push(`<button type="button" class="btn btn-ghost" data-action="delete" data-id="${escapeHtml(id)}" ${model.deletable ? '' : 'disabled'}>Remove</button>`);
       }
-      select.innerHTML = groups.map((group) => {
-        const options = group.models.map((model) =>
-          `<option value="${model.index}">${model.kind} · ${escapeHtml(model.label)}</option>`
-        ).join('');
-        return `<optgroup label="${escapeHtml(group.label)}">${options}</optgroup>`;
-      }).join('');
-      select.value = String(selected ? selected.index : next.recent_models[0].index);
+      let progress = '';
+      if (model.downloading && next.library_download) {
+        const pct = next.library_download.fraction != null ? (next.library_download.fraction * 100) : 0;
+        progress = `
+          <div class="model-card-progress">
+            <div class="setting-hint">${escapeHtml(next.library_download.progress || 'Starting…')}</div>
+            <div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>
+          </div>
+        `;
+      }
+      return `
+        <article class="model-card ${model.selected ? 'is-active' : ''}" data-id="${escapeHtml(id)}">
+          <div class="model-card-main">
+            <div class="model-card-title">${escapeHtml(model.label)}</div>
+            <div class="model-card-meta">${modelPills(model)}</div>
+          </div>
+          <div class="model-card-actions">${actions.join('')}</div>
+          ${progress}
+        </article>
+      `;
+    }
+
+    function renderModelLibrary(next, force = false) {
+      const library = document.getElementById('modelLibrary');
+      const empty = document.getElementById('modelLibraryEmpty');
+      const availableRoot = document.getElementById('modelAvailable');
+      const availableSection = document.getElementById('availableSection');
+      if (!library) return;
+
+      const signature = librarySignature(next);
+      if (!force && signature === lastLibrarySignature) {
+        patchModelLibraryLive(next);
+        return;
+      }
+      lastLibrarySignature = signature;
+
+      const models = libraryModels(next);
+      const filtered = models.filter(matchesFilter);
+      if (!models.length) {
+        library.innerHTML = '';
+        empty.classList.remove('is-hidden');
+      } else {
+        empty.classList.add('is-hidden');
+        library.innerHTML = filtered.length
+          ? filtered.map((model) => renderLibraryCard(model, next, 'library')).join('')
+          : '<p class="model-empty">No models match this filter.</p>';
+      }
+
+      const available = availableModels(next);
+      if (!available.length) {
+        availableSection.classList.add('is-hidden');
+        availableRoot.innerHTML = '';
+        return;
+      }
+      availableSection.classList.remove('is-hidden');
+      const availableFiltered = available.filter(matchesFilter);
+      availableRoot.innerHTML = availableFiltered.length
+        ? availableFiltered.map((model) => renderLibraryCard(model, next, 'available')).join('')
+        : '<p class="model-empty">No on-disk models match this filter.</p>';
+    }
+
+    async function selectLibraryModel(id) {
+      try {
+        clearModelsError();
+        applyState(await api('/api/models/select', {
+          method: 'POST',
+          body: JSON.stringify({ id }),
+        }));
+      } catch (error) {
+        showModelsError(error);
+      }
+    }
+
+    async function downloadLibraryModel(id) {
+      try {
+        clearModelsError();
+        applyState(await api('/api/models/download', {
+          method: 'POST',
+          body: JSON.stringify({ id }),
+        }));
+      } catch (error) {
+        showModelsError(error);
+      }
+    }
+
+    async function importAvailableModel(id) {
+      try {
+        clearModelsError();
+        applyState(await api('/api/models/import', {
+          method: 'POST',
+          body: JSON.stringify({ id }),
+        }));
+      } catch (error) {
+        showModelsError(error);
+      }
+    }
+
+    async function confirmAddModel() {
+      const value = addModelKind === 'hugging_face'
+        ? document.getElementById('addModelValueHf').value.trim()
+        : document.getElementById('addModelValueLocal').value.trim();
+      if (!value) {
+        showAddModelError(new Error(addModelKind === 'hugging_face'
+          ? 'Enter a Hugging Face repository.'
+          : 'Enter a local .gguf path.'));
+        return;
+      }
+      try {
+        document.getElementById('addModelError').classList.add('is-hidden');
+        const next = await api('/api/models/add', {
+          method: 'POST',
+          body: JSON.stringify({
+            kind: addModelKind,
+            value,
+            download: addModelKind === 'hugging_face' && document.getElementById('addModelDownload').checked,
+          }),
+        });
+        addModelModal.hide();
+        applyState(next);
+        showStage('models');
+      } catch (error) {
+        showAddModelError(error);
+      }
     }
 
     function formatPresetWarning(text) {
@@ -896,14 +1520,17 @@
         .replaceAll('"', '&quot;');
     }
 
-    function appendSettingControl(col, setting) {
+    function appendSettingControl(col, setting, options = {}) {
+      const onDirty = options.onDirty || (() => { settingsDirty = true; });
+      const onSettled = options.onSettled || (() => { settingsDirty = false; });
+      const onError = options.onError || showSettingsError;
       if (setting.field === 'source_kind') {
         const select = document.createElement('select');
         select.className = 'field-select';
         select.id = 'setting-' + setting.id;
         select.innerHTML = '<option value="hugging_face">Hugging Face</option><option value="local">Local GGUF</option>';
         select.value = setting.raw;
-        select.addEventListener('change', () => updateSetting(setting.field, select.value));
+        select.addEventListener('change', () => updateSetting(setting.field, select.value, onError).finally(onSettled));
         col.appendChild(select);
       } else if (setting.choices && setting.choices.length) {
         const select = document.createElement('select');
@@ -914,7 +1541,7 @@
         ).join('');
         select.value = setting.raw;
         select.disabled = !setting.editable;
-        select.addEventListener('change', () => updateSetting(setting.field, select.value));
+        select.addEventListener('change', () => updateSetting(setting.field, select.value, onError).finally(onSettled));
         col.appendChild(select);
       } else if (setting.toggle) {
         const wrap = document.createElement('div');
@@ -923,7 +1550,7 @@
         input.type = 'checkbox';
         input.id = 'setting-' + setting.id;
         input.checked = setting.raw === 'true';
-        input.addEventListener('change', () => api('/api/settings/' + setting.field + '/toggle', { method: 'POST' }).then(applyState).catch(showSettingsError));
+        input.addEventListener('change', () => api('/api/settings/' + setting.field + '/toggle', { method: 'POST' }).then(applyState).catch(onError));
         const checkLabel = document.createElement('label');
         checkLabel.setAttribute('for', input.id);
         checkLabel.textContent = setting.value;
@@ -936,10 +1563,10 @@
         input.id = 'setting-' + setting.id;
         input.value = setting.raw;
         input.disabled = !setting.editable;
-        input.addEventListener('input', () => { settingsDirty = true; });
+        input.addEventListener('input', onDirty);
         input.addEventListener('change', () => {
           if (!setting.editable) return;
-          updateSetting(setting.field, input.value).finally(() => { settingsDirty = false; });
+          updateSetting(setting.field, input.value, onError).finally(onSettled);
         });
         col.appendChild(input);
       }
@@ -1004,6 +1631,7 @@
       form.innerHTML = '';
       const seen = new Set();
       for (const setting of next.settings) {
+        if (MODEL_SETTING_FIELDS.has(setting.field)) continue;
         if (seen.has(setting.field)) continue;
         if (setting.field === 'cache_type_k' || setting.field === 'cache_type_v') {
           const keySetting = next.settings.find((item) => item.field === 'cache_type_k');
@@ -1061,16 +1689,17 @@
       ).join('');
     }
 
-    async function updateSetting(field, value) {
+    async function updateSetting(field, value, onError = showSettingsError) {
       try {
         document.getElementById('settingsError').classList.add('is-hidden');
+        clearModelsError();
         const next = await api('/api/settings', {
           method: 'POST',
           body: JSON.stringify({ field, value }),
         });
         applyState(next);
       } catch (error) {
-        showSettingsError(error);
+        onError(error);
       }
     }
 
@@ -1092,9 +1721,11 @@
     function openCmdk() {
       cmdkItems = [
         { label: 'Go to Dashboard', hint: '1', run: () => showStage('dashboard') },
-        { label: 'Go to Configure', hint: '2', run: () => showStage('configure') },
-        { label: 'Go to Logs', hint: '3', run: () => showStage('logs') },
-        { label: 'Go to Stats', hint: '4', run: () => showStage('stats') },
+        { label: 'Go to Models', hint: '2', run: () => showStage('models') },
+        { label: 'Go to Configure', hint: '3', run: () => showStage('configure') },
+        { label: 'Go to Logs', hint: '4', run: () => showStage('logs') },
+        { label: 'Go to Stats', hint: '5', run: () => showStage('stats') },
+        { label: 'Add model', hint: '', run: () => { showStage('models'); addModelModal.show(); } },
         { label: state?.running ? 'Stop llama-server' : 'Start llama-server', hint: 'S', run: () => document.getElementById('btnStartStop').click() },
         { label: 'Restart llama-server', hint: 'R', run: () => document.getElementById('btnRestart').click() },
         { label: 'Save config', hint: '⌘S', run: () => document.getElementById('btnSaveDash').click() },
@@ -1172,17 +1803,87 @@
     document.getElementById('btnSaveDash').addEventListener('click', async () => {
       applyState(await api('/api/save', { method: 'POST' }));
     });
-    document.getElementById('recentModels').addEventListener('change', async (event) => {
-      settingsDirty = false;
+    document.getElementById('btnAddModel').addEventListener('click', () => addModelModal.show());
+    document.getElementById('btnAddModelEmpty').addEventListener('click', () => addModelModal.show());
+    document.getElementById('btnChangeActiveModel').addEventListener('click', () => {
+      const prefill = state?.has_active_model ? (state.model || '') : '';
+      addModelModal.show(prefill === 'No model selected' ? '' : prefill);
+    });
+    document.getElementById('btnStartFromModels').addEventListener('click', async () => {
+      if (state?.running || !state?.has_active_model) return;
       try {
-        document.getElementById('settingsError').classList.add('is-hidden');
-        applyState(await api('/api/settings/model/select', {
+        clearModelsError();
+        applyState(await api('/api/start', { method: 'POST' }));
+        showStage('dashboard');
+      } catch (error) {
+        showModelsError(error);
+      }
+    });
+    document.getElementById('modelFilter').addEventListener('input', (event) => {
+      modelFilter = event.target.value.trim();
+      if (state) renderModelLibrary(state, true);
+    });
+    document.getElementById('modelLibrary').addEventListener('click', handleModelActionClick);
+    document.getElementById('modelAvailable').addEventListener('click', handleModelActionClick);
+    document.querySelectorAll('#addModelModal [data-add-kind]').forEach((btn) => {
+      btn.addEventListener('click', () => setAddModelKind(btn.dataset.addKind));
+    });
+    document.getElementById('btnCancelAddModel').addEventListener('click', () => addModelModal.hide());
+    document.getElementById('btnConfirmAddModel').addEventListener('click', () => confirmAddModel());
+    document.getElementById('addModelModal').addEventListener('click', (event) => {
+      if (event.target.id === 'addModelModal') addModelModal.hide();
+    });
+    document.getElementById('addModelValueHf').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); confirmAddModel(); }
+    });
+    document.getElementById('addModelValueLocal').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); confirmAddModel(); }
+    });
+    document.getElementById('btnCancelDownload').addEventListener('click', async () => {
+      try {
+        clearModelsError();
+        applyState(await api('/api/models/download/cancel', { method: 'POST' }));
+      } catch (error) {
+        showModelsError(error);
+      }
+    });
+    document.getElementById('btnCancelDeleteModel').addEventListener('click', () => {
+      deleteModelModal.hide();
+    });
+    document.getElementById('btnConfirmDeleteModel').addEventListener('click', async () => {
+      const id = deleteModelModal.id;
+      const scope = deleteModelModal.scope || 'library';
+      deleteModelModal.hide();
+      if (!id) return;
+      // Optimistic removal so the row cannot "stick" while waiting on the next poll.
+      if (state) {
+        if (scope === 'available') {
+          state.available = availableModels(state).filter((model) => (model.id || model.label) !== id);
+        } else {
+          state.library = libraryModels(state).filter((model) => (model.id || model.label) !== id);
+          state.recent_models = state.library;
+          if (state.model === id) {
+            state.has_active_model = false;
+            state.model = 'No model selected';
+          }
+        }
+        lastLibrarySignature = '';
+        renderActiveModel(state);
+        renderModelLibrary(state, true);
+      }
+      try {
+        clearModelsError();
+        applyState(await api('/api/models/delete', {
           method: 'POST',
-          body: JSON.stringify({ index: Number(event.target.value) }),
+          body: JSON.stringify({ id, scope }),
         }));
       } catch (error) {
-        showSettingsError(error);
+        showModelsError(error);
+        try { applyState(await api('/api/state')); } catch (_) {}
       }
+    });
+    document.getElementById('deleteModelModal').addEventListener('click', (event) => {
+      if (event.target.id === 'deleteModelModal') deleteModelModal.hide();
     });
     document.getElementById('btnCopyEndpoint').addEventListener('click', async () => {
       const data = await api('/api/copy/endpoint', { method: 'POST' });
@@ -1236,9 +1937,20 @@
       }
       if (event.target.matches('input, textarea, select')) return;
       if (event.key === '1') showStage('dashboard');
-      if (event.key === '2') showStage('configure');
-      if (event.key === '3') showStage('logs');
-      if (event.key === '4') showStage('stats');
+      if (event.key === '2') showStage('models');
+      if (event.key === '3') showStage('configure');
+      if (event.key === '4') showStage('logs');
+      if (event.key === '5') showStage('stats');
+      if (event.key === 'Escape') {
+        if (!document.getElementById('deleteModelModal').classList.contains('is-hidden')) {
+          deleteModelModal.hide();
+          return;
+        }
+        if (!document.getElementById('addModelModal').classList.contains('is-hidden')) {
+          addModelModal.hide();
+          return;
+        }
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
         document.getElementById('btnSaveDash').click();

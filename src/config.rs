@@ -322,6 +322,8 @@ impl Config {
 
     pub fn model_label(&self) -> String {
         match &self.model.source {
+            ModelSource::HuggingFace(id) if id.trim().is_empty() => "No model selected".into(),
+            ModelSource::Local(path) if path.as_os_str().is_empty() => "No model selected".into(),
             ModelSource::HuggingFace(id) => id.clone(),
             ModelSource::Local(path) => path.display().to_string(),
         }
@@ -358,6 +360,13 @@ impl Config {
     }
 
     pub fn remember_model(&mut self, source: ModelSource) {
+        let empty = match &source {
+            ModelSource::HuggingFace(id) => id.trim().is_empty(),
+            ModelSource::Local(path) => path.as_os_str().is_empty(),
+        };
+        if empty {
+            return;
+        }
         self.recent_models.retain(|recent| recent != &source);
         self.recent_models.insert(0, source);
         self.recent_models.truncate(8);
@@ -424,6 +433,9 @@ impl Config {
             errors.push(format!("cache_type_v: {error}"));
         }
         match &self.model.source {
+            ModelSource::HuggingFace(id) if id.trim().is_empty() => {
+                errors.push("Select a model in the Models tab before starting".into());
+            }
             ModelSource::HuggingFace(id) => {
                 if !valid_repository_id(id) {
                     errors.push("Hugging Face model ID must be owner/model".into());
@@ -433,6 +445,9 @@ impl Config {
                 {
                     errors.push("estimated file size must be between 0.1 and 100000 GiB".into());
                 }
+            }
+            ModelSource::Local(path) if path.as_os_str().is_empty() => {
+                errors.push("Select a model in the Models tab before starting".into());
             }
             ModelSource::Local(path) => {
                 if !path.is_file() {
@@ -472,7 +487,7 @@ impl Config {
     }
 }
 
-fn split_gguf_paths(path: &Path) -> Option<Vec<PathBuf>> {
+pub(crate) fn split_gguf_paths(path: &Path) -> Option<Vec<PathBuf>> {
     let file_name = path.file_name()?.to_str()?;
     let extension_start = file_name.len().checked_sub(5)?;
     let extension = file_name.get(extension_start..)?;

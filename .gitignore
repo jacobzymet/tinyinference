@@ -9,6 +9,9 @@ Thumbs.db
 # Optional project-local launch profile; the committed example remains tracked.
 /tinyinference.toml
 
+# Written by unit tests that use a local config path stub.
+/test.toml
+
 /design.md
 .agents/skills/
 skills-lock.json

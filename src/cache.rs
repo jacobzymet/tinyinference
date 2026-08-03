@@ -19,6 +19,8 @@ use std::{
 
 use directories::BaseDirs;
 
+use crate::config::ModelSource;
+
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 const PARTIAL_SUFFIXES: [&str; 2] = [".downloadInProgress", ".incomplete"];
 
@@ -222,6 +224,179 @@ impl DiscoveredModel {
     }
 }
 
+/// What a local delete removed from disk.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeleteReport {
+    pub removed_paths: Vec<PathBuf>,
+    pub freed_bytes: u64,
+}
+
+/// Whether this model still has files on disk that tinyinference can remove.
+///
+/// For Hugging Face sources this means a hub cache directory and/or flat
+/// llama.cpp cache files. For local sources it means the GGUF path exists.
+pub fn has_local_files(source: &ModelSource) -> bool {
+    match source {
+        ModelSource::HuggingFace(repo) => huggingface_cache_paths(repo)
+            .into_iter()
+            .any(|path| path.exists()),
+        ModelSource::Local(path) => path.is_file(),
+    }
+}
+
+/// Approximate bytes occupied locally by this model source.
+pub fn local_bytes(source: &ModelSource) -> u64 {
+    match source {
+        ModelSource::HuggingFace(repo) => huggingface_cache_paths(repo)
+            .into_iter()
+            .map(|path| path_bytes(&path))
+            .fold(0, u64::saturating_add),
+        ModelSource::Local(path) => {
+            let paths = crate::config::split_gguf_paths(path).unwrap_or_else(|| vec![path.clone()]);
+            paths
+                .iter()
+                .map(|path| path_bytes(path))
+                .fold(0, u64::saturating_add)
+        }
+    }
+}
+
+/// Remove a model's local cache files.
+///
+/// Hugging Face repos are deleted the same way as `hf cache rm model/<repo>`:
+/// the whole `models--owner--repo` hub directory (and matching llama.cpp flat
+/// cache files / lock dirs). Local GGUF paths delete the file itself.
+pub fn delete_local_files(source: &ModelSource) -> Result<DeleteReport, String> {
+    match source {
+        ModelSource::HuggingFace(repo) => delete_huggingface_repo(repo),
+        ModelSource::Local(path) => {
+            let paths = crate::config::split_gguf_paths(path).unwrap_or_else(|| vec![path.clone()]);
+            delete_files(&paths)
+        }
+    }
+}
+
+fn delete_huggingface_repo(repo: &str) -> Result<DeleteReport, String> {
+    let paths = huggingface_cache_paths(repo);
+    if paths.is_empty() {
+        return Err("Not a valid Hugging Face repository id.".into());
+    }
+    let existing: Vec<PathBuf> = paths.into_iter().filter(|path| path.exists()).collect();
+    if existing.is_empty() {
+        return Err("No local cache found for this model.".into());
+    }
+
+    let mut report = DeleteReport::default();
+    for path in existing {
+        let bytes = path_bytes(&path);
+        remove_path(&path)?;
+        report.freed_bytes = report.freed_bytes.saturating_add(bytes);
+        report.removed_paths.push(path);
+    }
+    Ok(report)
+}
+
+fn delete_files(paths: &[PathBuf]) -> Result<DeleteReport, String> {
+    let mut targets = Vec::new();
+    for path in paths {
+        if path.is_file() {
+            targets.push(path.clone());
+        }
+        for suffix in PARTIAL_SUFFIXES {
+            let partial = PathBuf::from(format!("{}{suffix}", path.display()));
+            if partial.is_file() {
+                targets.push(partial);
+            }
+        }
+    }
+    targets.sort();
+    targets.dedup();
+    if targets.is_empty() {
+        return Err("No local model file found to delete.".into());
+    }
+
+    let mut report = DeleteReport::default();
+    for path in targets {
+        let bytes = path_bytes(&path);
+        remove_path(&path)?;
+        report.freed_bytes = report.freed_bytes.saturating_add(bytes);
+        report.removed_paths.push(path);
+    }
+    Ok(report)
+}
+
+fn huggingface_cache_paths(repo: &str) -> Vec<PathBuf> {
+    huggingface_cache_paths_in(repo, &hub_roots(), &flat_roots())
+}
+
+fn huggingface_cache_paths_in(repo: &str, hubs: &[PathBuf], flats: &[PathBuf]) -> Vec<PathBuf> {
+    let Some((owner, name)) = split_repo(repo) else {
+        return Vec::new();
+    };
+    let hub_directory = format!("models--{owner}--{name}");
+    let flat_prefix = format!("{owner}_{name}_");
+    let mut paths = Vec::new();
+    for root in hubs {
+        let model_dir = root.join(&hub_directory);
+        if model_dir.exists() {
+            paths.push(model_dir);
+        }
+        let lock_dir = root.join(".locks").join(&hub_directory);
+        if lock_dir.exists() {
+            paths.push(lock_dir);
+        }
+    }
+    for root in flats {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if file_name.starts_with(&flat_prefix) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    let result = if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    result.map_err(|error| format!("could not delete {}: {error}", path.display()))
+}
+
+fn path_bytes(path: &Path) -> u64 {
+    if path.is_file() {
+        return fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+    }
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let child = entry.path();
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                stack.push(child);
+            } else if metadata.is_file() {
+                total = total.saturating_add(metadata.len());
+            }
+        }
+    }
+    total
+}
+
 /// `models--owner--repo` → `(owner, repo)`.
 fn parse_hub_dir(name: &str) -> Option<(String, String)> {
     let rest = name.strip_prefix("models--")?;
@@ -371,6 +546,20 @@ fn read_blobs(directory: &Path) -> Vec<CachedBlob> {
             })
         })
         .collect()
+}
+
+/// Preferred Hugging Face hub cache root for new downloads.
+pub fn default_hub_root() -> PathBuf {
+    hub_roots().into_iter().next().unwrap_or_else(|| {
+        BaseDirs::new()
+            .map(|dirs| {
+                dirs.home_dir()
+                    .join(".cache")
+                    .join("huggingface")
+                    .join("hub")
+            })
+            .unwrap_or_else(|| PathBuf::from(".cache").join("huggingface").join("hub"))
+    })
 }
 
 fn hub_roots() -> Vec<PathBuf> {
@@ -588,5 +777,65 @@ mod tests {
         )
         .unwrap();
         assert_eq!(hub_model_gguf_bytes(&model, "weights-GGUF"), Some(4096));
+    }
+
+    #[test]
+    fn hub_cache_paths_include_model_and_lock_directories() {
+        let hub = tempfile::tempdir().unwrap();
+        let flat = tempfile::tempdir().unwrap();
+        let model = hub.path().join("models--owner--tiny-GGUF");
+        fs::create_dir_all(model.join("blobs")).unwrap();
+        fs::write(model.join("blobs").join("oid1"), vec![0; 128]).unwrap();
+        let locks = hub.path().join(".locks").join("models--owner--tiny-GGUF");
+        fs::create_dir_all(&locks).unwrap();
+        let flat_file = flat.path().join("owner_tiny-GGUF_weights.gguf");
+        fs::write(&flat_file, vec![0; 32]).unwrap();
+
+        let paths = huggingface_cache_paths_in(
+            "owner/tiny-GGUF",
+            &[hub.path().to_path_buf()],
+            &[flat.path().to_path_buf()],
+        );
+        assert!(paths.contains(&model));
+        assert!(paths.contains(&locks));
+        assert!(paths.contains(&flat_file));
+    }
+
+    #[test]
+    fn deleting_hub_paths_removes_model_cache_directories() {
+        let hub = tempfile::tempdir().unwrap();
+        let model = hub.path().join("models--owner--tiny-GGUF");
+        fs::create_dir_all(model.join("blobs")).unwrap();
+        fs::write(model.join("blobs").join("oid1"), vec![0; 128]).unwrap();
+        let locks = hub.path().join(".locks").join("models--owner--tiny-GGUF");
+        fs::create_dir_all(&locks).unwrap();
+
+        let mut report = DeleteReport::default();
+        for path in huggingface_cache_paths_in(
+            "owner/tiny-GGUF",
+            &[hub.path().to_path_buf()],
+            &[],
+        ) {
+            let bytes = path_bytes(&path);
+            remove_path(&path).unwrap();
+            report.freed_bytes = report.freed_bytes.saturating_add(bytes);
+            report.removed_paths.push(path);
+        }
+        assert!(!model.exists());
+        assert!(!locks.exists());
+        assert!(report.freed_bytes >= 128);
+    }
+
+    #[test]
+    fn deleting_a_local_gguf_removes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("weights.gguf");
+        fs::write(&path, vec![0; 64]).unwrap();
+        let source = ModelSource::Local(path.clone());
+        assert!(has_local_files(&source));
+        let report = delete_local_files(&source).unwrap();
+        assert!(!path.exists());
+        assert_eq!(report.freed_bytes, 64);
+        assert!(!has_local_files(&source));
     }
 }
