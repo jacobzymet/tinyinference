@@ -129,6 +129,19 @@ cache, compute buffers, and server state; with little RAM, storage I/O can make
 inference extremely slow. `gpt-oss-120b` has 117B total parameters but
 activates 5.1B per token, so it is a good default choice for tinyinference.
 
+## Getting more performance
+
+Most speedups come from the model and machine, not from tinyinference itself:
+
+- Prefer smaller / more active-efficient models (MoE like gpt-oss helps; a dense
+  70B on the same box will feel worse).
+- Put the GGUF on the fastest local disk you have (NVMe >> HDD/network share).
+  mmap latency dominates when RSS can't hold hot pages.
+- Use a quant that fits your machine's working set better; shaving file size
+  often beats clever flags.
+- Build `llama-server` with the right CPU backend (AVX2/AVX512/ARM, ideally
+  OpenBLAS/BLIS or vendor BLAS). A generic binary leaves a lot on the table.
+
 ## References
 
 - [llama.cpp server options](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
