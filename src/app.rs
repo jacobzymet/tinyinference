@@ -899,14 +899,13 @@ impl App {
         }
         // Prefer live slot/log-derived gen tok/s while generating; accept
         // prometheus averages when idle or before the first live sample.
-        if self.live_generated_tps.is_none() {
-            if let Some(rate) = metrics
+        if self.live_generated_tps.is_none()
+            && let Some(rate) = metrics
                 .generated_tokens_per_second
                 .filter(|rate| *rate > 0.0)
-            {
-                merged.generated_tokens_per_second = Some(rate);
-                touched = true;
-            }
+        {
+            merged.generated_tokens_per_second = Some(rate);
+            touched = true;
         }
         if metrics.requests_processing.is_some() {
             merged.requests_processing = metrics.requests_processing;
