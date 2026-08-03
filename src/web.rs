@@ -210,6 +210,7 @@ struct AppState {
     metrics: Option<MetricsState>,
     recent_models: Vec<RecentModelState>,
     settings: Vec<SettingState>,
+    cache_type_help: Vec<ChoiceHelp>,
     logs: Vec<String>,
 }
 
@@ -290,7 +291,6 @@ struct SettingState {
     editable: bool,
     toggle: bool,
     choices: Option<Vec<&'static str>>,
-    choice_help: Option<Vec<ChoiceHelp>>,
 }
 
 impl AppState {
@@ -312,19 +312,13 @@ impl AppState {
                 editable: app.setting_is_editable(field),
                 toggle: field.is_toggle(),
                 choices: field.choices().map(|items| items.to_vec()),
-                choice_help: matches!(
-                    field,
-                    SettingField::CacheTypeK | SettingField::CacheTypeV
-                )
-                .then(|| {
-                    crate::config::CACHE_TYPE_DESCRIPTIONS
-                        .iter()
-                        .map(|(value, description)| ChoiceHelp {
-                            value,
-                            description,
-                        })
-                        .collect()
-                }),
+            })
+            .collect();
+        let cache_type_help = crate::config::CACHE_TYPE_DESCRIPTIONS
+            .iter()
+            .map(|(value, description)| ChoiceHelp {
+                value,
+                description,
             })
             .collect();
         let mapped_size = MappedSizeState::from_app(app);
@@ -390,6 +384,7 @@ impl AppState {
             }),
             recent_models,
             settings,
+            cache_type_help,
             logs: app.logs.iter().cloned().collect(),
         }
     }
@@ -688,8 +683,27 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
     }
     .metric-label { color: var(--ti-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
     .setting-hint { font-size: 0.8rem; color: var(--ti-muted); white-space: pre-line; }
-    .choice-help { list-style: none; padding: 0; margin: 0.35rem 0 0; }
-    .choice-help li { margin: 0.15rem 0; }
+    .settings-section {
+      border: 1px solid #243036;
+      border-radius: 0.375rem;
+      padding: 1rem 1.1rem;
+      background: #12181c;
+    }
+    .settings-section-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 0 0 0.35rem;
+    }
+    .choice-help {
+      list-style: none;
+      padding: 0;
+      margin: 0.75rem 0 0;
+      columns: 1;
+    }
+    @media (min-width: 768px) {
+      .choice-help { columns: 2; column-gap: 1.5rem; }
+    }
+    .choice-help li { margin: 0.15rem 0; break-inside: avoid; }
     .choice-help code { color: var(--ti-ice); font-size: 0.78rem; }
     .progress { background: #0b1013; height: 0.65rem; }
     .progress-bar { background: var(--ti-ice); }
@@ -998,13 +1012,78 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
         .replaceAll('"', '&quot;');
     }
 
-    function renderSettings(next) {
-      const form = document.getElementById('settingsForm');
-      // Polling rebuilds this DOM; skip while the user is interacting so focus
-      // and in-progress edits are not blown away every second.
-      if (settingsDirty || form.contains(document.activeElement)) return;
-      form.innerHTML = '';
-      for (const setting of next.settings) {
+    function appendSettingControl(col, setting) {
+      if (setting.field === 'source_kind') {
+        const select = document.createElement('select');
+        select.className = 'form-select';
+        select.id = 'setting-' + setting.id;
+        select.innerHTML = '<option value="hugging_face">Hugging Face</option><option value="local">Local GGUF</option>';
+        select.value = setting.raw;
+        select.addEventListener('change', () => updateSetting(setting.field, select.value));
+        col.appendChild(select);
+      } else if (setting.choices && setting.choices.length) {
+        const select = document.createElement('select');
+        select.className = 'form-select';
+        select.id = 'setting-' + setting.id;
+        select.innerHTML = setting.choices.map((choice) =>
+          `<option value="${choice}">${choice}</option>`
+        ).join('');
+        select.value = setting.raw;
+        select.disabled = !setting.editable;
+        select.addEventListener('change', () => updateSetting(setting.field, select.value));
+        col.appendChild(select);
+      } else if (setting.toggle) {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check form-switch mt-1';
+        const input = document.createElement('input');
+        input.className = 'form-check-input';
+        input.type = 'checkbox';
+        input.id = 'setting-' + setting.id;
+        input.checked = setting.raw === 'true';
+        input.addEventListener('change', () => api('/api/settings/' + setting.field + '/toggle', { method: 'POST' }).then(applyState).catch(showSettingsError));
+        const checkLabel = document.createElement('label');
+        checkLabel.className = 'form-check-label';
+        checkLabel.setAttribute('for', input.id);
+        checkLabel.textContent = setting.value;
+        wrap.appendChild(input);
+        wrap.appendChild(checkLabel);
+        col.appendChild(wrap);
+      } else {
+        const input = document.createElement('input');
+        input.className = 'form-control';
+        input.id = 'setting-' + setting.id;
+        input.value = setting.raw;
+        input.disabled = !setting.editable;
+        input.addEventListener('input', () => { settingsDirty = true; });
+        input.addEventListener('change', () => {
+          if (!setting.editable) return;
+          updateSetting(setting.field, input.value).finally(() => { settingsDirty = false; });
+        });
+        col.appendChild(input);
+      }
+    }
+
+    function renderKvCacheSection(form, next, keySetting, valueSetting) {
+      const wrap = document.createElement('div');
+      wrap.className = 'col-12';
+      const section = document.createElement('div');
+      section.className = 'settings-section';
+
+      const title = document.createElement('h3');
+      title.className = 'settings-section-title';
+      title.textContent = 'KV cache';
+      section.appendChild(title);
+
+      const intro = document.createElement('div');
+      intro.className = 'setting-hint mb-3';
+      intro.textContent =
+        'Temporary context scratchpad while the model runs — not the model file. Lower precision uses less RAM as context grows.';
+      section.appendChild(intro);
+
+      const row = document.createElement('div');
+      row.className = 'row g-3';
+      for (const setting of [keySetting, valueSetting]) {
+        if (!setting) continue;
         const col = document.createElement('div');
         col.className = 'col-md-6';
         const label = document.createElement('label');
@@ -1012,76 +1091,62 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
         label.textContent = setting.label;
         label.setAttribute('for', 'setting-' + setting.id);
         col.appendChild(label);
-
-        if (setting.field === 'source_kind') {
-          const select = document.createElement('select');
-          select.className = 'form-select';
-          select.id = 'setting-' + setting.id;
-          select.innerHTML = '<option value="hugging_face">Hugging Face</option><option value="local">Local GGUF</option>';
-          select.value = setting.raw;
-          select.addEventListener('change', () => updateSetting(setting.field, select.value));
-          col.appendChild(select);
-        } else if (setting.choices && setting.choices.length) {
-          const select = document.createElement('select');
-          select.className = 'form-select';
-          select.id = 'setting-' + setting.id;
-          select.innerHTML = setting.choices.map((choice) =>
-            `<option value="${choice}">${choice}</option>`
-          ).join('');
-          select.value = setting.raw;
-          select.disabled = !setting.editable;
-          select.addEventListener('change', () => updateSetting(setting.field, select.value));
-          col.appendChild(select);
-        } else if (setting.toggle) {
-          const wrap = document.createElement('div');
-          wrap.className = 'form-check form-switch mt-1';
-          const input = document.createElement('input');
-          input.className = 'form-check-input';
-          input.type = 'checkbox';
-          input.id = 'setting-' + setting.id;
-          input.checked = setting.raw === 'true';
-          input.addEventListener('change', () => api('/api/settings/' + setting.field + '/toggle', { method: 'POST' }).then(applyState).catch(showSettingsError));
-          const checkLabel = document.createElement('label');
-          checkLabel.className = 'form-check-label';
-          checkLabel.setAttribute('for', input.id);
-          checkLabel.textContent = setting.value;
-          wrap.appendChild(input);
-          wrap.appendChild(checkLabel);
-          col.appendChild(wrap);
-        } else {
-          const input = document.createElement('input');
-          input.className = 'form-control';
-          input.id = 'setting-' + setting.id;
-          input.value = setting.raw;
-          input.disabled = !setting.editable;
-          input.addEventListener('input', () => { settingsDirty = true; });
-          input.addEventListener('change', () => {
-            if (!setting.editable) return;
-            updateSetting(setting.field, input.value).finally(() => { settingsDirty = false; });
-          });
-          col.appendChild(input);
-        }
-
+        appendSettingControl(col, setting);
         const hint = document.createElement('div');
         hint.className = 'setting-hint mt-1';
-        if (setting.choice_help && setting.choice_help.length) {
-          hint.textContent = '';
-          const introEl = document.createElement('div');
-          introEl.textContent = setting.hint;
-          hint.appendChild(introEl);
-          const list = document.createElement('ul');
-          list.className = 'choice-help';
-          for (const item of setting.choice_help) {
-            const li = document.createElement('li');
-            li.innerHTML = `<code>${escapeHtml(item.value)}</code> — ${escapeHtml(item.description)}`;
-            list.appendChild(li);
-          }
-          hint.appendChild(list);
-        } else {
-          hint.textContent = setting.hint;
+        hint.textContent = setting.hint;
+        col.appendChild(hint);
+        row.appendChild(col);
+      }
+      section.appendChild(row);
+
+      if (next.cache_type_help && next.cache_type_help.length) {
+        const list = document.createElement('ul');
+        list.className = 'choice-help setting-hint';
+        for (const item of next.cache_type_help) {
+          const li = document.createElement('li');
+          li.innerHTML = `<code>${escapeHtml(item.value)}</code> — ${escapeHtml(item.description)}`;
+          list.appendChild(li);
         }
+        section.appendChild(list);
+      }
+
+      wrap.appendChild(section);
+      form.appendChild(wrap);
+    }
+
+    function renderSettings(next) {
+      const form = document.getElementById('settingsForm');
+      // Polling rebuilds this DOM; skip while the user is interacting so focus
+      // and in-progress edits are not blown away every second.
+      if (settingsDirty || form.contains(document.activeElement)) return;
+      form.innerHTML = '';
+      const seen = new Set();
+      for (const setting of next.settings) {
+        if (seen.has(setting.field)) continue;
+        if (setting.field === 'cache_type_k' || setting.field === 'cache_type_v') {
+          const keySetting = next.settings.find((item) => item.field === 'cache_type_k');
+          const valueSetting = next.settings.find((item) => item.field === 'cache_type_v');
+          renderKvCacheSection(form, next, keySetting, valueSetting);
+          seen.add('cache_type_k');
+          seen.add('cache_type_v');
+          continue;
+        }
+
+        const col = document.createElement('div');
+        col.className = 'col-md-6';
+        const label = document.createElement('label');
+        label.className = 'form-label mb-1';
+        label.textContent = setting.label;
+        label.setAttribute('for', 'setting-' + setting.id);
+        col.appendChild(label);
+        appendSettingControl(col, setting);
+        const hint = document.createElement('div');
+        hint.className = 'setting-hint mt-1';
+        hint.textContent = setting.hint;
         col.appendChild(hint);
         form.appendChild(col);
+        seen.add(setting.field);
       }
     }
 

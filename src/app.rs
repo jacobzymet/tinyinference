@@ -324,8 +324,8 @@ impl SettingField {
             Self::Repack => "Repack weights",
             Self::Warmup => "Warm up",
             Self::FlashAttn => "Flash attention",
-            Self::CacheTypeK => "KV cache type K",
-            Self::CacheTypeV => "KV cache type V",
+            Self::CacheTypeK => "Key (K)",
+            Self::CacheTypeV => "Value (V)",
             Self::CacheRam => "Prompt cache RAM",
             Self::Checkpoints => "Context checkpoints",
             Self::Mmproj => "Multimodal projector",
@@ -671,12 +671,8 @@ impl App {
             (SettingField::FlashAttn, _) => {
                 "On uses flash attention to cut attention memory; keep on with quantized KV."
             }
-            (SettingField::CacheTypeK, _) => {
-                "KV key cache type (grows with context). Lower precision uses less RAM."
-            }
-            (SettingField::CacheTypeV, _) => {
-                "KV value cache type (grows with context). Lower precision uses less RAM."
-            }
+            (SettingField::CacheTypeK, _) => "Attention key half of the context scratchpad.",
+            (SettingField::CacheTypeV, _) => "Attention value half of the context scratchpad.",
             (SettingField::CacheRam, _) => "Host prompt-cache limit in MiB; zero disables it.",
             (SettingField::Checkpoints, _) => "Saved context states per slot; zero disables them.",
             (SettingField::Mmproj, _) => "Leave off for text-only models.",
