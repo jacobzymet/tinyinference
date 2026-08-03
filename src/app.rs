@@ -796,7 +796,8 @@ impl App {
         }
         if let Err(errors) = self.validate_for_launch() {
             self.status = ServerStatus::Failed;
-            self.status_detail = errors;
+            self.status_detail = errors.clone();
+            self.push_log(format!("[start blocked] {errors}"));
             return;
         }
         let launch_config = self.config.clone();
@@ -815,6 +816,7 @@ impl App {
                 } else {
                     self.status = ServerStatus::Starting;
                     self.status_detail = format!("Waking llama-server (PID {pid})");
+                    self.push_log(self.status_detail.clone());
                 }
                 self.endpoint_online = false;
                 self.probe = None;

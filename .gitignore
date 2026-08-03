@@ -8,3 +8,8 @@ Thumbs.db
 
 # Optional project-local launch profile; the committed example remains tracked.
 /tinyinference.toml
+
+/design.md
+.agents/skills/
+skills-lock.json
+.hallmark/
