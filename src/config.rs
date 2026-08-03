@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_MODEL: &str = "ggml-org/gpt-oss-120b-GGUF";
 pub const DEFAULT_UI_HOST: &str = "127.0.0.1";
 pub const DEFAULT_UI_PORT: u16 = 3920;
+pub const DEFAULT_CACHE_TYPE: &str = "q8_0";
+pub const CACHE_TYPES: &[&str] = &[
+    "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1",
+];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -67,6 +71,9 @@ pub struct RuntimeConfig {
     pub fit: bool,
     pub repack: bool,
     pub warmup: bool,
+    pub flash_attn: bool,
+    pub cache_type_k: String,
+    pub cache_type_v: String,
     pub cache_ram_mib: u32,
     pub context_checkpoints: u32,
     pub multimodal_projector: bool,
@@ -116,11 +123,26 @@ impl Default for RuntimeConfig {
             fit: false,
             repack: false,
             warmup: true,
+            flash_attn: true,
+            cache_type_k: DEFAULT_CACHE_TYPE.into(),
+            cache_type_v: DEFAULT_CACHE_TYPE.into(),
             cache_ram_mib: 0,
             context_checkpoints: 0,
             multimodal_projector: false,
             jinja: true,
         }
+    }
+}
+
+pub fn normalize_cache_type(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if CACHE_TYPES.contains(&normalized.as_str()) {
+        Ok(normalized)
+    } else {
+        Err(format!(
+            "Cache type must be one of: {}.",
+            CACHE_TYPES.join(", ")
+        ))
     }
 }
 
@@ -304,6 +326,12 @@ impl Config {
         }
         if self.runtime.parallel == 0 {
             errors.push("parallel slots must be greater than zero".into());
+        }
+        if let Err(error) = normalize_cache_type(&self.runtime.cache_type_k) {
+            errors.push(format!("cache_type_k: {error}"));
+        }
+        if let Err(error) = normalize_cache_type(&self.runtime.cache_type_v) {
+            errors.push(format!("cache_type_v: {error}"));
         }
         match &self.model.source {
             ModelSource::HuggingFace(id) => {
@@ -496,6 +524,9 @@ mod tests {
         assert!(!cfg.runtime.fit);
         assert!(!cfg.runtime.repack);
         assert!(cfg.runtime.warmup);
+        assert!(cfg.runtime.flash_attn);
+        assert_eq!(cfg.runtime.cache_type_k, "q8_0");
+        assert_eq!(cfg.runtime.cache_type_v, "q8_0");
         assert_eq!(cfg.runtime.context_size, 8192);
         assert_eq!(cfg.runtime.cache_ram_mib, 0);
         assert_eq!(cfg.runtime.context_checkpoints, 0);

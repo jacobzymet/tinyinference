@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cache,
-    config::{Config, DEFAULT_MODEL, ModelSource},
+    config::{CACHE_TYPES, Config, DEFAULT_MODEL, ModelSource, normalize_cache_type},
     hub,
     server::{
         CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
@@ -269,6 +269,9 @@ pub enum SettingField {
     Fit,
     Repack,
     Warmup,
+    FlashAttn,
+    CacheTypeK,
+    CacheTypeV,
     CacheRam,
     Checkpoints,
     Mmproj,
@@ -276,7 +279,7 @@ pub enum SettingField {
 }
 
 impl SettingField {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 22] = [
         Self::SourceKind,
         Self::Model,
         Self::EstimatedSize,
@@ -292,6 +295,9 @@ impl SettingField {
         Self::Fit,
         Self::Repack,
         Self::Warmup,
+        Self::FlashAttn,
+        Self::CacheTypeK,
+        Self::CacheTypeV,
         Self::CacheRam,
         Self::Checkpoints,
         Self::Mmproj,
@@ -315,6 +321,9 @@ impl SettingField {
             Self::Fit => "Auto-fit",
             Self::Repack => "Repack weights",
             Self::Warmup => "Warm up",
+            Self::FlashAttn => "Flash attention",
+            Self::CacheTypeK => "KV cache type K",
+            Self::CacheTypeV => "KV cache type V",
             Self::CacheRam => "Prompt cache RAM",
             Self::Checkpoints => "Context checkpoints",
             Self::Mmproj => "Multimodal projector",
@@ -334,6 +343,8 @@ impl SettingField {
                 | Self::Batch
                 | Self::MicroBatch
                 | Self::Parallel
+                | Self::CacheTypeK
+                | Self::CacheTypeV
                 | Self::CacheRam
                 | Self::Checkpoints
         )
@@ -348,9 +359,14 @@ impl SettingField {
                 | Self::Fit
                 | Self::Repack
                 | Self::Warmup
+                | Self::FlashAttn
                 | Self::Mmproj
                 | Self::Jinja
         )
+    }
+
+    pub fn choices(self) -> Option<&'static [&'static str]> {
+        matches!(self, Self::CacheTypeK | Self::CacheTypeV).then_some(CACHE_TYPES)
     }
 
     pub fn id(self) -> &'static str {
@@ -370,6 +386,9 @@ impl SettingField {
             Self::Fit => "fit",
             Self::Repack => "repack",
             Self::Warmup => "warmup",
+            Self::FlashAttn => "flash_attn",
+            Self::CacheTypeK => "cache_type_k",
+            Self::CacheTypeV => "cache_type_v",
             Self::CacheRam => "cache_ram",
             Self::Checkpoints => "checkpoints",
             Self::Mmproj => "mmproj",
@@ -526,6 +545,9 @@ impl App {
             SettingField::Fit => on_off(self.config.runtime.fit),
             SettingField::Repack => on_off(self.config.runtime.repack),
             SettingField::Warmup => on_off(self.config.runtime.warmup),
+            SettingField::FlashAttn => on_off(self.config.runtime.flash_attn),
+            SettingField::CacheTypeK => self.config.runtime.cache_type_k.clone(),
+            SettingField::CacheTypeV => self.config.runtime.cache_type_v.clone(),
             SettingField::CacheRam => format!("{} MiB", self.config.runtime.cache_ram_mib),
             SettingField::Checkpoints => self.config.runtime.context_checkpoints.to_string(),
             SettingField::Mmproj => on_off(self.config.runtime.multimodal_projector),
@@ -556,6 +578,9 @@ impl App {
             SettingField::Fit => self.config.runtime.fit.to_string(),
             SettingField::Repack => self.config.runtime.repack.to_string(),
             SettingField::Warmup => self.config.runtime.warmup.to_string(),
+            SettingField::FlashAttn => self.config.runtime.flash_attn.to_string(),
+            SettingField::CacheTypeK => self.config.runtime.cache_type_k.clone(),
+            SettingField::CacheTypeV => self.config.runtime.cache_type_v.clone(),
             SettingField::CacheRam => self.config.runtime.cache_ram_mib.to_string(),
             SettingField::Checkpoints => self.config.runtime.context_checkpoints.to_string(),
             SettingField::Mmproj => self.config.runtime.multimodal_projector.to_string(),
@@ -640,6 +665,15 @@ impl App {
             (SettingField::Repack, _) => "Off avoids a separate repacked weight copy.",
             (SettingField::Warmup, _) => {
                 "On touches model pages at startup for smoother first-token behavior."
+            }
+            (SettingField::FlashAttn, _) => {
+                "On uses flash attention to cut attention memory; keep on with quantized KV."
+            }
+            (SettingField::CacheTypeK, _) => {
+                "KV key cache type. q8_0 halves memory vs f16 with little quality loss."
+            }
+            (SettingField::CacheTypeV, _) => {
+                "KV value cache type. q8_0 halves memory vs f16 with little quality loss."
             }
             (SettingField::CacheRam, _) => "Host prompt-cache limit in MiB; zero disables it.",
             (SettingField::Checkpoints, _) => "Saved context states per slot; zero disables them.",
@@ -989,11 +1023,18 @@ impl App {
                 self.config.runtime.context_checkpoints =
                     parse_bounded_u32(value, "context checkpoints", 0, 256)?;
             }
+            SettingField::CacheTypeK => {
+                self.config.runtime.cache_type_k = normalize_cache_type(value)?;
+            }
+            SettingField::CacheTypeV => {
+                self.config.runtime.cache_type_v = normalize_cache_type(value)?;
+            }
             SettingField::CpuOnly
             | SettingField::Mmap
             | SettingField::Fit
             | SettingField::Repack
             | SettingField::Warmup
+            | SettingField::FlashAttn
             | SettingField::Mmproj
             | SettingField::Jinja => {
                 let on = parse_bool(value)?;
@@ -1003,6 +1044,7 @@ impl App {
                     SettingField::Fit => self.config.runtime.fit = on,
                     SettingField::Repack => self.config.runtime.repack = on,
                     SettingField::Warmup => self.config.runtime.warmup = on,
+                    SettingField::FlashAttn => self.config.runtime.flash_attn = on,
                     SettingField::Mmproj => self.config.runtime.multimodal_projector = on,
                     SettingField::Jinja => self.config.runtime.jinja = on,
                     _ => unreachable!(),
@@ -1090,6 +1132,30 @@ impl App {
             SettingField::Fit => self.config.runtime.fit = !self.config.runtime.fit,
             SettingField::Repack => self.config.runtime.repack = !self.config.runtime.repack,
             SettingField::Warmup => self.config.runtime.warmup = !self.config.runtime.warmup,
+            SettingField::FlashAttn => {
+                self.config.runtime.flash_attn = !self.config.runtime.flash_attn
+            }
+            SettingField::CacheTypeK | SettingField::CacheTypeV => {
+                let current = match field {
+                    SettingField::CacheTypeK => self.config.runtime.cache_type_k.as_str(),
+                    _ => self.config.runtime.cache_type_v.as_str(),
+                };
+                let index = CACHE_TYPES
+                    .iter()
+                    .position(|item| *item == current)
+                    .unwrap_or(0);
+                let next = if positive {
+                    CACHE_TYPES[(index + 1) % CACHE_TYPES.len()]
+                } else {
+                    CACHE_TYPES[(index + CACHE_TYPES.len() - 1) % CACHE_TYPES.len()]
+                };
+                match field {
+                    SettingField::CacheTypeK => {
+                        self.config.runtime.cache_type_k = (*next).into();
+                    }
+                    _ => self.config.runtime.cache_type_v = (*next).into(),
+                }
+            }
             SettingField::CacheRam => {
                 self.config.runtime.cache_ram_mib = adjust_u32(
                     self.config.runtime.cache_ram_mib,

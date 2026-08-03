@@ -72,6 +72,37 @@ impl CommandSpec {
             }
             .into(),
         );
+        if !has_extra_option(&config.server.extra_args, "--flash-attn")
+            && !has_extra_option(&config.server.extra_args, "-fa")
+        {
+            push_pair(
+                &mut args,
+                "--flash-attn",
+                if config.runtime.flash_attn {
+                    "on"
+                } else {
+                    "off"
+                },
+            );
+        }
+        if !has_extra_option(&config.server.extra_args, "--cache-type-k")
+            && !has_extra_option(&config.server.extra_args, "-ctk")
+        {
+            push_pair(
+                &mut args,
+                "--cache-type-k",
+                config.runtime.cache_type_k.as_str(),
+            );
+        }
+        if !has_extra_option(&config.server.extra_args, "--cache-type-v")
+            && !has_extra_option(&config.server.extra_args, "-ctv")
+        {
+            push_pair(
+                &mut args,
+                "--cache-type-v",
+                config.runtime.cache_type_v.as_str(),
+            );
+        }
         push_pair(
             &mut args,
             "--ctx-size",
@@ -134,10 +165,14 @@ fn push_pair(args: &mut Vec<OsString>, flag: impl Into<OsString>, value: impl In
 }
 
 fn has_threads_override(extra_args: &[String]) -> bool {
-    let prefix = "--threads=";
+    has_extra_option(extra_args, "--threads")
+}
+
+fn has_extra_option(extra_args: &[String], option: &str) -> bool {
+    let prefix = format!("{option}=");
     extra_args
         .iter()
-        .any(|argument| argument == "--threads" || argument.starts_with(prefix))
+        .any(|argument| argument == option || argument.starts_with(&prefix))
 }
 
 fn shell_quote(value: &OsString) -> String {
@@ -415,6 +450,12 @@ mod tests {
                 "--mmap",
                 "--no-repack",
                 "--warmup",
+                "--flash-attn",
+                "on",
+                "--cache-type-k",
+                "q8_0",
+                "--cache-type-v",
+                "q8_0",
                 "--ctx-size",
                 "8192",
                 "--batch-size",

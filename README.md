@@ -158,6 +158,11 @@ Most speedups come from the model and machine, not from tinyinference itself:
 tinyinference passes `--threads` set to the machine's physical core count when
 launching `llama-server`. Override it with `server.extra_args` if needed.
 
+By default it also enables flash attention (`--flash-attn on`) and quantized KV
+cache types (`--cache-type-k/v q8_0`) so more RAM stays free for weight pages.
+Turn these off or change the cache types in Configure if your `llama-server`
+build rejects them.
+
 ## References
 
 - [llama.cpp server options](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)

@@ -283,6 +283,7 @@ struct SettingState {
     hint: &'static str,
     editable: bool,
     toggle: bool,
+    choices: Option<Vec<&'static str>>,
 }
 
 impl AppState {
@@ -303,6 +304,7 @@ impl AppState {
                 hint: app.setting_hint(field),
                 editable: app.setting_is_editable(field),
                 toggle: field.is_toggle(),
+                choices: field.choices().map(|items| items.to_vec()),
             })
             .collect();
         let mapped_size = MappedSizeState::from_app(app);
@@ -988,6 +990,17 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
           select.id = 'setting-' + setting.id;
           select.innerHTML = '<option value="hugging_face">Hugging Face</option><option value="local">Local GGUF</option>';
           select.value = setting.raw;
+          select.addEventListener('change', () => updateSetting(setting.field, select.value));
+          col.appendChild(select);
+        } else if (setting.choices && setting.choices.length) {
+          const select = document.createElement('select');
+          select.className = 'form-select';
+          select.id = 'setting-' + setting.id;
+          select.innerHTML = setting.choices.map((choice) =>
+            `<option value="${choice}">${choice}</option>`
+          ).join('');
+          select.value = setting.raw;
+          select.disabled = !setting.editable;
           select.addEventListener('change', () => updateSetting(setting.field, select.value));
           col.appendChild(select);
         } else if (setting.toggle) {
