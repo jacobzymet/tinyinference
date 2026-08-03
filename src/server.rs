@@ -491,6 +491,66 @@ fn metric_value(body: &str, name: &str) -> Option<f64> {
         })
 }
 
+/// Throughput scraped from llama-server log lines (same numbers the console shows).
+///
+/// HTTP `/metrics` gauges only update when a request finishes, and `/slots` waits
+/// on the decode task queue. Logs are emitted from inside the decode loop, so
+/// they update as soon as llama.cpp itself prints them.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LogThroughput {
+    pub generated_tokens_per_second: Option<f64>,
+    pub prompt_tokens_per_second: Option<f64>,
+}
+
+pub fn parse_log_throughput(line: &str) -> LogThroughput {
+    let mut throughput = LogThroughput::default();
+
+    // "n_decoded = 123, tg = 12.34 t/s, tg_3s = 15.67 t/s"
+    // Prefer the recent window when present — that is the live feel users see.
+    if let Some(rate) = rate_after_marker(line, "tg_3s =") {
+        throughput.generated_tokens_per_second = Some(rate);
+    } else if let Some(rate) = rate_after_marker(line, ", tg =")
+        .or_else(|| rate_after_marker(line, " tg ="))
+    {
+        throughput.generated_tokens_per_second = Some(rate);
+    }
+
+    // Mid-prompt: "prompt processing, n_tokens = ... / 12.34 tokens per second"
+    if line.contains("prompt processing")
+        && let Some(rate) = rate_before_unit(line, "tokens per second")
+    {
+        throughput.prompt_tokens_per_second = Some(rate);
+    }
+
+    // Final timings after a request completes.
+    if line.contains("prompt eval time =")
+        && let Some(rate) = rate_before_unit(line, "tokens per second")
+    {
+        throughput.prompt_tokens_per_second = Some(rate);
+    } else if line.contains("eval time =")
+        && !line.contains("prompt eval")
+        && let Some(rate) = rate_before_unit(line, "tokens per second")
+    {
+        throughput.generated_tokens_per_second = Some(rate);
+    }
+
+    throughput
+}
+
+fn rate_after_marker(line: &str, marker: &str) -> Option<f64> {
+    let rest = line.split_once(marker)?.1.trim_start();
+    let token = rest.split_whitespace().next()?;
+    token.parse().ok().filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
+}
+
+fn rate_before_unit(line: &str, unit: &str) -> Option<f64> {
+    let head = line.rsplit_once(unit)?.0.trim_end();
+    let token = head.split_whitespace().next_back()?;
+    // Strip a trailing comma from formats like "(12.34,"
+    let token = token.trim_end_matches(',');
+    token.parse().ok().filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,6 +731,32 @@ llamacpp:requests_processing 1
                 decoded_tokens: 15,
                 requests_processing: 2,
             })
+        );
+    }
+
+    #[test]
+    fn log_throughput_prefers_recent_window() {
+        let line = "slot   print_timings_tg: id  0 | task 3 | n_decoded =    240, tg =  18.50 t/s, tg_3s =  21.25 t/s";
+        assert_eq!(
+            parse_log_throughput(line),
+            LogThroughput {
+                generated_tokens_per_second: Some(21.25),
+                prompt_tokens_per_second: None,
+            }
+        );
+    }
+
+    #[test]
+    fn log_throughput_reads_prompt_and_final_eval() {
+        let prompt = "slot print_timings_pp: prompt processing, n_tokens = 512, progress = 0.50, t = 4.00 s / 128.00 tokens per second";
+        assert_eq!(
+            parse_log_throughput(prompt).prompt_tokens_per_second,
+            Some(128.0)
+        );
+        let eval = "slot print_timings:        eval time =   1000.00 ms /   50 tokens (   20.00 ms per token,    50.00 tokens per second)";
+        assert_eq!(
+            parse_log_throughput(eval).generated_tokens_per_second,
+            Some(50.0)
         );
     }
 

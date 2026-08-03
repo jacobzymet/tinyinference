@@ -14,7 +14,7 @@ use crate::{
     hub,
     server::{
         CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
-        SlotsSnapshot, probe_async,
+        SlotsSnapshot, parse_log_throughput, probe_async,
     },
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
 };
@@ -703,6 +703,7 @@ impl App {
         for event in new_logs {
             let ServerEvent::Log(line) = event;
             self.observe_startup_line(&line);
+            self.observe_throughput_line(&line);
             self.push_log(line);
         }
 
@@ -938,6 +939,23 @@ impl App {
             && cache::is_model_load_line(line)
         {
             download.finish();
+        }
+    }
+
+    /// Prefer tok/s printed by llama-server itself — same source as the Logs tab.
+    fn observe_throughput_line(&mut self, line: &str) {
+        let parsed = parse_log_throughput(line);
+        if parsed.generated_tokens_per_second.is_none() && parsed.prompt_tokens_per_second.is_none()
+        {
+            return;
+        }
+        let metrics = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        if let Some(rate) = parsed.generated_tokens_per_second {
+            self.live_generated_tps = Some(rate);
+            metrics.generated_tokens_per_second = Some(rate);
+        }
+        if let Some(rate) = parsed.prompt_tokens_per_second {
+            metrics.prompt_tokens_per_second = Some(rate);
         }
     }
 
