@@ -65,9 +65,11 @@ Switch **Model source**, then edit the model field to enter either a Hugging Fac
 `owner/model` repository or a full local `.gguf` path. A local model's size is
 detected automatically.
 
-The **Recent models** dropdown lists up to eight previously used Hugging Face
-repositories and local GGUF paths. Recent models are stored with the rest of the
-configuration when you save.
+The **Models** dropdown lists up to eight previously used Hugging Face
+repositories and local GGUF paths, and autodiscovers GGUF models already present
+in the local Hugging Face hub / llama.cpp cache (including downloads performed by
+`llama-server`). Recent picks are stored with the rest of the configuration when
+you save.
 
 Settings are saved in the platform configuration directory. To use a portable
 profile, copy the example and pass it explicitly:

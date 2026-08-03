@@ -21,6 +21,27 @@ use crate::{
 
 const MAX_LOG_LINES: usize = 2_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelPickerGroup {
+    Recent,
+    Cached,
+}
+
+impl ModelPickerGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Recent => "Recent",
+            Self::Cached => "Cached on this machine",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelPickerEntry {
+    pub group: ModelPickerGroup,
+    pub source: ModelSource,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerStatus {
@@ -48,6 +69,9 @@ impl ServerStatus {
 /// How long a transfer rate is averaged over, and how often the cache is read.
 const RATE_WINDOW: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// How often to rescan local Hugging Face / llama.cpp caches for GGUF models.
+const DISCOVER_INTERVAL: Duration = Duration::from_secs(15);
+
 /// How often to re-probe llama-server `/slots` + `/metrics` while running.
 const METRICS_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 /// Ignore tiny intervals so a burst of probes does not spike tok/s.
@@ -442,6 +466,10 @@ pub struct App {
     live_generated_tps: Option<f64>,
     /// Last time gen/prompt tok/s was refreshed from logs, slots, or metrics.
     last_throughput_at: Option<Instant>,
+    /// GGUF models found in the local Hugging Face hub / llama.cpp caches.
+    discovered_models: Vec<cache::DiscoveredModel>,
+    pending_discover: Option<cache::PendingDiscover>,
+    last_discover: Instant,
 }
 
 impl App {
@@ -486,6 +514,9 @@ impl App {
             last_slots_decoded: None,
             live_generated_tps: None,
             last_throughput_at: None,
+            discovered_models: Vec::new(),
+            pending_discover: Some(cache::discover_models_async()),
+            last_discover: Instant::now(),
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -658,10 +689,10 @@ impl App {
         match (field, &self.config.model.source) {
             (SettingField::SourceKind, _) => "Switch between Hugging Face and a local GGUF file.",
             (SettingField::Model, ModelSource::HuggingFace(_)) => {
-                "Enter owner/model, or pick a recent model above."
+                "Enter owner/model, or pick a recent / autodiscovered model above."
             }
             (SettingField::Model, ModelSource::Local(_)) => {
-                "Enter a full .gguf path, or pick a recent model above."
+                "Enter a full .gguf path, or pick a recent / autodiscovered model above."
             }
             (SettingField::EstimatedSize, ModelSource::Local(_)) => {
                 "Calculated automatically from the GGUF file."
@@ -699,6 +730,7 @@ impl App {
 
     pub fn tick(&mut self) {
         self.poll_remote_model_size();
+        self.poll_discovered_models();
 
         let new_logs = self
             .process
@@ -1402,13 +1434,39 @@ impl App {
         self.config.remember_model(source);
     }
 
+    /// Recent models first, then autodiscovered cache entries not already listed.
+    pub fn model_picker_entries(&self) -> Vec<ModelPickerEntry> {
+        let mut entries = Vec::new();
+        for source in &self.config.recent_models {
+            entries.push(ModelPickerEntry {
+                group: ModelPickerGroup::Recent,
+                source: source.clone(),
+            });
+        }
+        for discovered in &self.discovered_models {
+            let source = match &discovered.source {
+                cache::DiscoveredSource::HuggingFace(repo) => {
+                    ModelSource::HuggingFace(repo.clone())
+                }
+                cache::DiscoveredSource::Local(path) => ModelSource::Local(path.clone()),
+            };
+            if entries.iter().any(|entry| entry.source == source) {
+                continue;
+            }
+            entries.push(ModelPickerEntry {
+                group: ModelPickerGroup::Cached,
+                source,
+            });
+        }
+        entries
+    }
+
     pub fn select_recent_model(&mut self, index: usize) -> std::result::Result<(), String> {
         let selected = self
-            .config
-            .recent_models
+            .model_picker_entries()
             .get(index)
-            .cloned()
-            .ok_or_else(|| "That recent model is no longer available.".to_string())?;
+            .map(|entry| entry.source.clone())
+            .ok_or_else(|| "That model is no longer available.".to_string())?;
         match &selected {
             ModelSource::HuggingFace(id) => self.last_hf_model = id.clone(),
             ModelSource::Local(path) => self.last_local_model = path.clone(),
@@ -1417,6 +1475,20 @@ impl App {
         self.sync_remote_model_size();
         self.mark_setting_changed(SettingField::Model);
         Ok(())
+    }
+
+    fn poll_discovered_models(&mut self) {
+        if let Some(pending) = self.pending_discover.as_ref()
+            && let Some(models) = pending.take()
+        {
+            self.discovered_models = models;
+            self.pending_discover = None;
+            self.last_discover = Instant::now();
+        }
+        if self.pending_discover.is_none() && self.last_discover.elapsed() >= DISCOVER_INTERVAL {
+            self.pending_discover = Some(cache::discover_models_async());
+            self.last_discover = Instant::now();
+        }
     }
 
     fn sync_remote_model_size(&mut self) {
@@ -1617,6 +1689,40 @@ mod tests {
         app.select_recent_model(1).unwrap();
         assert_eq!(app.config.model.source, local);
         assert!(app.select_recent_model(9).is_err());
+    }
+
+    #[test]
+    fn picker_appends_autodiscovered_models_after_recent() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        let recent = app.config.model.source.clone();
+        app.config.recent_models = vec![recent.clone()];
+        app.discovered_models = vec![
+            cache::DiscoveredModel {
+                source: cache::DiscoveredSource::HuggingFace("owner/cached-GGUF".into()),
+                bytes: 100,
+            },
+            cache::DiscoveredModel {
+                source: cache::DiscoveredSource::HuggingFace(match &recent {
+                    ModelSource::HuggingFace(id) => id.clone(),
+                    ModelSource::Local(_) => "other/unused".into(),
+                }),
+                bytes: 50,
+            },
+        ];
+        let entries = app.model_picker_entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].group, ModelPickerGroup::Recent);
+        assert_eq!(entries[0].source, recent);
+        assert_eq!(entries[1].group, ModelPickerGroup::Cached);
+        assert_eq!(
+            entries[1].source,
+            ModelSource::HuggingFace("owner/cached-GGUF".into())
+        );
+        app.select_recent_model(1).unwrap();
+        assert_eq!(
+            app.config.model.source,
+            ModelSource::HuggingFace("owner/cached-GGUF".into())
+        );
     }
 
     #[test]

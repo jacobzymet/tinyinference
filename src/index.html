@@ -610,9 +610,9 @@
       </div>
       <div class="panel stack-md">
         <div id="recentModelsBlock" class="is-hidden">
-          <label class="field-label" for="recentModels">Recent models</label>
+          <label class="field-label" for="recentModels">Models</label>
           <select class="field-select" id="recentModels"></select>
-          <div class="setting-hint">Choose a previously used Hugging Face repo or local GGUF path.</div>
+          <div class="setting-hint">Recent picks you have used, plus GGUF models autodiscovered from the local Hugging Face hub / llama.cpp cache (including llama-server downloads).</div>
         </div>
         <div>
           <label class="field-label" for="runtimePreset">Runtime preset</label>
@@ -820,9 +820,22 @@
       }
       block.classList.remove('is-hidden');
       const selected = next.recent_models.find((model) => model.selected);
-      select.innerHTML = next.recent_models.map((model) =>
-        `<option value="${model.index}">${model.kind} · ${escapeHtml(model.label)}</option>`
-      ).join('');
+      const groups = [];
+      for (const model of next.recent_models) {
+        const group = model.group || 'Recent';
+        let bucket = groups.find((item) => item.label === group);
+        if (!bucket) {
+          bucket = { label: group, models: [] };
+          groups.push(bucket);
+        }
+        bucket.models.push(model);
+      }
+      select.innerHTML = groups.map((group) => {
+        const options = group.models.map((model) =>
+          `<option value="${model.index}">${model.kind} · ${escapeHtml(model.label)}</option>`
+        ).join('');
+        return `<optgroup label="${escapeHtml(group.label)}">${options}</optgroup>`;
+      }).join('');
       select.value = String(selected ? selected.index : next.recent_models[0].index);
     }
 

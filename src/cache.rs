@@ -10,6 +10,7 @@
 //! `<cache>/owner_repo_file.gguf` per download, which has no object ids.
 
 use std::{
+    collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver},
@@ -99,6 +100,205 @@ pub fn scan_async(repo: &str) -> PendingScan {
         let _ = sender.send(scan(&repo));
     });
     PendingScan { receiver }
+}
+
+/// A GGUF model found in the local Hugging Face hub or llama.cpp cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredModel {
+    pub source: DiscoveredSource,
+    /// Largest complete GGUF (or blob) seen for this entry, for sorting.
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscoveredSource {
+    /// `owner/repo` from a `models--owner--repo` hub directory.
+    HuggingFace(String),
+    /// Absolute path to a `.gguf` in the flat llama.cpp cache.
+    Local(PathBuf),
+}
+
+#[derive(Debug)]
+pub struct PendingDiscover {
+    receiver: Receiver<Vec<DiscoveredModel>>,
+}
+
+impl PendingDiscover {
+    pub fn take(&self) -> Option<Vec<DiscoveredModel>> {
+        self.receiver.try_recv().ok()
+    }
+}
+
+/// List GGUF models already present in the on-disk caches llama-server uses.
+pub fn discover_models() -> Vec<DiscoveredModel> {
+    let mut hub: BTreeMap<String, u64> = BTreeMap::new();
+    for root in hub_roots() {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let Some((owner, repo)) = parse_hub_dir(name) else {
+                continue;
+            };
+            let Some(bytes) = hub_model_gguf_bytes(&path, &repo) else {
+                continue;
+            };
+            let id = format!("{owner}/{repo}");
+            hub.entry(id)
+                .and_modify(|existing| *existing = (*existing).max(bytes))
+                .or_insert(bytes);
+        }
+    }
+
+    let mut models: Vec<DiscoveredModel> = hub
+        .into_iter()
+        .map(|(repo, bytes)| DiscoveredModel {
+            source: DiscoveredSource::HuggingFace(repo),
+            bytes,
+        })
+        .collect();
+
+    for root in flat_roots() {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if PARTIAL_SUFFIXES
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+            {
+                continue;
+            }
+            if !name.to_ascii_lowercase().ends_with(".gguf") {
+                continue;
+            }
+            models.push(DiscoveredModel {
+                source: DiscoveredSource::Local(path),
+                bytes: metadata.len(),
+            });
+        }
+    }
+
+    models.sort_by(|left, right| {
+        right
+            .bytes
+            .cmp(&left.bytes)
+            .then_with(|| left.label().cmp(&right.label()))
+    });
+    models
+}
+
+pub fn discover_models_async() -> PendingDiscover {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(discover_models());
+    });
+    PendingDiscover { receiver }
+}
+
+impl DiscoveredModel {
+    pub fn label(&self) -> String {
+        match &self.source {
+            DiscoveredSource::HuggingFace(repo) => repo.clone(),
+            DiscoveredSource::Local(path) => path.display().to_string(),
+        }
+    }
+}
+
+/// `models--owner--repo` → `(owner, repo)`.
+fn parse_hub_dir(name: &str) -> Option<(String, String)> {
+    let rest = name.strip_prefix("models--")?;
+    let (owner, repo) = rest.split_once("--")?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string()))
+}
+
+/// Bytes of the largest complete GGUF for a hub model directory, if any.
+fn hub_model_gguf_bytes(model_dir: &Path, repo_name: &str) -> Option<u64> {
+    if let Some(bytes) = preferred_snapshot_gguf_bytes(model_dir) {
+        return Some(bytes);
+    }
+    // Snapshots are missing while a fetch is still landing. For GGUF-named
+    // repos, a finished blob is enough to treat the model as available.
+    if !repo_name.to_ascii_lowercase().contains("gguf") {
+        return None;
+    }
+    read_blobs(&model_dir.join("blobs"))
+        .into_iter()
+        .filter(|blob| !blob.in_flight)
+        .map(|blob| blob.bytes)
+        .max()
+        .filter(|bytes| *bytes > 0)
+}
+
+fn preferred_snapshot_gguf_bytes(model_dir: &Path) -> Option<u64> {
+    let snapshots = model_dir.join("snapshots");
+    if let Ok(commit) = fs::read_to_string(model_dir.join("refs").join("main")) {
+        let commit = commit.trim();
+        if !commit.is_empty() {
+            let bytes = largest_gguf_bytes(&snapshots.join(commit));
+            if bytes > 0 {
+                return Some(bytes);
+            }
+        }
+    }
+    let Ok(entries) = fs::read_dir(&snapshots) else {
+        return None;
+    };
+    entries
+        .flatten()
+        .map(|entry| largest_gguf_bytes(&entry.path()))
+        .filter(|bytes| *bytes > 0)
+        .max()
+}
+
+fn largest_gguf_bytes(directory: &Path) -> u64 {
+    let mut largest = 0u64;
+    let mut stack = vec![directory.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.to_ascii_lowercase().ends_with(".gguf") {
+                largest = largest.max(metadata.len());
+            }
+        }
+    }
+    largest
 }
 
 /// Whether a repository looks like it still has to be fetched.
@@ -335,5 +535,58 @@ mod tests {
         assert!(!is_model_load_line(
             "srv  llama_server: listening on http://x"
         ));
+    }
+
+    #[test]
+    fn hub_directory_names_decode_to_owner_and_repo() {
+        assert_eq!(
+            parse_hub_dir("models--ggml-org--gpt-oss-120b-GGUF"),
+            Some(("ggml-org".into(), "gpt-oss-120b-GGUF".into()))
+        );
+        assert_eq!(parse_hub_dir("models--only-owner"), None);
+        assert_eq!(parse_hub_dir("datasets--owner--name"), None);
+    }
+
+    #[test]
+    fn snapshot_gguf_files_mark_a_hub_model_as_present() {
+        let root = tempfile::tempdir().unwrap();
+        let model = root
+            .path()
+            .join("models--owner--tiny-GGUF");
+        let snapshot = model.join("snapshots").join("abc123");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::create_dir_all(model.join("refs")).unwrap();
+        fs::write(model.join("refs").join("main"), "abc123\n").unwrap();
+        fs::write(snapshot.join("weights.gguf"), vec![0; 2048]).unwrap();
+        fs::write(snapshot.join("readme.md"), b"nope").unwrap();
+        assert_eq!(hub_model_gguf_bytes(&model, "tiny-GGUF"), Some(2048));
+    }
+
+    #[test]
+    fn non_gguf_hub_repos_are_ignored_without_gguf_snapshots() {
+        let root = tempfile::tempdir().unwrap();
+        let model = root
+            .path()
+            .join("models--owner--embeddings");
+        let snapshot = model.join("snapshots").join("abc123");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::write(snapshot.join("model.safetensors"), vec![0; 512]).unwrap();
+        fs::create_dir_all(model.join("blobs")).unwrap();
+        fs::write(model.join("blobs").join("oid1"), vec![0; 512]).unwrap();
+        assert_eq!(hub_model_gguf_bytes(&model, "embeddings"), None);
+    }
+
+    #[test]
+    fn finished_blobs_count_for_gguf_named_repos_without_snapshots() {
+        let root = tempfile::tempdir().unwrap();
+        let model = root.path().join("models--owner--weights-GGUF");
+        fs::create_dir_all(model.join("blobs")).unwrap();
+        fs::write(model.join("blobs").join("oid1"), vec![0; 4096]).unwrap();
+        fs::write(
+            model.join("blobs").join("oid2.downloadInProgress"),
+            vec![0; 100],
+        )
+        .unwrap();
+        assert_eq!(hub_model_gguf_bytes(&model, "weights-GGUF"), Some(4096));
     }
 }

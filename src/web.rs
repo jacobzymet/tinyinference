@@ -249,6 +249,7 @@ struct MappedSizeState {
 #[derive(Debug, Serialize)]
 struct RecentModelState {
     index: usize,
+    group: &'static str,
     kind: &'static str,
     label: String,
     selected: bool,
@@ -356,12 +357,11 @@ impl AppState {
         let active_preset = app.active_runtime_preset().map(RuntimePreset::id);
         let mapped_size = MappedSizeState::from_app(app);
         let recent_models = app
-            .config
-            .recent_models
-            .iter()
+            .model_picker_entries()
+            .into_iter()
             .enumerate()
-            .map(|(index, source)| {
-                let (kind, label) = match source {
+            .map(|(index, entry)| {
+                let (kind, label) = match &entry.source {
                     crate::config::ModelSource::HuggingFace(id) => ("Hugging Face", id.clone()),
                     crate::config::ModelSource::Local(path) => {
                         ("Local GGUF", path.display().to_string())
@@ -369,9 +369,10 @@ impl AppState {
                 };
                 RecentModelState {
                     index,
+                    group: entry.group.label(),
                     kind,
                     label,
-                    selected: source == &app.config.model.source,
+                    selected: entry.source == app.config.model.source,
                 }
             })
             .collect();
