@@ -25,10 +25,19 @@ pub const CACHE_TYPE_DESCRIPTIONS: &[(&str, &str)] = &[
     ("bf16", "brain float16; similar to f16"),
     ("q8_0", "~½ of f16 RAM; little quality loss (default)"),
     ("q4_0", "~¼ of f16 RAM; may drift on long context"),
-    ("q4_1", "4-bit + bias; similar savings, often slightly better"),
-    ("iq4_nl", "4-bit non-linear; usually better than q4 at similar size"),
+    (
+        "q4_1",
+        "4-bit + bias; similar savings, often slightly better",
+    ),
+    (
+        "iq4_nl",
+        "4-bit non-linear; usually better than q4 at similar size",
+    ),
     ("q5_0", "5-bit; between q4 and q8 on RAM/quality"),
-    ("q5_1", "5-bit + bias; similar to q5_0, often slightly better"),
+    (
+        "q5_1",
+        "5-bit + bias; similar to q5_0, often slightly better",
+    ),
 ];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

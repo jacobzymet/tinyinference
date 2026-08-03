@@ -316,10 +316,7 @@ impl AppState {
             .collect();
         let cache_type_help = crate::config::CACHE_TYPE_DESCRIPTIONS
             .iter()
-            .map(|(value, description)| ChoiceHelp {
-                value,
-                description,
-            })
+            .map(|(value, description)| ChoiceHelp { value, description })
             .collect();
         let mapped_size = MappedSizeState::from_app(app);
         let recent_models = app
