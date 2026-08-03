@@ -2,6 +2,8 @@
 
 A minimal Rust web UI for launching and managing `llama-server` with GGUF models.
 
+> **Note:** tinyinference started as a terminal UI (TUI). It now runs as a local web UI instead. Start the binary and open the printed URL in your browser (default `http://127.0.0.1:3920`).
+
 It is designed to make large, capable LLMs runnable on low-spec, low-RAM machines without a GPU, using CPU inference and file-backed model weights. **It will not be fast, in fact, it will often be painfully slow. The point is that it runs at all on low-spec hardware, which is pretty cool.**
 
 ## Requirements
