@@ -77,8 +77,8 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             source: ModelSource::HuggingFace(DEFAULT_MODEL.into()),
-            // The current official MXFP4 artifact is 63.4 decimal GB, or about
-            // 59.1 binary GiB. This is editable because remote repositories change.
+            // Placeholder until the Hugging Face listing resolves the real GGUF
+            // size. tinyinference overwrites this from the repository tree.
             estimated_size_gib: 59.1,
         }
     }

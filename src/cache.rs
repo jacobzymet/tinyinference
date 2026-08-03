@@ -12,7 +12,7 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::mpsc::{self, Receiver},
     thread,
 };
 
@@ -45,10 +45,7 @@ pub struct PendingScan {
 
 impl PendingScan {
     pub fn take(&self) -> Option<CacheScan> {
-        match self.receiver.try_recv() {
-            Ok(scan) => Some(scan),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.receiver.try_recv().ok()
     }
 }
 

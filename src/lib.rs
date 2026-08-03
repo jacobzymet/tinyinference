@@ -4,4 +4,4 @@ pub mod config;
 pub mod hub;
 pub mod server;
 pub mod system;
-pub mod ui;
+pub mod web;

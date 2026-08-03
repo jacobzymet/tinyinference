@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cache,
@@ -19,16 +19,8 @@ use crate::{
 
 const MAX_LOG_LINES: usize = 2_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum View {
-    Dashboard,
-    Configure,
-    Logs,
-    Stats,
-    Help,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ServerStatus {
     Stopped,
     Downloading,
@@ -194,9 +186,9 @@ impl Download {
             false
         } else if in_flight || downloaded > self.downloaded {
             true
-        } else if self.total.is_some_and(|total| downloaded >= total) {
-            false
-        } else if self.total.is_none() && complete_by_estimate {
+        } else if self.total.is_some_and(|total| downloaded >= total)
+            || (self.total.is_none() && complete_by_estimate)
+        {
             false
         } else {
             self.active
@@ -259,7 +251,8 @@ fn is_model_file(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".gguf")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SettingField {
     SourceKind,
     Model,
@@ -359,13 +352,39 @@ impl SettingField {
                 | Self::Jinja
         )
     }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::SourceKind => "source_kind",
+            Self::Model => "model",
+            Self::EstimatedSize => "estimated_size",
+            Self::Executable => "executable",
+            Self::Host => "host",
+            Self::Port => "port",
+            Self::Context => "context",
+            Self::Batch => "batch",
+            Self::MicroBatch => "micro_batch",
+            Self::Parallel => "parallel",
+            Self::CpuOnly => "cpu_only",
+            Self::Mmap => "mmap",
+            Self::Fit => "fit",
+            Self::Repack => "repack",
+            Self::Warmup => "warmup",
+            Self::CacheRam => "cache_ram",
+            Self::Checkpoints => "checkpoints",
+            Self::Mmproj => "mmproj",
+            Self::Jinja => "jinja",
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct Editor {
-    pub field: SettingField,
-    pub value: String,
-    pub cursor: usize,
+/// Live Hugging Face listing used to resolve the real mapped GGUF size.
+#[derive(Debug)]
+struct RemoteModelSize {
+    repo: String,
+    listing: Option<hub::PendingListing>,
+    pub bytes: Option<u64>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -373,26 +392,20 @@ pub struct App {
     pub config: Config,
     pub config_path: PathBuf,
     pub machine: Machine,
-    pub view: View,
     pub status: ServerStatus,
     pub status_detail: String,
     pub process: Option<ServerProcess>,
     running_config: Option<Config>,
     pub logs: VecDeque<String>,
-    pub log_offset: usize,
-    pub setting_index: usize,
-    pub editor: Option<Editor>,
-    pub editor_error: Option<String>,
     last_hf_model: String,
     last_local_model: PathBuf,
-    pub should_quit: bool,
     pub endpoint_online: bool,
     pub download: Option<Download>,
-    pub startup_frame: usize,
     pub process_usage: Option<ProcessUsage>,
     pub server_metrics: Option<ServerMetrics>,
     process_monitor: ProcessMonitor,
     probe: Option<PendingProbe>,
+    remote_model_size: Option<RemoteModelSize>,
     missing_server_prompt: bool,
     last_probe: Instant,
     last_stats_refresh: Instant,
@@ -415,34 +428,30 @@ impl App {
                 config.server.executable.display()
             )
         };
-        Self {
+        let mut app = Self {
             config,
             config_path,
             machine: Machine::detect(),
-            view: View::Dashboard,
             status: ServerStatus::Stopped,
             status_detail,
             process: None,
             running_config: None,
             logs: VecDeque::from(["tinyinference initialized".into()]),
-            log_offset: 0,
-            setting_index: 0,
-            editor: None,
-            editor_error: None,
             last_hf_model,
             last_local_model,
-            should_quit: false,
             endpoint_online: false,
             download: None,
-            startup_frame: 0,
             process_usage: None,
             server_metrics: None,
             process_monitor: ProcessMonitor::default(),
             probe: None,
+            remote_model_size: None,
             missing_server_prompt: !executable_found,
             last_probe: Instant::now() - Duration::from_secs(2),
             last_stats_refresh: Instant::now() - Duration::from_secs(2),
-        }
+        };
+        app.sync_remote_model_size();
+        app
     }
 
     pub fn command(&self) -> CommandSpec {
@@ -467,8 +476,9 @@ impl App {
         self.missing_server_prompt = false;
     }
 
-    pub fn selected_field(&self) -> SettingField {
-        SettingField::ALL[self.setting_index]
+    pub fn open_server_configuration(&mut self) {
+        self.missing_server_prompt = false;
+        self.status_detail = "Set the llama-server executable path, then save".into();
     }
 
     pub fn setting_value(&self, field: SettingField) -> String {
@@ -486,15 +496,16 @@ impl App {
                 }
                 _ => self.config.model_label(),
             },
-            SettingField::EstimatedSize => match &self.config.model.source {
-                ModelSource::Local(_) => self
-                    .config
-                    .local_model_size_gib()
-                    .map(|size| format!("{size:.1} GiB  (from file)"))
-                    .unwrap_or_else(|| "auto from .gguf".into()),
-                ModelSource::HuggingFace(_) => {
-                    format!("{:.1} GiB", self.config.model.estimated_size_gib)
+            SettingField::EstimatedSize => match self.mapped_model_gib() {
+                Some(size) => match &self.config.model.source {
+                    ModelSource::Local(_) => format!("{size:.1} GiB  (from file)"),
+                    ModelSource::HuggingFace(_) => format!("{size:.1} GiB  (from Hugging Face)"),
+                },
+                None if matches!(self.config.model.source, ModelSource::Local(_)) => {
+                    "auto from .gguf".into()
                 }
+                None if self.remote_model_size_loading() => "fetching from Hugging Face…".into(),
+                None => "unavailable".into(),
             },
             SettingField::Executable => {
                 let path = &self.config.server.executable;
@@ -522,49 +533,105 @@ impl App {
         }
     }
 
+    pub fn setting_raw_value(&self, field: SettingField) -> String {
+        match field {
+            SettingField::SourceKind => match self.config.model.source {
+                ModelSource::HuggingFace(_) => "hugging_face".into(),
+                ModelSource::Local(_) => "local".into(),
+            },
+            SettingField::Model => self.config.model_label(),
+            SettingField::EstimatedSize => self
+                .mapped_model_gib()
+                .map(|size| format!("{size:.1}"))
+                .unwrap_or_default(),
+            SettingField::Executable => self.config.server.executable.display().to_string(),
+            SettingField::Host => self.config.effective_host(),
+            SettingField::Port => self.config.effective_port().to_string(),
+            SettingField::Context => self.config.runtime.context_size.to_string(),
+            SettingField::Batch => self.config.runtime.batch_size.to_string(),
+            SettingField::MicroBatch => self.config.runtime.micro_batch_size.to_string(),
+            SettingField::Parallel => self.config.runtime.parallel.to_string(),
+            SettingField::CpuOnly => self.config.runtime.cpu_only.to_string(),
+            SettingField::Mmap => self.config.runtime.mmap.to_string(),
+            SettingField::Fit => self.config.runtime.fit.to_string(),
+            SettingField::Repack => self.config.runtime.repack.to_string(),
+            SettingField::Warmup => self.config.runtime.warmup.to_string(),
+            SettingField::CacheRam => self.config.runtime.cache_ram_mib.to_string(),
+            SettingField::Checkpoints => self.config.runtime.context_checkpoints.to_string(),
+            SettingField::Mmproj => self.config.runtime.multimodal_projector.to_string(),
+            SettingField::Jinja => self.config.runtime.jinja.to_string(),
+        }
+    }
+
     pub fn setting_label(&self, field: SettingField) -> &'static str {
         match (field, &self.config.model.source) {
             (SettingField::Model, ModelSource::HuggingFace(_)) => "Model repository",
             (SettingField::Model, ModelSource::Local(_)) => "GGUF file path",
-            (SettingField::EstimatedSize, ModelSource::Local(_)) => "Mapped file size",
-            (SettingField::EstimatedSize, ModelSource::HuggingFace(_)) => "Estimated file size",
+            (SettingField::EstimatedSize, _) => "Mapped file size",
             (SettingField::Executable, _) => "llama-server path",
             _ => field.label(),
         }
     }
 
     pub fn setting_is_editable(&self, field: SettingField) -> bool {
-        field.is_editable()
-            && !matches!(
-                (field, &self.config.model.source),
-                (SettingField::EstimatedSize, ModelSource::Local(_))
-            )
+        field.is_editable() && field != SettingField::EstimatedSize
+    }
+
+    /// Size of the model file(s) mmap will map, when known.
+    pub fn mapped_model_gib(&self) -> Option<f64> {
+        const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+        if let Some(size) = self.config.local_model_size_gib() {
+            return Some(size);
+        }
+        if let Some(total) = self.active_download().and_then(|download| download.total) {
+            return Some(total as f64 / GIB);
+        }
+        self.remote_model_size
+            .as_ref()
+            .and_then(|remote| remote.bytes)
+            .map(|bytes| bytes as f64 / GIB)
+    }
+
+    pub fn remote_model_size_loading(&self) -> bool {
+        matches!(
+            &self.remote_model_size,
+            Some(RemoteModelSize {
+                listing: Some(_),
+                bytes: None,
+                error: None,
+                ..
+            })
+        )
+    }
+
+    pub fn remote_model_size_error(&self) -> Option<&str> {
+        self.remote_model_size
+            .as_ref()
+            .and_then(|remote| remote.error.as_deref())
     }
 
     pub fn setting_hint(&self, field: SettingField) -> &'static str {
         match (field, &self.config.model.source) {
-            (SettingField::SourceKind, _) => {
-                "Use \u{2190}\u{2192} to switch source; then edit the field below."
-            }
+            (SettingField::SourceKind, _) => "Switch between Hugging Face and a local GGUF file.",
             (SettingField::Model, ModelSource::HuggingFace(_)) => {
-                "Enter owner/model, or press r to cycle recent models."
+                "Enter owner/model, or pick a recent model above."
             }
             (SettingField::Model, ModelSource::Local(_)) => {
-                "Enter a full .gguf path, or press r to cycle recent models."
+                "Enter a full .gguf path, or pick a recent model above."
             }
             (SettingField::EstimatedSize, ModelSource::Local(_)) => {
                 "Calculated automatically from the GGUF file."
             }
             (SettingField::EstimatedSize, ModelSource::HuggingFace(_)) => {
-                "Display-only estimate for the remote model mapping."
+                "Fetched from the Hugging Face file listing for this repository."
             }
             (SettingField::Executable, _) => {
                 "Enter llama-server if it is on PATH, or enter its full executable path."
             }
             (SettingField::Host, _) => "127.0.0.1 keeps the server local to this machine.",
-            (SettingField::Port, _) => "Press Enter for an exact port; arrows adjust by one.",
-            (SettingField::Context, _) => "Press Enter for an exact token count; 8k is accepted.",
-            (SettingField::Batch, _) => "Prompt batch size. Enter an exact value or use arrows.",
+            (SettingField::Port, _) => "Port llama-server listens on.",
+            (SettingField::Context, _) => "Token count; 8k is accepted.",
+            (SettingField::Batch, _) => "Prompt batch size.",
             (SettingField::MicroBatch, _) => "Must be no larger than the batch size.",
             (SettingField::Parallel, _) => "Number of simultaneous server slots.",
             (SettingField::CpuOnly, _) => "On forces all model layers onto the CPU.",
@@ -581,181 +648,8 @@ impl App {
         }
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) {
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
-            return;
-        }
-        if self.missing_server_prompt {
-            match key.code {
-                KeyCode::Enter | KeyCode::Char('c') => self.open_server_configuration(),
-                KeyCode::Esc => self.dismiss_server_prompt(),
-                KeyCode::Char('q') => self.should_quit = true,
-                _ => {}
-            }
-            return;
-        }
-        if self.editor.is_some() && key.code == KeyCode::Enter {
-            self.commit_editor();
-            return;
-        }
-        if let Some(editor) = self.editor.as_mut() {
-            match key.code {
-                KeyCode::Esc => {
-                    self.editor = None;
-                    self.editor_error = None;
-                }
-                KeyCode::Backspace => {
-                    self.editor_error = None;
-                    if editor.cursor > 0 {
-                        let previous = previous_char_boundary(&editor.value, editor.cursor);
-                        editor.value.drain(previous..editor.cursor);
-                        editor.cursor = previous;
-                    }
-                }
-                KeyCode::Delete => {
-                    self.editor_error = None;
-                    if editor.cursor < editor.value.len() {
-                        let next = next_char_boundary(&editor.value, editor.cursor);
-                        editor.value.drain(editor.cursor..next);
-                    }
-                }
-                KeyCode::Left => {
-                    editor.cursor = previous_char_boundary(&editor.value, editor.cursor);
-                }
-                KeyCode::Right => {
-                    editor.cursor = next_char_boundary(&editor.value, editor.cursor);
-                }
-                KeyCode::Home => editor.cursor = 0,
-                KeyCode::End => editor.cursor = editor.value.len(),
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.editor_error = None;
-                    editor.value.insert(editor.cursor, c);
-                    editor.cursor += c.len_utf8();
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        match self.view {
-            View::Dashboard => self.handle_dashboard_key(key.code),
-            View::Configure => self.handle_config_key(key.code),
-            View::Logs => self.handle_logs_key(key.code),
-            View::Stats => self.handle_stats_key(key.code),
-            View::Help => {
-                if matches!(
-                    key.code,
-                    KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')
-                ) {
-                    self.view = View::Dashboard;
-                }
-            }
-        }
-    }
-
-    fn handle_dashboard_key(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('s') => {
-                if self.process.is_some() {
-                    self.stop();
-                } else {
-                    self.start();
-                }
-            }
-            KeyCode::Char('r') => self.restart(),
-            KeyCode::Char('c') => self.view = View::Configure,
-            KeyCode::Char('l') => self.view = View::Logs,
-            KeyCode::Char('t') => {
-                self.view = View::Stats;
-                self.last_probe = Instant::now() - Duration::from_secs(2);
-                self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
-            }
-            KeyCode::Char('y') => self.copy_endpoint(),
-            KeyCode::Char('Y') => self.copy_command(),
-            KeyCode::Char('?') => self.view = View::Help,
-            _ => {}
-        }
-    }
-
-    fn open_server_configuration(&mut self) {
-        self.missing_server_prompt = false;
-        self.view = View::Configure;
-        self.setting_index = SettingField::ALL
-            .iter()
-            .position(|field| *field == SettingField::Executable)
-            .unwrap_or(0);
-    }
-
-    fn handle_config_key(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Esc | KeyCode::Char('c') => self.view = View::Dashboard,
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.setting_index = self.setting_index.saturating_sub(1);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.setting_index = (self.setting_index + 1).min(SettingField::ALL.len() - 1);
-            }
-            KeyCode::Left | KeyCode::Char('h') => self.adjust_selected(-1),
-            KeyCode::Right | KeyCode::Char('l') => self.adjust_selected(1),
-            KeyCode::Char(' ') if self.selected_field().is_toggle() => self.adjust_selected(1),
-            KeyCode::Enter => {
-                if self.setting_is_editable(self.selected_field()) {
-                    self.begin_edit();
-                } else {
-                    self.adjust_selected(1);
-                }
-            }
-            KeyCode::Char('s') => self.save(),
-            KeyCode::Char('r') if self.selected_field() == SettingField::Model => {
-                self.select_next_recent_model();
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_logs_key(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Esc | KeyCode::Char('l') => self.view = View::Dashboard,
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.log_offset = (self.log_offset + 1).min(self.logs.len().saturating_sub(1));
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.log_offset = self.log_offset.saturating_sub(1);
-            }
-            KeyCode::PageUp => {
-                self.log_offset = (self.log_offset + 10).min(self.logs.len().saturating_sub(1));
-            }
-            KeyCode::PageDown => self.log_offset = self.log_offset.saturating_sub(10),
-            KeyCode::Home => self.log_offset = self.logs.len().saturating_sub(1),
-            KeyCode::End => self.log_offset = 0,
-            _ => {}
-        }
-    }
-
-    fn handle_stats_key(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Esc | KeyCode::Char('t') => self.view = View::Dashboard,
-            KeyCode::Char('y') => self.copy_endpoint(),
-            KeyCode::Char('Y') => self.copy_command(),
-            KeyCode::Char('q') => self.should_quit = true,
-            _ => {}
-        }
-    }
-
     pub fn tick(&mut self) {
-        if matches!(
-            self.status,
-            ServerStatus::Starting | ServerStatus::Downloading
-        ) {
-            self.startup_frame = self.startup_frame.wrapping_add(1);
-        }
+        self.poll_remote_model_size();
 
         let new_logs = self
             .process
@@ -831,16 +725,13 @@ impl App {
             }
             if self.probe.is_none() && self.last_probe.elapsed() >= Duration::from_secs(1) {
                 if let Some(config) = self.running_config.clone() {
-                    self.probe = Some(probe_async(&config, self.view == View::Stats));
+                    self.probe = Some(probe_async(&config, true));
                 }
                 self.last_probe = Instant::now();
             }
         }
 
-        if self.view == View::Stats
-            && self.process.is_some()
-            && self.last_stats_refresh.elapsed() >= Duration::from_secs(1)
-        {
+        if self.process.is_some() && self.last_stats_refresh.elapsed() >= Duration::from_secs(1) {
             let process_id = self.process.as_ref().map(ServerProcess::id);
             self.process_usage = process_id.and_then(|pid| self.process_monitor.refresh(pid));
             self.last_stats_refresh = Instant::now();
@@ -854,7 +745,6 @@ impl App {
         }
         if self.endpoint_online {
             self.download = None;
-            self.startup_frame = 0;
             self.status = ServerStatus::Ready;
             if let Some(config) = &self.running_config {
                 self.status_detail = format!("Listening at {}", config.endpoint());
@@ -893,7 +783,6 @@ impl App {
                 }
                 self.endpoint_online = false;
                 self.probe = None;
-                self.startup_frame = 0;
                 self.last_probe = Instant::now() - Duration::from_secs(2);
                 self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
             }
@@ -982,7 +871,7 @@ impl App {
         }
     }
 
-    fn save(&mut self) {
+    pub fn save(&mut self) {
         match self.config.save(&self.config_path) {
             Ok(()) => {
                 self.status_detail = format!("Saved {}", self.config_path.display());
@@ -995,53 +884,36 @@ impl App {
         }
     }
 
-    fn begin_edit(&mut self) {
-        let field = self.selected_field();
-        if !self.setting_is_editable(field) {
-            return;
-        }
-        let value = match field {
-            SettingField::Model => self.config.model_label(),
-            SettingField::EstimatedSize => self.config.model.estimated_size_gib.to_string(),
-            SettingField::Executable => self.config.server.executable.display().to_string(),
-            SettingField::Host => self.config.effective_host(),
-            SettingField::Port => self.config.effective_port().to_string(),
-            SettingField::Context => self.config.runtime.context_size.to_string(),
-            SettingField::Batch => self.config.runtime.batch_size.to_string(),
-            SettingField::MicroBatch => self.config.runtime.micro_batch_size.to_string(),
-            SettingField::Parallel => self.config.runtime.parallel.to_string(),
-            SettingField::CacheRam => self.config.runtime.cache_ram_mib.to_string(),
-            SettingField::Checkpoints => self.config.runtime.context_checkpoints.to_string(),
-            _ => return,
+    pub fn reset_to_defaults(&mut self) {
+        let recent_models = self.config.recent_models.clone();
+        self.config = Config::default();
+        self.config.recent_models = recent_models;
+        self.config.remember_model(self.config.model.source.clone());
+        self.last_hf_model = DEFAULT_MODEL.into();
+        self.last_local_model = PathBuf::new();
+        self.missing_server_prompt = !executable_exists(&self.config.server.executable);
+        self.sync_remote_model_size();
+        self.status_detail = if self.process.is_some() {
+            "Restored defaults; restart to apply, save to persist".into()
+        } else {
+            "Restored defaults; save to persist".into()
         };
-        self.editor_error = None;
-        self.editor = Some(Editor {
-            cursor: value.len(),
-            field,
-            value,
-        });
+        self.push_log("configuration reset to defaults".into());
     }
 
-    fn commit_editor(&mut self) {
-        let Some(editor) = self.editor.clone() else {
-            return;
-        };
-        match self.apply_editor_value(editor.field, editor.value.trim()) {
-            Ok(()) => {
-                if editor.field == SettingField::Model {
-                    self.remember_current_model();
-                }
-                self.editor = None;
-                self.editor_error = None;
-                self.mark_setting_changed(editor.field);
-            }
-            Err(error) => {
-                self.editor_error = Some(error);
-            }
+    pub fn set_field(&mut self, field: SettingField, raw: &str) -> std::result::Result<(), String> {
+        self.apply_field_value(field, raw.trim())?;
+        if field == SettingField::Model {
+            self.remember_current_model();
         }
+        if matches!(field, SettingField::Model | SettingField::SourceKind) {
+            self.sync_remote_model_size();
+        }
+        self.mark_setting_changed(field);
+        Ok(())
     }
 
-    fn apply_editor_value(
+    fn apply_field_value(
         &mut self,
         field: SettingField,
         raw: &str,
@@ -1067,13 +939,7 @@ impl App {
                 }
             }
             SettingField::EstimatedSize => {
-                let size = value
-                    .parse::<f64>()
-                    .map_err(|_| "Enter a size in GiB, such as 59.1.".to_string())?;
-                if !size.is_finite() || !(0.1..=100_000.0).contains(&size) {
-                    return Err("File size must be between 0.1 and 100000 GiB.".into());
-                }
-                self.config.model.estimated_size_gib = size;
+                return Err("Mapped file size is detected automatically.".into());
             }
             SettingField::Executable => {
                 if value.is_empty() {
@@ -1123,13 +989,49 @@ impl App {
                 self.config.runtime.context_checkpoints =
                     parse_bounded_u32(value, "context checkpoints", 0, 256)?;
             }
-            _ => return Err("This setting is changed with the arrow keys.".into()),
+            SettingField::CpuOnly
+            | SettingField::Mmap
+            | SettingField::Fit
+            | SettingField::Repack
+            | SettingField::Warmup
+            | SettingField::Mmproj
+            | SettingField::Jinja => {
+                let on = parse_bool(value)?;
+                match field {
+                    SettingField::CpuOnly => self.config.runtime.cpu_only = on,
+                    SettingField::Mmap => self.config.runtime.mmap = on,
+                    SettingField::Fit => self.config.runtime.fit = on,
+                    SettingField::Repack => self.config.runtime.repack = on,
+                    SettingField::Warmup => self.config.runtime.warmup = on,
+                    SettingField::Mmproj => self.config.runtime.multimodal_projector = on,
+                    SettingField::Jinja => self.config.runtime.jinja = on,
+                    _ => unreachable!(),
+                }
+            }
+            SettingField::SourceKind => {
+                let want_local = matches!(
+                    value.to_ascii_lowercase().as_str(),
+                    "local" | "local_gguf" | "gguf"
+                );
+                let is_local = matches!(self.config.model.source, ModelSource::Local(_));
+                if want_local != is_local {
+                    self.adjust_field(SettingField::SourceKind, 1);
+                    return Ok(());
+                }
+            }
         }
         Ok(())
     }
 
-    fn adjust_selected(&mut self, direction: i32) {
-        let field = self.selected_field();
+    pub fn toggle_field(&mut self, field: SettingField) -> std::result::Result<(), String> {
+        if !field.is_toggle() {
+            return Err("This setting is not a toggle.".into());
+        }
+        self.adjust_field(field, 1);
+        Ok(())
+    }
+
+    pub fn adjust_field(&mut self, field: SettingField, direction: i32) {
         let positive = direction > 0;
         match field {
             SettingField::SourceKind => {
@@ -1148,15 +1050,7 @@ impl App {
                 return;
             }
             SettingField::EstimatedSize => {
-                if matches!(&self.config.model.source, ModelSource::Local(_)) {
-                    return;
-                }
-                self.config.model.estimated_size_gib = adjust_f64(
-                    self.config.model.estimated_size_gib,
-                    direction as f64,
-                    0.1,
-                    999.0,
-                );
+                return;
             }
             SettingField::Port => {
                 self.config.server.port =
@@ -1214,6 +1108,9 @@ impl App {
             }
             SettingField::Jinja => self.config.runtime.jinja = !self.config.runtime.jinja,
         }
+        if field == SettingField::SourceKind {
+            self.sync_remote_model_size();
+        }
         self.mark_setting_changed(field);
     }
 
@@ -1221,7 +1118,7 @@ impl App {
         self.status_detail = if self.process.is_some() {
             format!("Changed {}; restart to apply", self.setting_label(field))
         } else {
-            format!("Changed {}; press s to save", self.setting_label(field))
+            format!("Changed {}; save to persist", self.setting_label(field))
         };
     }
 
@@ -1230,36 +1127,84 @@ impl App {
         self.config.remember_model(source);
     }
 
-    fn select_next_recent_model(&mut self) {
-        if self.config.recent_models.len() < 2 {
-            self.status_detail = "No other recent models yet".into();
-            return;
-        }
-        let current = &self.config.model.source;
-        let next_index = self
+    pub fn select_recent_model(&mut self, index: usize) -> std::result::Result<(), String> {
+        let selected = self
             .config
             .recent_models
-            .iter()
-            .position(|recent| recent == current)
-            .map(|index| (index + 1) % self.config.recent_models.len())
-            .unwrap_or(0);
-        let selected = self.config.recent_models[next_index].clone();
+            .get(index)
+            .cloned()
+            .ok_or_else(|| "That recent model is no longer available.".to_string())?;
         match &selected {
             ModelSource::HuggingFace(id) => self.last_hf_model = id.clone(),
             ModelSource::Local(path) => self.last_local_model = path.clone(),
         }
         self.config.model.source = selected;
+        self.sync_remote_model_size();
         self.mark_setting_changed(SettingField::Model);
+        Ok(())
     }
 
-    fn copy_endpoint(&mut self) {
+    fn sync_remote_model_size(&mut self) {
+        let ModelSource::HuggingFace(repo) = &self.config.model.source else {
+            self.remote_model_size = None;
+            return;
+        };
+        if self.remote_model_size.as_ref().is_some_and(|remote| {
+            remote.repo == *repo && (remote.bytes.is_some() || remote.listing.is_some())
+        }) {
+            return;
+        }
+        self.remote_model_size = Some(RemoteModelSize {
+            repo: repo.clone(),
+            listing: Some(hub::list_files_async(repo)),
+            bytes: None,
+            error: None,
+        });
+    }
+
+    fn poll_remote_model_size(&mut self) {
+        let Some(remote) = self.remote_model_size.as_mut() else {
+            return;
+        };
+        let Some(result) = remote.listing.as_mut().and_then(hub::PendingListing::take) else {
+            return;
+        };
+        remote.listing = None;
+        let repo = remote.repo.clone();
+        let resolved = match result {
+            Ok(files) => match hub::primary_gguf_bytes(&files, &repo) {
+                Some(bytes) => Ok(bytes),
+                None => Err("No GGUF files found in the repository listing.".into()),
+            },
+            Err(error) => Err(error),
+        };
+        match resolved {
+            Ok(bytes) => {
+                if let Some(remote) = self.remote_model_size.as_mut() {
+                    remote.bytes = Some(bytes);
+                    remote.error = None;
+                }
+                self.config.model.estimated_size_gib = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            }
+            Err(error) => {
+                if let Some(remote) = self.remote_model_size.as_mut() {
+                    remote.bytes = None;
+                    remote.error = Some(error);
+                }
+            }
+        }
+    }
+
+    pub fn copy_endpoint(&mut self) -> String {
         let endpoint = self.displayed_config().api_endpoint();
         self.copy_text("API endpoint", &endpoint);
+        endpoint
     }
 
-    fn copy_command(&mut self) {
+    pub fn copy_command(&mut self) -> String {
         let command = CommandSpec::from_config(self.displayed_config()).display();
         self.copy_text("launch command", &command);
+        command
     }
 
     fn copy_text(&mut self, label: &str, text: &str) {
@@ -1298,16 +1243,20 @@ fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
 }
 
+fn parse_bool(value: &str) -> std::result::Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "on" | "yes" => Ok(true),
+        "false" | "0" | "off" | "no" => Ok(false),
+        _ => Err("Enter true or false.".into()),
+    }
+}
+
 fn adjust_u32(value: u32, delta: i32, min: u32, max: u32) -> u32 {
     if delta >= 0 {
         value.saturating_add(delta as u32).min(max)
     } else {
         value.saturating_sub(delta.unsigned_abs()).max(min)
     }
-}
-
-fn adjust_f64(value: f64, delta: f64, min: f64, max: f64) -> f64 {
-    (value + delta).clamp(min, max)
 }
 
 fn adjust_power_of_two(value: u32, increase: bool, min: u32, max: u32) -> u32 {
@@ -1367,22 +1316,6 @@ fn trim_wrapping_quotes(value: &str) -> &str {
     value
 }
 
-fn previous_char_boundary(value: &str, cursor: usize) -> usize {
-    value[..cursor]
-        .char_indices()
-        .next_back()
-        .map(|(index, _)| index)
-        .unwrap_or(0)
-}
-
-fn next_char_boundary(value: &str, cursor: usize) -> usize {
-    value[cursor..]
-        .char_indices()
-        .nth(1)
-        .map(|(index, _)| cursor + index)
-        .unwrap_or(value.len())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1395,39 +1328,31 @@ mod tests {
     }
 
     #[test]
-    fn text_cursor_moves_across_unicode_boundaries() {
-        let value = "aλb";
-        assert_eq!(next_char_boundary(value, 1), 3);
-        assert_eq!(previous_char_boundary(value, 3), 1);
-    }
-
-    #[test]
-    fn app_starts_with_dashboard() {
+    fn app_starts_stopped() {
         let app = App::new(Config::default(), "test.toml".into());
-        assert_eq!(app.view, View::Dashboard);
         assert_eq!(app.status, ServerStatus::Stopped);
     }
 
     #[test]
-    fn recent_model_shortcut_cycles_saved_models() {
+    fn recent_model_can_be_selected_by_index() {
         let mut app = App::new(Config::default(), "test.toml".into());
         let current = app.config.model.source.clone();
         let local = ModelSource::Local("models/small.gguf".into());
         app.config.recent_models = vec![current, local.clone()];
-        app.select_next_recent_model();
+        app.select_recent_model(1).unwrap();
         assert_eq!(app.config.model.source, local);
+        assert!(app.select_recent_model(9).is_err());
     }
 
     #[test]
-    fn missing_server_prompts_and_opens_the_right_setting() {
+    fn missing_server_prompts_and_opens_configuration() {
         let mut config = Config::default();
         config.server.executable = "__tinyinference_missing_server__".into();
         let mut app = App::new(config, "test.toml".into());
         assert!(app.should_prompt_for_server());
-        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.view, View::Configure);
-        assert_eq!(app.selected_field(), SettingField::Executable);
+        app.open_server_configuration();
         assert!(!app.should_prompt_for_server());
+        assert!(app.status_detail.contains("executable"));
     }
 
     #[test]
@@ -1448,62 +1373,48 @@ mod tests {
     }
 
     #[test]
-    fn control_c_quits_while_editor_is_open() {
-        let mut app = App::new(Config::default(), "test.toml".into());
-        app.setting_index = SettingField::ALL
-            .iter()
-            .position(|field| *field == SettingField::Port)
-            .unwrap();
-        app.begin_edit();
-        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-        assert!(app.should_quit);
-    }
-
-    #[test]
     fn exact_port_can_be_entered() {
         let mut app = App::new(Config::default(), "test.toml".into());
         app.dismiss_server_prompt();
-        app.view = View::Configure;
-        app.setting_index = SettingField::ALL
-            .iter()
-            .position(|field| *field == SettingField::Port)
-            .unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        let editor = app.editor.as_mut().unwrap();
-        editor.value = "4242".into();
-        editor.cursor = editor.value.len();
-        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.set_field(SettingField::Port, "4242").unwrap();
         assert_eq!(app.config.server.port, 4242);
-        assert!(app.editor.is_none());
+    }
+
+    #[test]
+    fn reset_to_defaults_restores_settings_and_keeps_recent_models() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        let local = ModelSource::Local("models/small.gguf".into());
+        app.config.recent_models.push(local.clone());
+        app.set_field(SettingField::Port, "4242").unwrap();
+        app.set_field(SettingField::Context, "4096").unwrap();
+        app.reset_to_defaults();
+        assert_eq!(app.config.server.port, Config::default().server.port);
+        assert_eq!(
+            app.config.runtime.context_size,
+            Config::default().runtime.context_size
+        );
+        assert!(app.config.recent_models.contains(&local));
     }
 
     #[test]
     fn context_accepts_k_suffix() {
         let mut app = App::new(Config::default(), "test.toml".into());
-        app.apply_editor_value(SettingField::Context, "16k")
-            .unwrap();
+        app.set_field(SettingField::Context, "16k").unwrap();
         assert_eq!(app.config.runtime.context_size, 16 * 1024);
     }
 
     #[test]
-    fn invalid_editor_value_keeps_editor_open() {
+    fn invalid_field_value_is_rejected() {
         let mut app = App::new(Config::default(), "test.toml".into());
-        app.setting_index = SettingField::ALL
-            .iter()
-            .position(|field| *field == SettingField::Port)
-            .unwrap();
-        app.begin_edit();
-        app.editor.as_mut().unwrap().value = "70000".into();
-        app.commit_editor();
-        assert!(app.editor.is_some());
-        assert!(app.editor_error.as_deref().unwrap().contains("between"));
+        let error = app.set_field(SettingField::Port, "70000").unwrap_err();
+        assert!(error.contains("between"));
         assert_eq!(app.config.server.port, 8080);
     }
 
     #[test]
     fn switching_to_local_model_requests_a_real_path() {
         let mut app = App::new(Config::default(), "test.toml".into());
-        app.adjust_selected(1);
+        app.adjust_field(SettingField::SourceKind, 1);
         assert!(matches!(
             app.config.model.source,
             ModelSource::Local(ref path) if path.as_os_str().is_empty()
@@ -1521,17 +1432,35 @@ mod tests {
     }
 
     #[test]
+    fn hugging_face_mapped_size_comes_from_the_listing() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.remote_model_size = Some(RemoteModelSize {
+            repo: DEFAULT_MODEL.into(),
+            listing: None,
+            bytes: Some(63_454_123_008),
+            error: None,
+        });
+        let size = app.mapped_model_gib().unwrap();
+        assert!((size - 59.1).abs() < 0.05);
+        assert!(
+            app.setting_value(SettingField::EstimatedSize)
+                .contains("from Hugging Face")
+        );
+        assert!(!app.setting_is_editable(SettingField::EstimatedSize));
+    }
+
+    #[test]
     fn model_source_switch_preserves_both_values() {
         let mut app = App::new(Config::default(), "test.toml".into());
-        app.adjust_selected(1);
-        app.apply_editor_value(SettingField::Model, r"C:\models\custom.gguf")
+        app.adjust_field(SettingField::SourceKind, 1);
+        app.set_field(SettingField::Model, r"C:\models\custom.gguf")
             .unwrap();
-        app.adjust_selected(1);
+        app.adjust_field(SettingField::SourceKind, 1);
         assert_eq!(
             app.setting_value(SettingField::Model),
             "ggml-org/gpt-oss-120b-GGUF"
         );
-        app.adjust_selected(1);
+        app.adjust_field(SettingField::SourceKind, 1);
         assert_eq!(
             app.setting_value(SettingField::Model),
             r"C:\models\custom.gguf"
@@ -1646,7 +1575,7 @@ mod tests {
     #[test]
     fn quoted_executable_path_is_unwrapped() {
         let mut app = App::new(Config::default(), "test.toml".into());
-        app.apply_editor_value(
+        app.set_field(
             SettingField::Executable,
             r#""C:\Program Files\llama\llama-server.exe""#,
         )

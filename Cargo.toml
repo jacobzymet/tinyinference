@@ -2,19 +2,19 @@
 name = "tinyinference"
 version = "0.1.0"
 edition = "2024"
-description = "A minimal terminal control plane for memory-conscious llama.cpp inference"
+description = "A minimal web control plane for memory-conscious llama.cpp inference"
 license = "MIT"
 
 [dependencies]
 anyhow = "1.0"
+axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 directories = "6.0"
-ratatui = "0.30.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.151"
 sysinfo = "0.38"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 toml = "0.9"
-unicode-width = "0.2"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]

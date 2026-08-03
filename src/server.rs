@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Read as _, Write},
     net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    sync::mpsc::{self, Receiver, Sender},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -162,10 +162,7 @@ pub struct PendingProbe {
 
 impl PendingProbe {
     pub fn take(&self) -> Option<ProbeResult> {
-        match self.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.receiver.try_recv().ok()
     }
 }
 

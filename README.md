@@ -1,6 +1,6 @@
 # tinyinference
 
-A minimal Rust TUI for launching and managing `llama-server` with GGUF models.
+A minimal Rust web UI for launching and managing `llama-server` with GGUF models.
 
 It is designed to make large, capable LLMs runnable on low-spec, low-RAM machines without a GPU, using CPU inference and file-backed model weights. **It will not be fast, in fact, it will often be painfully slow. The point is that it runs at all on low-spec hardware, which is pretty cool.**
 
@@ -9,9 +9,10 @@ It is designed to make large, capable LLMs runnable on low-spec, low-RAM machine
 - [Rust](https://www.rust-lang.org/tools/install)
 - [`llama-server`](https://github.com/ggml-org/llama.cpp) from llama.cpp
 - A GGUF model available locally or on Hugging Face
+- A modern web browser
 
 `llama-server` must be on `PATH`, or you can set its full executable path from
-tinyinference's Configure screen.
+tinyinference's Configure tab.
 
 ## Run
 
@@ -23,8 +24,15 @@ cd tinyinference
 cargo run
 ```
 
+Open the printed URL in your browser (default `http://127.0.0.1:3920`), or pass
+`--open` to launch it automatically:
+
+```powershell
+cargo run -- --open
+```
+
 On first launch, tinyinference checks for `llama-server`. If it cannot find it,
-press `Enter` or `c` to open the executable-path setting.
+use the prompt to open the executable-path setting.
 
 ## Build
 
@@ -48,16 +56,16 @@ On macOS or Linux, use:
 
 ## Configuration
 
-Press `c` to configure the model, `llama-server` path, host, port, and runtime
-settings. Press `Enter` on a value to type an exact value; use `s` to save.
+Open the **Configure** tab to edit the model, `llama-server` path, host, port,
+and runtime settings. Use **Save** to write the configuration to disk.
 
-Switch **Model source**, then edit the next row to enter either a Hugging Face
+Switch **Model source**, then edit the model field to enter either a Hugging Face
 `owner/model` repository or a full local `.gguf` path. A local model's size is
 detected automatically.
 
-When the model row is selected, press `r` to cycle through up to eight recently
-used Hugging Face repositories and local GGUF paths. Recent models are stored
-with the rest of the configuration when you save.
+The **Recent models** dropdown lists up to eight previously used Hugging Face
+repositories and local GGUF paths. Recent models are stored with the rest of the
+configuration when you save.
 
 Settings are saved in the platform configuration directory. To use a portable
 profile, copy the example and pass it explicitly:
@@ -74,25 +82,23 @@ Useful commands:
 
 ```powershell
 cargo run -- --start
+cargo run -- --open
+cargo run -- --bind 127.0.0.1:4000
 cargo run -- --print-command
 ```
 
-## Controls
+## UI
 
-| Key | Action |
+| Action | Where |
 | --- | --- |
-| `s` | Start or stop the server; save from Configure |
-| `r` | Restart the server |
-| `c` | Configure |
-| `l` | View logs |
-| `t` | View live server statistics |
-| `y` | Copy the OpenAI-compatible `/v1` URL |
-| `Y` | Copy the resolved `llama-server` command |
-| `?` | Help |
-| `q` | Quit and stop the managed server |
-| `Up` / `Down` or `k` / `j` | Select a setting |
-| `Left` / `Right` or `h` / `l` | Adjust a setting |
-| `Enter` | Type an exact value or toggle |
+| Start / stop | Header button |
+| Restart | Header button |
+| Configure | Configure tab |
+| View logs | Logs tab |
+| Live statistics | Stats tab |
+| Copy OpenAI-compatible `/v1` URL | Dashboard |
+| Copy resolved `llama-server` command | Dashboard |
+| Save settings | Configure tab or Dashboard |
 
 When a Hugging Face model has to be fetched, the status reads `downloading`
 instead of `starting`, with a progress bar, transfer rate, and time remaining.
@@ -102,12 +108,16 @@ listing, matched to the file being written by its object id. The status changes
 to `starting` once the weights begin loading. Without network access the bytes
 fetched are still reported, only without a percentage.
 
-The statistics screen shows endpoint state, PID, uptime, process CPU and
-resident RAM, plus request and token counters and throughput from
-`llama-server`. tinyinference enables llama.cpp's local metrics endpoint for
-managed servers; metrics remain marked unavailable until the server is ready.
-Clipboard copy uses `clip.exe` on Windows, `pbcopy` on macOS, and `wl-copy`,
-`xclip`, or `xsel` on Linux.
+The statistics tab shows endpoint state, PID, uptime, process CPU and resident
+RAM, plus request and token counters and throughput from `llama-server`.
+tinyinference enables llama.cpp's local metrics endpoint for managed servers;
+metrics remain marked unavailable until the server is ready. Clipboard copy uses
+the browser clipboard API, with a system clipboard fallback via `clip.exe` on
+Windows, `pbcopy` on macOS, and `wl-copy`, `xclip`, or `xsel` on Linux.
+
+The control UI binds to `127.0.0.1:3920` by default. The managed `llama-server`
+binds to `127.0.0.1:8080` by default and has no authentication. Configure
+authentication and firewalling before exposing either to a network.
 
 ## How low-RAM operation works
 
@@ -116,9 +126,6 @@ does not need to fit entirely in resident RAM. RAM is still needed for the KV
 cache, compute buffers, and server state; with little RAM, storage I/O can make
 inference extremely slow. `gpt-oss-120b` has 117B total parameters but
 activates 5.1B per token, so it is a good default choice for tinyinference.
-
-The server binds to `127.0.0.1` by default and has no authentication. Configure
-authentication and firewalling before exposing it to a network.
 
 ## References
 

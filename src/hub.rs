@@ -185,6 +185,56 @@ pub fn family<'a>(files: &'a [RemoteFile], path: &str) -> Vec<&'a RemoteFile> {
         .collect()
 }
 
+/// Bytes of the GGUF artifact a repository is expected to map.
+///
+/// Split shards are counted together. When `repo` includes a `:quant` tag,
+/// families whose path contains that tag are preferred; otherwise the largest
+/// GGUF family in the listing is used (multi-quant repos ship several).
+pub fn primary_gguf_bytes(files: &[RemoteFile], repo: &str) -> Option<u64> {
+    let quant = repo
+        .trim()
+        .split_once(':')
+        .map(|(_, tag)| tag.trim())
+        .filter(|tag| !tag.is_empty())
+        .map(|tag| tag.to_ascii_lowercase());
+
+    let mut families: Vec<(String, u64, bool)> = Vec::new();
+    for file in files
+        .iter()
+        .filter(|file| file.path.to_ascii_lowercase().ends_with(".gguf"))
+    {
+        let key = match shard_family(&file.path) {
+            Some((prefix, total)) => format!("{prefix}-of-{total}"),
+            None => file.path.clone(),
+        };
+        let matches_quant = quant
+            .as_ref()
+            .is_some_and(|tag| file.path.to_ascii_lowercase().contains(tag));
+        if let Some(entry) = families.iter_mut().find(|(name, _, _)| name == &key) {
+            entry.1 = entry.1.saturating_add(file.size);
+            entry.2 |= matches_quant;
+        } else {
+            families.push((key, file.size, matches_quant));
+        }
+    }
+
+    if let Some(quant) = quant.as_ref() {
+        let tagged = families
+            .iter()
+            .filter(|(_, _, matches)| *matches)
+            .map(|(_, bytes, _)| *bytes)
+            .max();
+        if tagged.is_some() {
+            return tagged;
+        }
+        // Fall through when the tag did not match any path; still report a real
+        // size from the listing rather than inventing one.
+        let _ = quant;
+    }
+
+    families.into_iter().map(|(_, bytes, _)| bytes).max()
+}
+
 /// The `(prefix, total)` shared by every shard of a split GGUF file.
 fn shard_family(path: &str) -> Option<(String, usize)> {
     let stem = path.strip_suffix(".gguf")?;
@@ -233,6 +283,18 @@ mod tests {
         assert_eq!(sizes("m-00002-of-00002.gguf"), 30);
         assert_eq!(sizes("Qwen3-0.6B-Q4_0.gguf"), 428_970_080);
         assert_eq!(sizes("absent.gguf"), 0);
+    }
+
+    #[test]
+    fn primary_gguf_bytes_prefers_quant_tag_then_largest_family() {
+        let files = parse_tree(TREE).unwrap();
+        assert_eq!(primary_gguf_bytes(&files, "owner/model"), Some(428_970_080));
+        assert_eq!(
+            primary_gguf_bytes(&files, "owner/model:Q4_0"),
+            Some(428_970_080)
+        );
+        assert_eq!(primary_gguf_bytes(&files, "owner/model:m"), Some(30));
+        assert_eq!(primary_gguf_bytes(&[], "owner/model"), None);
     }
 
     #[test]
