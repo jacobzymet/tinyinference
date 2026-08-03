@@ -18,6 +18,18 @@ pub const DEFAULT_CACHE_TYPE: &str = "q8_0";
 pub const CACHE_TYPES: &[&str] = &[
     "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1",
 ];
+/// Short blurbs for Configure; keep order aligned with [`CACHE_TYPES`].
+pub const CACHE_TYPE_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("f32", "full precision; highest RAM"),
+    ("f16", "half precision; strong quality baseline"),
+    ("bf16", "brain float16; similar to f16"),
+    ("q8_0", "~½ of f16 RAM; little quality loss (default)"),
+    ("q4_0", "~¼ of f16 RAM; may drift on long context"),
+    ("q4_1", "4-bit + bias; similar savings, often slightly better"),
+    ("iq4_nl", "4-bit non-linear; usually better than q4 at similar size"),
+    ("q5_0", "5-bit; between q4 and q8 on RAM/quality"),
+    ("q5_1", "5-bit + bias; similar to q5_0, often slightly better"),
+];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]

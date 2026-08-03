@@ -274,6 +274,12 @@ struct MetricsState {
 }
 
 #[derive(Debug, Serialize)]
+struct ChoiceHelp {
+    value: &'static str,
+    description: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 struct SettingState {
     id: &'static str,
     field: SettingField,
@@ -284,6 +290,7 @@ struct SettingState {
     editable: bool,
     toggle: bool,
     choices: Option<Vec<&'static str>>,
+    choice_help: Option<Vec<ChoiceHelp>>,
 }
 
 impl AppState {
@@ -305,6 +312,19 @@ impl AppState {
                 editable: app.setting_is_editable(field),
                 toggle: field.is_toggle(),
                 choices: field.choices().map(|items| items.to_vec()),
+                choice_help: matches!(
+                    field,
+                    SettingField::CacheTypeK | SettingField::CacheTypeV
+                )
+                .then(|| {
+                    crate::config::CACHE_TYPE_DESCRIPTIONS
+                        .iter()
+                        .map(|(value, description)| ChoiceHelp {
+                            value,
+                            description,
+                        })
+                        .collect()
+                }),
             })
             .collect();
         let mapped_size = MappedSizeState::from_app(app);
@@ -667,7 +687,10 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
       padding: 1rem;
     }
     .metric-label { color: var(--ti-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
-    .setting-hint { font-size: 0.8rem; color: var(--ti-muted); }
+    .setting-hint { font-size: 0.8rem; color: var(--ti-muted); white-space: pre-line; }
+    .choice-help { list-style: none; padding: 0; margin: 0.35rem 0 0; }
+    .choice-help li { margin: 0.15rem 0; }
+    .choice-help code { color: var(--ti-ice); font-size: 0.78rem; }
     .progress { background: #0b1013; height: 0.65rem; }
     .progress-bar { background: var(--ti-ice); }
     a { color: var(--ti-ice); }
@@ -740,6 +763,8 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
                 <dt class="col-sm-3 text-muted">RAM</dt><dd class="col-sm-9" id="ramLine">—</dd>
                 <dt class="col-sm-3 text-muted">Runtime</dt><dd class="col-sm-9" id="runtimeLine">—</dd>
                 <dt class="col-sm-3 text-muted">Access</dt><dd class="col-sm-9" id="accessLine">—</dd>
+                <dt class="col-sm-3 text-muted">Gen tok/s</dt><dd class="col-sm-9" id="genTpsLine">—</dd>
+                <dt class="col-sm-3 text-muted">Prompt tok/s</dt><dd class="col-sm-9" id="promptTpsLine">—</dd>
                 <dt class="col-sm-3 text-muted">Endpoint</dt>
                 <dd class="col-sm-9">
                   <a id="endpointLink" class="icon-link" href="#" target="_blank" rel="noopener noreferrer">
@@ -903,6 +928,10 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
         next.machine.available_gib.toFixed(1) + ' GiB available · ' + next.machine.total_gib.toFixed(1) + ' GiB total';
       document.getElementById('runtimeLine').textContent = next.machine.runtime_summary;
       document.getElementById('accessLine').textContent = next.machine.access_summary;
+      document.getElementById('genTpsLine').textContent =
+        next.metrics ? metric(next.metrics.generated_tokens_per_second, ' tok/s') : '—';
+      document.getElementById('promptTpsLine').textContent =
+        next.metrics ? metric(next.metrics.prompt_tokens_per_second, ' tok/s') : '—';
       const endpoint = document.getElementById('endpointLink');
       const openUi = document.getElementById('openServerUi');
       document.getElementById('endpointLabel').textContent = next.endpoint;
@@ -1035,7 +1064,22 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
 
         const hint = document.createElement('div');
         hint.className = 'setting-hint mt-1';
-        hint.textContent = setting.hint;
+        if (setting.choice_help && setting.choice_help.length) {
+          hint.textContent = '';
+          const introEl = document.createElement('div');
+          introEl.textContent = setting.hint;
+          hint.appendChild(introEl);
+          const list = document.createElement('ul');
+          list.className = 'choice-help';
+          for (const item of setting.choice_help) {
+            const li = document.createElement('li');
+            li.innerHTML = `<code>${escapeHtml(item.value)}</code> — ${escapeHtml(item.description)}`;
+            list.appendChild(li);
+          }
+          hint.appendChild(list);
+        } else {
+          hint.textContent = setting.hint;
+        }
         col.appendChild(hint);
         form.appendChild(col);
       }
@@ -1149,7 +1193,7 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
     });
 
     refresh();
-    setInterval(refresh, 1000);
+    setInterval(refresh, 250);
   </script>
 </body>
 </html>

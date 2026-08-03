@@ -46,6 +46,8 @@ impl ServerStatus {
 /// How long a transfer rate is averaged over, and how often the cache is read.
 const RATE_WINDOW: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// How often to re-probe llama-server `/health` + `/metrics` while running.
+const METRICS_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Live progress of the model fetch llama-server performs before it can load.
 ///
@@ -670,10 +672,10 @@ impl App {
                 "On uses flash attention to cut attention memory; keep on with quantized KV."
             }
             (SettingField::CacheTypeK, _) => {
-                "KV key cache type. q8_0 halves memory vs f16 with little quality loss."
+                "KV key cache type (grows with context). Lower precision uses less RAM."
             }
             (SettingField::CacheTypeV, _) => {
-                "KV value cache type. q8_0 halves memory vs f16 with little quality loss."
+                "KV value cache type (grows with context). Lower precision uses less RAM."
             }
             (SettingField::CacheRam, _) => "Host prompt-cache limit in MiB; zero disables it.",
             (SettingField::Checkpoints, _) => "Saved context states per slot; zero disables them.",
@@ -757,7 +759,7 @@ impl App {
                 self.probe = None;
                 self.apply_probe_result(result);
             }
-            if self.probe.is_none() && self.last_probe.elapsed() >= Duration::from_secs(1) {
+            if self.probe.is_none() && self.last_probe.elapsed() >= METRICS_PROBE_INTERVAL {
                 if let Some(config) = self.running_config.clone() {
                     self.probe = Some(probe_async(&config, true));
                 }
