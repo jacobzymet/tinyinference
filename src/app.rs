@@ -52,6 +52,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const METRICS_PROBE_INTERVAL: Duration = Duration::from_millis(250);
 /// Ignore tiny intervals so a burst of probes does not spike tok/s.
 const MIN_LIVE_RATE_INTERVAL: Duration = Duration::from_millis(100);
+/// Clear dashboard tok/s back to unavailable after this long without a fresh sample.
+const THROUGHPUT_STALE_AFTER: Duration = Duration::from_secs(10);
 
 /// Live progress of the model fetch llama-server performs before it can load.
 ///
@@ -438,6 +440,8 @@ pub struct App {
     last_slots_at: Option<Instant>,
     last_slots_decoded: Option<u64>,
     live_generated_tps: Option<f64>,
+    /// Last time gen/prompt tok/s was refreshed from logs, slots, or metrics.
+    last_throughput_at: Option<Instant>,
 }
 
 impl App {
@@ -481,6 +485,7 @@ impl App {
             last_slots_at: None,
             last_slots_decoded: None,
             live_generated_tps: None,
+            last_throughput_at: None,
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -782,6 +787,8 @@ impl App {
             self.process_usage = process_id.and_then(|pid| self.process_monitor.refresh(pid));
             self.last_stats_refresh = Instant::now();
         }
+
+        self.expire_stale_throughput();
     }
 
     fn apply_probe_result(&mut self, result: ProbeResult) {
@@ -812,6 +819,30 @@ impl App {
         self.last_slots_at = None;
         self.last_slots_decoded = None;
         self.live_generated_tps = None;
+        self.last_throughput_at = None;
+        if let Some(metrics) = self.server_metrics.as_mut() {
+            metrics.generated_tokens_per_second = None;
+            metrics.prompt_tokens_per_second = None;
+        }
+    }
+
+    fn touch_throughput(&mut self) {
+        self.last_throughput_at = Some(Instant::now());
+    }
+
+    fn expire_stale_throughput(&mut self) {
+        let Some(last) = self.last_throughput_at else {
+            return;
+        };
+        if last.elapsed() < THROUGHPUT_STALE_AFTER {
+            return;
+        }
+        self.live_generated_tps = None;
+        self.last_throughput_at = None;
+        if let Some(metrics) = self.server_metrics.as_mut() {
+            metrics.generated_tokens_per_second = None;
+            metrics.prompt_tokens_per_second = None;
+        }
     }
 
     fn update_live_throughput(&mut self, slots: SlotsSnapshot) {
@@ -819,7 +850,7 @@ impl App {
         if slots.requests_processing == 0 {
             self.last_slots_at = Some(now);
             self.last_slots_decoded = Some(0);
-            // Idle: drop the live rate so the UI falls back to completed averages.
+            // Idle: drop the live rate; stale timer will clear the displayed value.
             self.live_generated_tps = None;
             return;
         }
@@ -831,8 +862,10 @@ impl App {
                     let delta = slots.decoded_tokens - prev_decoded;
                     if delta > 0 {
                         self.live_generated_tps = Some(delta as f64 / dt.as_secs_f64());
+                        self.touch_throughput();
                     }
-                    // delta == 0 between slow tokens: keep the previous live rate.
+                    // delta == 0 between slow tokens: keep the previous live rate
+                    // until THROUGHPUT_STALE_AFTER expires it.
                 } else {
                     // Slot reset for a new request — re-baseline without a spike.
                     self.live_generated_tps = None;
@@ -855,16 +888,17 @@ impl App {
         if metrics.generated_tokens.is_some() {
             merged.generated_tokens = metrics.generated_tokens;
         }
-        if metrics.prompt_tokens_per_second.is_some() {
-            merged.prompt_tokens_per_second = metrics.prompt_tokens_per_second;
+        let mut touched = false;
+        if let Some(rate) = metrics.prompt_tokens_per_second.filter(|rate| *rate > 0.0) {
+            merged.prompt_tokens_per_second = Some(rate);
+            touched = true;
         }
-        // Prefer live slot-derived gen tok/s while generating; accept prometheus
-        // averages when idle or before the first live sample.
+        // Prefer live slot/log-derived gen tok/s while generating; accept
+        // prometheus averages when idle or before the first live sample.
         if self.live_generated_tps.is_none() {
             if let Some(rate) = metrics.generated_tokens_per_second.filter(|rate| *rate > 0.0) {
                 merged.generated_tokens_per_second = Some(rate);
-            } else if merged.generated_tokens_per_second.is_none() {
-                merged.generated_tokens_per_second = metrics.generated_tokens_per_second;
+                touched = true;
             }
         }
         if metrics.requests_processing.is_some() {
@@ -872,6 +906,9 @@ impl App {
         }
         if metrics.requests_deferred.is_some() {
             merged.requests_deferred = metrics.requests_deferred;
+        }
+        if touched {
+            self.touch_throughput();
         }
     }
 
@@ -957,6 +994,7 @@ impl App {
         if let Some(rate) = parsed.prompt_tokens_per_second {
             metrics.prompt_tokens_per_second = Some(rate);
         }
+        self.touch_throughput();
     }
 
     pub fn stop(&mut self) {
