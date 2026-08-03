@@ -186,9 +186,13 @@ impl RuntimePreset {
         match self {
             Self::LowRam => "CPU-only + mmap; weights stay file-backed, no GPU offload.",
             Self::GpuFit => {
-                "GPU auto-fit for what fits in VRAM; leftover layers on CPU + mmap. On unified memory (one RAM pool), this can still use a lot of system memory — prefer Low RAM when headroom matters."
+                "Discrete GPU only: auto-fit into VRAM, leftover layers on CPU + mmap. Blocked on unified memory — one RAM pool can be exhausted and crash the system."
             }
         }
+    }
+
+    pub fn blocked_on_unified_memory(self) -> bool {
+        matches!(self, Self::GpuFit)
     }
 
     pub fn runtime(self) -> RuntimeConfig {

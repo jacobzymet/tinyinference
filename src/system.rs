@@ -91,6 +91,11 @@ impl Machine {
     }
 }
 
+/// Apple Silicon and similar share one RAM pool for CPU and GPU.
+pub fn likely_unified_memory() -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64"))
+}
+
 /// Thread count for llama-server: physical cores when known, otherwise logical.
 pub fn recommended_threads() -> usize {
     System::physical_core_count()

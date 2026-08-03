@@ -116,7 +116,10 @@ async fn apply_preset(
     State(app): State<SharedApp>,
     Path(preset): Path<RuntimePreset>,
 ) -> Result<Json<AppState>, ApiError> {
-    with_app(app, |app| app.apply_runtime_preset(preset))
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.apply_runtime_preset(preset)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
 }
 
 async fn update_setting(
@@ -230,6 +233,7 @@ struct PresetState {
     id: &'static str,
     label: &'static str,
     description: &'static str,
+    available: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -336,6 +340,7 @@ impl AppState {
             .iter()
             .map(|(value, description)| ChoiceHelp { value, description })
             .collect();
+        let unified_memory = crate::system::likely_unified_memory();
         let presets = RuntimePreset::ALL
             .iter()
             .copied()
@@ -343,6 +348,7 @@ impl AppState {
                 id: preset.id(),
                 label: preset.label(),
                 description: preset.description(),
+                available: !(unified_memory && preset.blocked_on_unified_memory()),
             })
             .collect();
         let active_preset = app.active_runtime_preset().map(RuntimePreset::id);
@@ -1046,7 +1052,7 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
       select.innerHTML =
         (custom ? '<option value="">Custom</option>' : '') +
         presets.map((preset) =>
-          `<option value="${preset.id}">${escapeHtml(preset.label)}</option>`
+          `<option value="${preset.id}" ${preset.available ? '' : 'disabled'}>${escapeHtml(preset.label)}${preset.available ? '' : ' (unavailable)'}</option>`
         ).join('');
       select.value = next.active_preset || '';
       help.innerHTML = presets.map((preset) =>
