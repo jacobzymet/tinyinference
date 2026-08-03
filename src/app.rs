@@ -876,12 +876,16 @@ impl App {
         self.last_slots_at = Some(now);
         self.last_slots_decoded = Some(slots.decoded_tokens);
 
-        let metrics = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        let metrics = self
+            .server_metrics
+            .get_or_insert_with(ServerMetrics::default);
         metrics.requests_processing = Some(slots.requests_processing as f64);
     }
 
     fn merge_server_metrics(&mut self, metrics: ServerMetrics) {
-        let merged = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        let merged = self
+            .server_metrics
+            .get_or_insert_with(ServerMetrics::default);
         if metrics.prompt_tokens.is_some() {
             merged.prompt_tokens = metrics.prompt_tokens;
         }
@@ -896,7 +900,10 @@ impl App {
         // Prefer live slot/log-derived gen tok/s while generating; accept
         // prometheus averages when idle or before the first live sample.
         if self.live_generated_tps.is_none() {
-            if let Some(rate) = metrics.generated_tokens_per_second.filter(|rate| *rate > 0.0) {
+            if let Some(rate) = metrics
+                .generated_tokens_per_second
+                .filter(|rate| *rate > 0.0)
+            {
                 merged.generated_tokens_per_second = Some(rate);
                 touched = true;
             }
@@ -916,7 +923,9 @@ impl App {
         let Some(live) = self.live_generated_tps else {
             return;
         };
-        let metrics = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        let metrics = self
+            .server_metrics
+            .get_or_insert_with(ServerMetrics::default);
         metrics.generated_tokens_per_second = Some(live);
     }
 
@@ -986,7 +995,9 @@ impl App {
         {
             return;
         }
-        let metrics = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        let metrics = self
+            .server_metrics
+            .get_or_insert_with(ServerMetrics::default);
         if let Some(rate) = parsed.generated_tokens_per_second {
             self.live_generated_tps = Some(rate);
             metrics.generated_tokens_per_second = Some(rate);

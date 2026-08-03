@@ -256,8 +256,7 @@ pub fn probe_async(config: &Config, metrics_requested: bool) -> PendingProbe {
         } else {
             None
         };
-        let endpoint_online =
-            slots.is_some() || metrics.is_some() || endpoint_healthy(&config);
+        let endpoint_online = slots.is_some() || metrics.is_some() || endpoint_healthy(&config);
         let _ = sender.send(ProbeResult {
             endpoint_online,
             metrics_requested,
@@ -509,8 +508,8 @@ pub fn parse_log_throughput(line: &str) -> LogThroughput {
     // Prefer the recent window when present — that is the live feel users see.
     if let Some(rate) = rate_after_marker(line, "tg_3s =") {
         throughput.generated_tokens_per_second = Some(rate);
-    } else if let Some(rate) = rate_after_marker(line, ", tg =")
-        .or_else(|| rate_after_marker(line, " tg ="))
+    } else if let Some(rate) =
+        rate_after_marker(line, ", tg =").or_else(|| rate_after_marker(line, " tg ="))
     {
         throughput.generated_tokens_per_second = Some(rate);
     }
@@ -540,7 +539,10 @@ pub fn parse_log_throughput(line: &str) -> LogThroughput {
 fn rate_after_marker(line: &str, marker: &str) -> Option<f64> {
     let rest = line.split_once(marker)?.1.trim_start();
     let token = rest.split_whitespace().next()?;
-    token.parse().ok().filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
+    token
+        .parse()
+        .ok()
+        .filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
 }
 
 fn rate_before_unit(line: &str, unit: &str) -> Option<f64> {
@@ -548,7 +550,10 @@ fn rate_before_unit(line: &str, unit: &str) -> Option<f64> {
     let token = head.split_whitespace().next_back()?;
     // Strip a trailing comma from formats like "(12.34,"
     let token = token.trim_end_matches(',');
-    token.parse().ok().filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
+    token
+        .parse()
+        .ok()
+        .filter(|rate: &f64| rate.is_finite() && *rate > 0.0)
 }
 
 #[cfg(test)]
