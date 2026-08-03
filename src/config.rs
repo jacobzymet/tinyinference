@@ -177,14 +177,16 @@ impl RuntimePreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::LowRam => "Low RAM (default)",
+            Self::LowRam => "Max RAM efficiency (default)",
             Self::GpuFit => "GPU + CPU spill",
         }
     }
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::LowRam => "CPU-only + mmap; weights stay file-backed, no GPU offload.",
+            Self::LowRam => {
+                "Designed for low-RAM machines or oversized LLMs relative to your hardware. CPU-only + mmap; weights stay file-backed, no GPU offload."
+            }
             Self::GpuFit => {
                 "Discrete GPU only: auto-fit into VRAM; leftover layers stay on CPU + mmap."
             }
@@ -195,7 +197,7 @@ impl RuntimePreset {
         match self {
             Self::LowRam => None,
             Self::GpuFit => Some(
-                "Unsafe on machines with a unified memory architecture (Apple Silicon and similar). GPU and CPU share one RAM pool, and this preset can immediately exhaust it and crash the machine if the machine has too little RAM.",
+                "Unsafe on machines with a unified memory architecture (Apple Silicon and similar). GPU and CPU share one RAM pool, and this preset can immediately exhaust it and crash the machine if there is too little unified memory for the LLM.",
             ),
         }
     }

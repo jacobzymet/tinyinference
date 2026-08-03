@@ -949,7 +949,7 @@ impl App {
     ) -> Result<(), String> {
         if unified_memory && preset.blocked_on_unified_memory() {
             return Err(
-                "GPU + CPU spill is for discrete GPUs only. On unified memory it can exhaust the shared RAM pool and crash the system. Use Low RAM instead."
+                "GPU + CPU spill is for discrete GPUs only. On unified memory it can exhaust the shared RAM pool and crash the system. Use Max RAM efficiency instead."
                     .into(),
             );
         }
@@ -976,9 +976,9 @@ impl App {
         }
         self.config.runtime = RuntimePreset::LowRam.runtime();
         self.status_detail =
-            "GPU + CPU spill was reset to Low RAM on unified memory (shared RAM can be exhausted)."
+            "GPU + CPU spill was reset to Max RAM efficiency on unified memory (shared RAM can be exhausted)."
                 .into();
-        self.push_log("reset gpu_fit preset to low_ram on unified memory".into());
+        self.push_log("reset gpu_fit preset to max RAM efficiency on unified memory".into());
     }
 
     pub fn active_runtime_preset(&self) -> Option<RuntimePreset> {
