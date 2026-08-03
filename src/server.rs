@@ -202,11 +202,22 @@ pub struct ServerMetrics {
     pub requests_deferred: Option<f64>,
 }
 
+/// Live slot counters from llama-server `/slots`.
+///
+/// Prometheus `predicted_tokens_seconds` only updates when a request finishes,
+/// so mid-generation tok/s has to be derived from `n_decoded` deltas instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotsSnapshot {
+    pub decoded_tokens: u64,
+    pub requests_processing: u64,
+}
+
 #[derive(Debug)]
 pub struct ProbeResult {
     pub endpoint_online: bool,
     pub metrics_requested: bool,
     pub metrics: Option<ServerMetrics>,
+    pub slots: Option<SlotsSnapshot>,
 }
 
 #[derive(Debug)]
@@ -224,16 +235,34 @@ pub fn probe_async(config: &Config, metrics_requested: bool) -> PendingProbe {
     let (sender, receiver) = mpsc::channel();
     let config = config.clone();
     thread::spawn(move || {
-        let endpoint_online = endpoint_healthy(&config);
-        let metrics = if endpoint_online && metrics_requested {
-            fetch_metrics(&config)
+        // `/slots` and `/metrics` are served from the llama-server task queue and
+        // only run between decode steps. On slow CPU hosts a single token can take
+        // longer than a short HTTP timeout, so wait generously and prefer `/slots`
+        // (it carries live `n_decoded`) over a separate `/health` round-trip.
+        let slots = fetch_slots(&config);
+        // While tokens are actively decoding, skip `/metrics` — its tok/s gauges
+        // only update when a request finishes, and a second task-queue wait just
+        // delays the next live `/slots` sample. Still scrape during prompt eval
+        // (`n_decoded == 0`) and when idle so totals/prompt rates stay fresh.
+        let metrics = if metrics_requested {
+            match &slots {
+                Some(snapshot)
+                    if snapshot.requests_processing > 0 && snapshot.decoded_tokens > 0 =>
+                {
+                    None
+                }
+                _ => fetch_metrics(&config),
+            }
         } else {
             None
         };
+        let endpoint_online =
+            slots.is_some() || metrics.is_some() || endpoint_healthy(&config);
         let _ = sender.send(ProbeResult {
             endpoint_online,
             metrics_requested,
             metrics,
+            slots,
         });
     });
     PendingProbe { receiver }
@@ -349,11 +378,15 @@ fn stream_lines<R: std::io::Read + Send + 'static>(
 }
 
 pub fn endpoint_healthy(config: &Config) -> bool {
-    http_get(config, "/health", Duration::from_millis(250)).is_some_and(|(status, _)| status == 200)
+    http_get(config, "/health", Duration::from_millis(500)).is_some_and(|(status, _)| status == 200)
 }
 
+/// Timeout for task-queue endpoints (`/slots`, `/metrics`). These only answer
+/// between `llama_decode` steps, so short timeouts falsely look "offline".
+const TASK_QUEUE_HTTP_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub fn fetch_metrics(config: &Config) -> Option<ServerMetrics> {
-    let (status, body) = http_get(config, "/metrics", Duration::from_millis(350))?;
+    let (status, body) = http_get(config, "/metrics", TASK_QUEUE_HTTP_TIMEOUT)?;
     (status == 200).then(|| ServerMetrics {
         prompt_tokens: metric_value(&body, "llamacpp:prompt_tokens_total"),
         generated_tokens: metric_value(&body, "llamacpp:tokens_predicted_total"),
@@ -362,6 +395,43 @@ pub fn fetch_metrics(config: &Config) -> Option<ServerMetrics> {
         requests_processing: metric_value(&body, "llamacpp:requests_processing"),
         requests_deferred: metric_value(&body, "llamacpp:requests_deferred"),
     })
+}
+
+pub fn fetch_slots(config: &Config) -> Option<SlotsSnapshot> {
+    let (status, body) = http_get(config, "/slots", TASK_QUEUE_HTTP_TIMEOUT)?;
+    if status != 200 {
+        return None;
+    }
+    parse_slots_snapshot(&body)
+}
+
+fn parse_slots_snapshot(body: &str) -> Option<SlotsSnapshot> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let slots = value.as_array()?;
+    let mut decoded_tokens = 0_u64;
+    let mut requests_processing = 0_u64;
+    for slot in slots {
+        if slot.get("is_processing").and_then(|flag| flag.as_bool()) != Some(true) {
+            continue;
+        }
+        requests_processing += 1;
+        let decoded = slot
+            .pointer("/next_token/n_decoded")
+            .and_then(json_u64)
+            .unwrap_or(0);
+        decoded_tokens = decoded_tokens.saturating_add(decoded);
+    }
+    Some(SlotsSnapshot {
+        decoded_tokens,
+        requests_processing,
+    })
+}
+
+fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+        .or_else(|| value.as_f64().and_then(|n| (n >= 0.0).then_some(n as u64)))
 }
 
 fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, String)> {
@@ -586,6 +656,22 @@ llamacpp:requests_processing 1
             Some(3.5)
         );
         assert_eq!(metric_value(body, "missing"), None);
+    }
+
+    #[test]
+    fn slots_snapshot_sums_live_decoded_tokens() {
+        let body = r#"[
+            {"id":0,"is_processing":true,"next_token":{"n_decoded":12}},
+            {"id":1,"is_processing":false,"next_token":{"n_decoded":99}},
+            {"id":2,"is_processing":true,"next_token":{"n_decoded":3}}
+        ]"#;
+        assert_eq!(
+            parse_slots_snapshot(body),
+            Some(SlotsSnapshot {
+                decoded_tokens: 15,
+                requests_processing: 2,
+            })
+        );
     }
 
     fn probe_test_health(status: &str) -> bool {

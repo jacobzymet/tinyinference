@@ -14,7 +14,7 @@ use crate::{
     hub,
     server::{
         CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
-        probe_async,
+        SlotsSnapshot, probe_async,
     },
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
 };
@@ -48,8 +48,10 @@ impl ServerStatus {
 /// How long a transfer rate is averaged over, and how often the cache is read.
 const RATE_WINDOW: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
-/// How often to re-probe llama-server `/health` + `/metrics` while running.
+/// How often to re-probe llama-server `/slots` + `/metrics` while running.
 const METRICS_PROBE_INTERVAL: Duration = Duration::from_millis(250);
+/// Ignore tiny intervals so a burst of probes does not spike tok/s.
+const MIN_LIVE_RATE_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Live progress of the model fetch llama-server performs before it can load.
 ///
@@ -432,6 +434,10 @@ pub struct App {
     missing_server_prompt: bool,
     last_probe: Instant,
     last_stats_refresh: Instant,
+    /// Previous `/slots` sample used to derive live generation tok/s.
+    last_slots_at: Option<Instant>,
+    last_slots_decoded: Option<u64>,
+    live_generated_tps: Option<f64>,
 }
 
 impl App {
@@ -472,6 +478,9 @@ impl App {
             missing_server_prompt: !executable_found,
             last_probe: Instant::now() - Duration::from_secs(2),
             last_stats_refresh: Instant::now() - Duration::from_secs(2),
+            last_slots_at: None,
+            last_slots_decoded: None,
+            live_generated_tps: None,
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -719,6 +728,7 @@ impl App {
                 self.download = None;
                 self.process_usage = None;
                 self.server_metrics = None;
+                self.clear_live_throughput();
                 self.probe = None;
                 self.status = if status.success() {
                     ServerStatus::Stopped
@@ -775,9 +785,16 @@ impl App {
 
     fn apply_probe_result(&mut self, result: ProbeResult) {
         self.endpoint_online = result.endpoint_online;
-        if result.metrics_requested {
-            self.server_metrics = result.metrics;
+        if let Some(slots) = result.slots {
+            self.update_live_throughput(slots);
         }
+        if result.metrics_requested {
+            // Keep the last good sample when a scrape times out mid-decode.
+            if let Some(metrics) = result.metrics {
+                self.merge_server_metrics(metrics);
+            }
+        }
+        self.publish_live_rates();
         if self.endpoint_online {
             self.download = None;
             self.status = ServerStatus::Ready;
@@ -785,9 +802,84 @@ impl App {
                 self.status_detail = format!("Listening at {}", config.endpoint());
             }
         } else if self.status != ServerStatus::Downloading {
-            self.server_metrics = None;
+            // Process is still up; a timed-out task-queue probe is not a restart.
             self.status = ServerStatus::Starting;
         }
+    }
+
+    fn clear_live_throughput(&mut self) {
+        self.last_slots_at = None;
+        self.last_slots_decoded = None;
+        self.live_generated_tps = None;
+    }
+
+    fn update_live_throughput(&mut self, slots: SlotsSnapshot) {
+        let now = Instant::now();
+        if slots.requests_processing == 0 {
+            self.last_slots_at = Some(now);
+            self.last_slots_decoded = Some(0);
+            // Idle: drop the live rate so the UI falls back to completed averages.
+            self.live_generated_tps = None;
+            return;
+        }
+
+        if let (Some(prev_at), Some(prev_decoded)) = (self.last_slots_at, self.last_slots_decoded) {
+            let dt = now.saturating_duration_since(prev_at);
+            if dt >= MIN_LIVE_RATE_INTERVAL {
+                if slots.decoded_tokens >= prev_decoded {
+                    let delta = slots.decoded_tokens - prev_decoded;
+                    if delta > 0 {
+                        self.live_generated_tps = Some(delta as f64 / dt.as_secs_f64());
+                    }
+                    // delta == 0 between slow tokens: keep the previous live rate.
+                } else {
+                    // Slot reset for a new request — re-baseline without a spike.
+                    self.live_generated_tps = None;
+                }
+            }
+        }
+
+        self.last_slots_at = Some(now);
+        self.last_slots_decoded = Some(slots.decoded_tokens);
+
+        let metrics = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        metrics.requests_processing = Some(slots.requests_processing as f64);
+    }
+
+    fn merge_server_metrics(&mut self, metrics: ServerMetrics) {
+        let merged = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        if metrics.prompt_tokens.is_some() {
+            merged.prompt_tokens = metrics.prompt_tokens;
+        }
+        if metrics.generated_tokens.is_some() {
+            merged.generated_tokens = metrics.generated_tokens;
+        }
+        if metrics.prompt_tokens_per_second.is_some() {
+            merged.prompt_tokens_per_second = metrics.prompt_tokens_per_second;
+        }
+        // Prefer live slot-derived gen tok/s while generating; accept prometheus
+        // averages when idle or before the first live sample.
+        if self.live_generated_tps.is_none() {
+            if let Some(rate) = metrics.generated_tokens_per_second.filter(|rate| *rate > 0.0) {
+                merged.generated_tokens_per_second = Some(rate);
+            } else if merged.generated_tokens_per_second.is_none() {
+                merged.generated_tokens_per_second = metrics.generated_tokens_per_second;
+            }
+        }
+        if metrics.requests_processing.is_some() {
+            merged.requests_processing = metrics.requests_processing;
+        }
+        if metrics.requests_deferred.is_some() {
+            merged.requests_deferred = metrics.requests_deferred;
+        }
+    }
+
+    fn publish_live_rates(&mut self) {
+        let Some(live) = self.live_generated_tps else {
+            return;
+        };
+        let metrics = self.server_metrics.get_or_insert_with(ServerMetrics::default);
+        metrics.generated_tokens_per_second = Some(live);
     }
 
     pub fn start(&mut self) {
@@ -878,6 +970,7 @@ impl App {
         self.download = None;
         self.process_usage = None;
         self.server_metrics = None;
+        self.clear_live_throughput();
     }
 
     pub fn restart(&mut self) {

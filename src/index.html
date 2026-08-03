@@ -726,7 +726,8 @@
 
     function setTps(el, value, label) {
       if (!el) return;
-      if (value == null || Number.isNaN(value)) {
+      // llama.cpp reports 0 before any tokens land; treat that as unavailable.
+      if (value == null || Number.isNaN(value) || value <= 0) {
         if (label) el.textContent = label + ' — tok/s';
         else el.innerHTML = '—<span class="unit">tok/s</span>';
         return;
