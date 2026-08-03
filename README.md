@@ -80,6 +80,18 @@ cargo run -- --config .\tinyinference.toml
 `tinyinference.toml` is ignored by Git, so local paths and preferences remain
 local. Advanced llama.cpp options can be added through `server.extra_args`.
 
+The web UI listen address can be set before the UI is up, in priority order:
+
+1. `--bind 127.0.0.1:4000`
+2. environment variable `TINYINFERENCE_BIND=127.0.0.1:4000`
+3. `[ui]` in the config file (`host` / `port`, default `127.0.0.1:3920`)
+
+```toml
+[ui]
+host = "127.0.0.1"
+port = 3920
+```
+
 Useful commands:
 
 ```powershell
@@ -117,7 +129,8 @@ metrics remain marked unavailable until the server is ready. Clipboard copy uses
 the browser clipboard API, with a system clipboard fallback via `clip.exe` on
 Windows, `pbcopy` on macOS, and `wl-copy`, `xclip`, or `xsel` on Linux.
 
-The control UI binds to `127.0.0.1:3920` by default. The managed `llama-server`
+The control UI binds to `127.0.0.1:3920` by default (override with `--bind`,
+`TINYINFERENCE_BIND`, or `[ui]` in the config). The managed `llama-server`
 binds to `127.0.0.1:8080` by default and has no authentication. Configure
 authentication and firewalling before exposing either to a network.
 
@@ -141,6 +154,9 @@ Most speedups come from the model and machine, not from tinyinference itself:
   often beats clever flags.
 - Build `llama-server` with the right CPU backend (AVX2/AVX512/ARM, ideally
   OpenBLAS/BLIS or vendor BLAS). A generic binary leaves a lot on the table.
+
+tinyinference passes `--threads` set to the machine's physical core count when
+launching `llama-server`. Override it with `server.extra_args` if needed.
 
 ## References
 

@@ -26,9 +26,9 @@ struct Cli {
     #[arg(long)]
     start: bool,
 
-    /// Address for the tinyinference web UI
-    #[arg(long, default_value = "127.0.0.1:3920")]
-    bind: SocketAddr,
+    /// Address for the tinyinference web UI (overrides config/env)
+    #[arg(long, value_name = "ADDR")]
+    bind: Option<SocketAddr>,
 
     /// Open the web UI in the default browser
     #[arg(long)]
@@ -46,20 +46,21 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let bind = Config::resolve_ui_bind(cli.bind, &config)?;
     let mut app = App::new(config, config_path);
     if cli.start {
         app.start();
     }
 
     let shared = Arc::new(Mutex::new(app));
-    let url = format!("http://{}", cli.bind);
+    let url = format!("http://{}", bind);
     println!("tinyinference listening on {url}");
 
     if cli.open {
         let _ = open_browser(&url);
     }
 
-    let result = web::serve(Arc::clone(&shared), cli.bind).await;
+    let result = web::serve(Arc::clone(&shared), bind).await;
     if let Ok(mut app) = shared.lock() {
         app.shutdown();
     }

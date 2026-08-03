@@ -234,6 +234,7 @@ struct RecentModelState {
 struct MachineState {
     cpu_name: String,
     logical_cpus: usize,
+    physical_cpus: usize,
     available_gib: f64,
     total_gib: f64,
     runtime_summary: String,
@@ -343,6 +344,7 @@ impl AppState {
             machine: MachineState {
                 cpu_name: app.machine.cpu_name.clone(),
                 logical_cpus: app.machine.logical_cpus,
+                physical_cpus: app.machine.physical_cpus,
                 available_gib: memory.available_gib,
                 total_gib: memory.total_gib,
                 runtime_summary: runtime_summary(config),
@@ -920,7 +922,10 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
       }
 
       document.getElementById('machineLine').textContent =
-        next.machine.cpu_name + ' · ' + next.machine.logical_cpus + ' threads';
+        next.machine.cpu_name +
+        ' · ' + next.machine.physical_cpus + ' physical / ' +
+        next.machine.logical_cpus + ' logical · llama-server --threads ' +
+        next.machine.physical_cpus;
       document.getElementById('configPathLine').textContent = 'Config: ' + next.config_path;
 
       renderRecentModels(next);

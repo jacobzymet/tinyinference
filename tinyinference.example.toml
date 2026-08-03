@@ -1,5 +1,9 @@
 recent_models = []
 
+[ui]
+host = "127.0.0.1"
+port = 3920
+
 [server]
 executable = "llama-server"
 host = "127.0.0.1"

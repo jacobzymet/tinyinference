@@ -18,6 +18,7 @@ pub struct Machine {
     pub available_memory_gib: f64,
     pub cpu_name: String,
     pub logical_cpus: usize,
+    pub physical_cpus: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,10 @@ impl Machine {
     pub fn detect() -> Self {
         let mut system = System::new_all();
         system.refresh_all();
+        let logical_cpus = system.cpus().len().max(1);
+        let physical_cpus = System::physical_core_count()
+            .filter(|count| *count > 0)
+            .unwrap_or(logical_cpus);
         let cpu_name = system
             .cpus()
             .first()
@@ -68,7 +73,8 @@ impl Machine {
         Self {
             total_memory_gib: system.total_memory() as f64 / GIB,
             available_memory_gib: system.available_memory() as f64 / GIB,
-            logical_cpus: system.cpus().len(),
+            logical_cpus,
+            physical_cpus,
             cpu_name,
         }
     }
@@ -83,6 +89,19 @@ impl Machine {
             total_gib: self.total_memory_gib,
         }
     }
+}
+
+/// Thread count for llama-server: physical cores when known, otherwise logical.
+pub fn recommended_threads() -> usize {
+    System::physical_core_count()
+        .filter(|count| *count > 0)
+        .or_else(|| {
+            std::thread::available_parallelism()
+                .ok()
+                .map(|count| count.get())
+        })
+        .unwrap_or(1)
+        .max(1)
 }
 
 pub fn executable_exists(path: &Path) -> bool {
@@ -199,6 +218,7 @@ mod tests {
             available_memory_gib: 12.0,
             cpu_name: "test".into(),
             logical_cpus: 8,
+            physical_cpus: 4,
         };
         let mut config = Config::default();
         config.model.estimated_size_gib = 500.0;
@@ -206,6 +226,11 @@ mod tests {
         assert_eq!(profile.mapped_model_gib, 500.0);
         assert_eq!(profile.available_gib, 12.0);
         assert_eq!(profile.total_gib, 16.0);
+    }
+
+    #[test]
+    fn recommended_threads_is_at_least_one() {
+        assert!(recommended_threads() >= 1);
     }
 
     #[test]

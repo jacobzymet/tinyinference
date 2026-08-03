@@ -1,24 +1,35 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_MODEL: &str = "ggml-org/gpt-oss-120b-GGUF";
+pub const DEFAULT_UI_HOST: &str = "127.0.0.1";
+pub const DEFAULT_UI_PORT: u16 = 3920;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Config {
+    pub ui: UiConfig,
     pub server: ServerConfig,
     pub model: ModelConfig,
     pub runtime: RuntimeConfig,
     pub recent_models: Vec<ModelSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct UiConfig {
+    pub host: String,
+    pub port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -60,6 +71,15 @@ pub struct RuntimeConfig {
     pub context_checkpoints: u32,
     pub multimodal_projector: bool,
     pub jinja: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            host: DEFAULT_UI_HOST.into(),
+            port: DEFAULT_UI_PORT,
+        }
+    }
 }
 
 impl Default for ServerConfig {
@@ -158,6 +178,36 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("tinyinference.toml"))
     }
 
+    pub fn ui_addr(&self) -> Result<SocketAddr> {
+        parse_ui_addr(&self.ui.host, self.ui.port)
+    }
+
+    /// Resolve the UI listen address before the web server starts.
+    ///
+    /// Priority: `--bind` CLI flag, then `TINYINFERENCE_BIND`, then `[ui]` in
+    /// the config file, then the built-in default.
+    pub fn resolve_ui_bind(cli_bind: Option<SocketAddr>, config: &Self) -> Result<SocketAddr> {
+        Self::resolve_ui_bind_with_env(cli_bind, std::env::var("TINYINFERENCE_BIND").ok(), config)
+    }
+
+    fn resolve_ui_bind_with_env(
+        cli_bind: Option<SocketAddr>,
+        env_bind: Option<String>,
+        config: &Self,
+    ) -> Result<SocketAddr> {
+        if let Some(addr) = cli_bind {
+            return Ok(addr);
+        }
+        if let Some(raw) = env_bind {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return SocketAddr::from_str(trimmed)
+                    .with_context(|| format!("invalid TINYINFERENCE_BIND value: {raw}"));
+            }
+        }
+        config.ui_addr()
+    }
+
     pub fn model_label(&self) -> String {
         match &self.model.source {
             ModelSource::HuggingFace(id) => id.clone(),
@@ -203,6 +253,9 @@ impl Config {
 
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
+        if let Err(error) = self.ui_addr() {
+            errors.push(format!("ui listen address is invalid: {error:#}"));
+        }
         let host = self.effective_host();
         let normalized_host = strip_brackets(host.trim());
         if normalized_host.is_empty() {
@@ -350,6 +403,20 @@ fn replace_file(temporary: &Path, destination: &Path) -> Result<()> {
         fs::rename(temporary, destination)
             .with_context(|| format!("could not replace {}", destination.display()))
     }
+}
+
+fn parse_ui_addr(host: &str, port: u16) -> Result<SocketAddr> {
+    if port == 0 {
+        bail!("ui port must be between 1 and 65535");
+    }
+    let host = strip_brackets(host.trim());
+    if host.is_empty() {
+        bail!("ui host cannot be empty");
+    }
+    let ip: IpAddr = host.parse().with_context(|| {
+        format!("ui host must be an IP address such as 127.0.0.1 or ::1 (got {host})")
+    })?;
+    Ok(SocketAddr::from((ip, port)))
 }
 
 fn strip_brackets(host: &str) -> &str {
@@ -515,6 +582,34 @@ mod tests {
         let example: Config =
             toml::from_str(include_str!("../tinyinference.example.toml")).unwrap();
         assert_eq!(example, Config::default());
+    }
+
+    #[test]
+    fn ui_bind_comes_from_config_host_and_port() {
+        let mut config = Config::default();
+        config.ui.host = "0.0.0.0".into();
+        config.ui.port = 4000;
+        assert_eq!(config.ui_addr().unwrap(), "0.0.0.0:4000".parse().unwrap());
+    }
+
+    #[test]
+    fn resolve_ui_bind_prefers_cli_then_env_then_config() {
+        let mut config = Config::default();
+        config.ui.port = 4000;
+        let cli = "192.168.1.10:5555".parse().unwrap();
+        assert_eq!(
+            Config::resolve_ui_bind_with_env(Some(cli), Some("10.0.0.1:9".into()), &config)
+                .unwrap(),
+            cli
+        );
+        assert_eq!(
+            Config::resolve_ui_bind_with_env(None, Some("10.0.0.1:9".into()), &config).unwrap(),
+            "10.0.0.1:9".parse().unwrap()
+        );
+        assert_eq!(
+            Config::resolve_ui_bind_with_env(None, None, &config).unwrap(),
+            "127.0.0.1:4000".parse().unwrap()
+        );
     }
 
     #[test]

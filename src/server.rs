@@ -10,7 +10,10 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{Config, ModelSource};
+use crate::{
+    config::{Config, ModelSource},
+    system::recommended_threads,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
@@ -20,6 +23,10 @@ pub struct CommandSpec {
 
 impl CommandSpec {
     pub fn from_config(config: &Config) -> Self {
+        Self::from_config_with_threads(config, recommended_threads())
+    }
+
+    pub fn from_config_with_threads(config: &Config, threads: usize) -> Self {
         let mut args = Vec::<OsString>::new();
         match &config.model.source {
             ModelSource::HuggingFace(id) => push_pair(&mut args, "-hf", id.as_str()),
@@ -97,6 +104,11 @@ impl CommandSpec {
         if config.runtime.jinja {
             args.push("--jinja".into());
         }
+        // Prefer physical cores; skip when extra_args already sets --threads so
+        // advanced overrides remain last-wins without a duplicate flag.
+        if !has_threads_override(&config.server.extra_args) {
+            push_pair(&mut args, "--threads", threads.max(1).to_string());
+        }
         args.push("--metrics".into());
         push_pair(&mut args, "--host", config.server.host.as_str());
         push_pair(&mut args, "--port", config.server.port.to_string());
@@ -119,6 +131,13 @@ impl CommandSpec {
 fn push_pair(args: &mut Vec<OsString>, flag: impl Into<OsString>, value: impl Into<OsString>) {
     args.push(flag.into());
     args.push(value.into());
+}
+
+fn has_threads_override(extra_args: &[String]) -> bool {
+    let prefix = "--threads=";
+    extra_args
+        .iter()
+        .any(|argument| argument == "--threads" || argument.starts_with(prefix))
 }
 
 fn shell_quote(value: &OsString) -> String {
@@ -372,7 +391,7 @@ mod tests {
     use super::*;
 
     fn args(config: &Config) -> Vec<String> {
-        CommandSpec::from_config(config)
+        CommandSpec::from_config_with_threads(config, 8)
             .args
             .iter()
             .map(|value| value.to_string_lossy().into_owned())
@@ -410,6 +429,8 @@ mod tests {
                 "0",
                 "--no-mmproj",
                 "--jinja",
+                "--threads",
+                "8",
                 "--metrics",
                 "--host",
                 "127.0.0.1",
@@ -428,10 +449,26 @@ mod tests {
     }
 
     #[test]
-    fn extra_args_are_last_so_advanced_users_can_override() {
+    fn auto_threads_use_physical_core_count() {
+        let actual = args(&Config::default());
+        let threads = actual
+            .windows(2)
+            .find_map(|window| (window[0] == "--threads").then_some(window[1].as_str()));
+        assert_eq!(threads, Some("8"));
+    }
+
+    #[test]
+    fn extra_args_threads_override_skips_auto_threads() {
         let mut config = Config::default();
         config.server.extra_args = vec!["--threads".into(), "12".into()];
         let actual = args(&config);
+        assert_eq!(
+            actual
+                .iter()
+                .filter(|argument| *argument == "--threads")
+                .count(),
+            1
+        );
         assert_eq!(&actual[actual.len() - 2..], &["--threads", "12"]);
     }
 
