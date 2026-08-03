@@ -1,6 +1,9 @@
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
+    net::IpAddr,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -112,12 +115,41 @@ impl Config {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("could not create {}", parent.display()))?;
-        }
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .with_context(|| format!("could not create {}", parent.display()))?;
         let raw = toml::to_string_pretty(self).context("could not serialize configuration")?;
-        fs::write(path, raw).with_context(|| format!("could not write {}", path.display()))
+        let file_name = path
+            .file_name()
+            .context("configuration path has no file name")?
+            .to_string_lossy();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temporary = parent.join(format!(".{file_name}.{}.{}.tmp", std::process::id(), stamp));
+
+        let result = (|| -> Result<()> {
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary)
+                .with_context(|| format!("could not create {}", temporary.display()))?;
+            file.write_all(raw.as_bytes())
+                .with_context(|| format!("could not write {}", temporary.display()))?;
+            file.sync_all()
+                .with_context(|| format!("could not flush {}", temporary.display()))?;
+            drop(file);
+            replace_file(&temporary, path)
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
 
     pub fn default_path() -> PathBuf {
@@ -133,22 +165,34 @@ impl Config {
         }
     }
 
+    pub fn effective_host(&self) -> String {
+        let host = extra_option_value(&self.server.extra_args, "--host")
+            .unwrap_or_else(|| self.server.host.clone());
+        strip_brackets(host.trim()).to_string()
+    }
+
+    pub fn effective_port(&self) -> u16 {
+        extra_option_value(&self.server.extra_args, "--port")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(self.server.port)
+    }
+
+    pub fn connect_host(&self) -> String {
+        loopback_host(&self.effective_host())
+    }
+
     pub fn endpoint(&self) -> String {
-        format!("http://{}:{}", self.server.host, self.server.port)
+        format!(
+            "http://{}",
+            format_authority(&self.effective_host(), self.effective_port())
+        )
     }
 
     pub fn api_endpoint(&self) -> String {
-        let host = match self.server.host.as_str() {
-            "0.0.0.0" => "127.0.0.1",
-            "::" => "::1",
-            host => host,
-        };
-        let host = if host.contains(':') && !host.starts_with('[') {
-            format!("[{host}]")
-        } else {
-            host.to_string()
-        };
-        format!("http://{host}:{}/v1", self.server.port)
+        format!(
+            "http://{}/v1",
+            format_authority(&self.connect_host(), self.effective_port())
+        )
     }
 
     pub fn remember_model(&mut self, source: ModelSource) {
@@ -159,11 +203,39 @@ impl Config {
 
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
-        if self.server.host.trim().is_empty() {
+        let host = self.effective_host();
+        let normalized_host = strip_brackets(host.trim());
+        if normalized_host.is_empty() {
             errors.push("host cannot be empty".into());
+        } else if host.starts_with('[') != host.ends_with(']') {
+            errors.push("IPv6 hosts must use matching brackets".into());
+        } else if normalized_host.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '/' | '?' | '#')
+        }) {
+            errors.push("host contains invalid characters".into());
+        } else if normalized_host.contains(':') && normalized_host.parse::<IpAddr>().is_err() {
+            errors.push("host must be a valid IPv6 address or hostname".into());
         }
-        if self.server.port == 0 {
+        if self.effective_port() == 0 {
             errors.push("port must be between 1 and 65535".into());
+        }
+        if has_extra_option(&self.server.extra_args, "--host") {
+            match extra_option_value(&self.server.extra_args, "--host") {
+                None => errors.push("extra --host requires a value".into()),
+                Some(value) if value.trim().is_empty() || value.starts_with("--") => {
+                    errors.push("extra --host requires a valid value".into())
+                }
+                Some(_) => {}
+            }
+        }
+        if has_extra_option(&self.server.extra_args, "--port")
+            && extra_option_value(&self.server.extra_args, "--port")
+                .and_then(|value| value.parse::<u16>().ok())
+                .is_none_or(|port| port == 0)
+        {
+            errors.push("extra --port must be between 1 and 65535".into());
         }
         if self.runtime.context_size == 0 {
             errors.push("context size must be greater than zero".into());
@@ -181,19 +253,34 @@ impl Config {
             errors.push("parallel slots must be greater than zero".into());
         }
         match &self.model.source {
-            ModelSource::HuggingFace(id) if id.trim().is_empty() => {
-                errors.push("Hugging Face model ID cannot be empty".into())
+            ModelSource::HuggingFace(id) => {
+                if !valid_repository_id(id) {
+                    errors.push("Hugging Face model ID must be owner/model".into());
+                }
+                if !self.model.estimated_size_gib.is_finite()
+                    || !(0.1..=100_000.0).contains(&self.model.estimated_size_gib)
+                {
+                    errors.push("estimated file size must be between 0.1 and 100000 GiB".into());
+                }
             }
             ModelSource::Local(path) => {
                 if !path.is_file() {
                     errors.push(format!("model file does not exist: {}", path.display()));
+                } else if !path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
+                {
+                    errors.push(format!(
+                        "model file must have a .gguf extension: {}",
+                        path.display()
+                    ));
                 } else if let Some(paths) = split_gguf_paths(path)
                     && let Some(missing) = paths.iter().find(|shard| !shard.is_file())
                 {
                     errors.push(format!("model shard does not exist: {}", missing.display()));
                 }
             }
-            _ => {}
         }
         errors
     }
@@ -242,6 +329,94 @@ fn split_gguf_paths(path: &Path) -> Option<Vec<PathBuf>> {
     )
 }
 
+fn replace_file(temporary: &Path, destination: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        match fs::rename(temporary, destination) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                fs::remove_file(destination)
+                    .with_context(|| format!("could not replace {}", destination.display()))?;
+                fs::rename(temporary, destination)
+                    .with_context(|| format!("could not replace {}", destination.display()))
+            }
+            Err(error) => {
+                Err(error).with_context(|| format!("could not replace {}", destination.display()))
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(temporary, destination)
+            .with_context(|| format!("could not replace {}", destination.display()))
+    }
+}
+
+fn strip_brackets(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
+fn loopback_host(host: &str) -> String {
+    match strip_brackets(host) {
+        "0.0.0.0" => "127.0.0.1".into(),
+        "::" => "::1".into(),
+        host => host.to_string(),
+    }
+}
+
+fn format_authority(host: &str, port: u16) -> String {
+    let host = strip_brackets(host);
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+fn has_extra_option(args: &[String], option: &str) -> bool {
+    let prefix = format!("{option}=");
+    args.iter()
+        .any(|argument| argument == option || argument.starts_with(&prefix))
+}
+
+fn extra_option_value(args: &[String], option: &str) -> Option<String> {
+    let prefix = format!("{option}=");
+    let mut value = None;
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == option {
+            value = args.get(index + 1).cloned();
+            index += 2;
+        } else if let Some(argument) = args[index].strip_prefix(&prefix) {
+            value = Some(argument.to_string());
+            index += 1;
+        } else {
+            index += 1;
+        }
+    }
+    value
+}
+
+fn valid_repository_id(id: &str) -> bool {
+    let path = id.trim().split(':').next().unwrap_or_default();
+    let Some((owner, name)) = path.split_once('/') else {
+        return false;
+    };
+    !owner.is_empty()
+        && !name.is_empty()
+        && !name.contains('/')
+        && [owner, name].iter().all(|part| {
+            !part
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace())
+                && !part
+                    .chars()
+                    .any(|character| matches!(character, '?' | '#' | '\\'))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +441,10 @@ mod tests {
         let expected = Config::default();
         expected.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap(), expected);
+        let mut changed = expected.clone();
+        changed.server.port = 9090;
+        changed.save(&path).unwrap();
+        assert_eq!(Config::load(&path).unwrap().server.port, 9090);
     }
 
     #[test]
@@ -302,6 +481,33 @@ mod tests {
         assert_eq!(config.api_endpoint(), "http://127.0.0.1:8080/v1");
         config.server.host = "::".into();
         assert_eq!(config.api_endpoint(), "http://[::1]:8080/v1");
+    }
+
+    #[test]
+    fn effective_endpoint_honors_advanced_host_and_port_overrides() {
+        let mut config = Config::default();
+        config.server.extra_args = vec!["--host".into(), "::1".into(), "--port=9090".into()];
+        assert_eq!(config.effective_host(), "::1");
+        assert_eq!(config.effective_port(), 9090);
+        assert_eq!(config.endpoint(), "http://[::1]:9090");
+        assert_eq!(config.api_endpoint(), "http://[::1]:9090/v1");
+        assert!(config.validate().is_empty());
+    }
+
+    #[test]
+    fn invalid_remote_settings_are_reported_before_launch() {
+        let mut config = Config::default();
+        config.model.source = ModelSource::HuggingFace("owner/model/extra".into());
+        config.model.estimated_size_gib = f64::NAN;
+        config.server.extra_args = vec!["--port".into(), "not-a-port".into()];
+        let errors = config.validate();
+        assert!(errors.iter().any(|error| error.contains("owner/model")));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("estimated file size"))
+        );
+        assert!(errors.iter().any(|error| error.contains("extra --port")));
     }
 
     #[test]

@@ -12,6 +12,8 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    sync::mpsc::{self, Receiver, TryRecvError},
+    thread,
 };
 
 use directories::BaseDirs;
@@ -34,6 +36,20 @@ pub struct CacheScan {
     pub blobs: Vec<CachedBlob>,
     /// Bytes held in the legacy flat layout, which carries no object ids.
     pub flat_bytes: u64,
+}
+
+#[derive(Debug)]
+pub struct PendingScan {
+    receiver: Receiver<CacheScan>,
+}
+
+impl PendingScan {
+    pub fn take(&self) -> Option<CacheScan> {
+        match self.receiver.try_recv() {
+            Ok(scan) => Some(scan),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
+        }
+    }
 }
 
 impl CacheScan {
@@ -79,6 +95,15 @@ pub fn scan(repo: &str) -> CacheScan {
     scan
 }
 
+pub fn scan_async(repo: &str) -> PendingScan {
+    let (sender, receiver) = mpsc::channel();
+    let repo = repo.to_string();
+    thread::spawn(move || {
+        let _ = sender.send(scan(&repo));
+    });
+    PendingScan { receiver }
+}
+
 /// Whether a repository looks like it still has to be fetched.
 ///
 /// This only decides whether the indicator is visible for the second or so
@@ -86,7 +111,11 @@ pub fn scan(repo: &str) -> CacheScan {
 /// the configured estimate is deliberately loose: it separates "nothing yet"
 /// from "already downloaded" rather than measuring anything.
 pub fn looks_incomplete(repo: &str, estimated_gib: f64) -> bool {
-    let bytes = scan(repo).total_bytes();
+    looks_incomplete_scan(&scan(repo), estimated_gib)
+}
+
+pub fn looks_incomplete_scan(scan: &CacheScan, estimated_gib: f64) -> bool {
+    let bytes = scan.total_bytes();
     if bytes == 0 {
         return true;
     }

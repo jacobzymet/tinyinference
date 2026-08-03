@@ -87,7 +87,7 @@ impl Machine {
 
 pub fn executable_exists(path: &Path) -> bool {
     if path.components().count() > 1 || path.is_absolute() {
-        return path.is_file();
+        return is_executable_file(path);
     }
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
@@ -114,11 +114,27 @@ pub fn executable_exists(path: &Path) -> bool {
             default
         }
     };
-    std::env::split_paths(&paths).any(|dir| {
-        names
-            .iter()
-            .any(|name| fs::metadata(dir.join(name)).is_ok())
-    })
+    std::env::split_paths(&paths)
+        .any(|dir| names.iter().any(|name| is_executable_file(&dir.join(name))))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 #[cfg(windows)]
@@ -190,5 +206,11 @@ mod tests {
         assert_eq!(profile.mapped_model_gib, 500.0);
         assert_eq!(profile.available_gib, 12.0);
         assert_eq!(profile.total_gib, 16.0);
+    }
+
+    #[test]
+    fn directories_are_not_reported_as_executables() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(!executable_exists(directory.path()));
     }
 }

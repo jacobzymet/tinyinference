@@ -11,7 +11,8 @@ use crate::{
     config::{Config, DEFAULT_MODEL, ModelSource},
     hub,
     server::{
-        CommandSpec, ServerEvent, ServerMetrics, ServerProcess, endpoint_healthy, fetch_metrics,
+        CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
+        probe_async,
     },
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
 };
@@ -68,25 +69,39 @@ pub struct Download {
     /// Real size of the download, from Hugging Face.
     pub total: Option<u64>,
     active: bool,
+    estimated_size_gib: f64,
     oids: Vec<String>,
     files: Vec<hub::RemoteFile>,
     listing: Option<hub::PendingListing>,
+    pub listing_error: Option<String>,
+    scan: cache::CacheScan,
+    pending_scan: Option<cache::PendingScan>,
+    scan_ready: bool,
     samples: VecDeque<(Instant, u64)>,
     last_poll: Instant,
 }
 
 impl Download {
-    pub(crate) fn new(repo: &str, active: bool, listing: Option<hub::PendingListing>) -> Self {
-        let downloaded = cache::scan(repo).total_bytes();
+    pub(crate) fn new(
+        repo: &str,
+        estimated_size_gib: f64,
+        listing: Option<hub::PendingListing>,
+    ) -> Self {
+        let downloaded = 0;
         Self {
             repo: repo.to_string(),
             file: None,
             downloaded,
             total: None,
-            active,
+            active: true,
+            estimated_size_gib,
             oids: Vec::new(),
             files: Vec::new(),
             listing,
+            listing_error: None,
+            scan: cache::CacheScan::default(),
+            pending_scan: Some(cache::scan_async(repo)),
+            scan_ready: false,
             samples: VecDeque::from([(Instant::now(), downloaded)]),
             last_poll: Instant::now(),
         }
@@ -94,6 +109,10 @@ impl Download {
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    pub fn listing_error(&self) -> Option<&str> {
+        self.listing_error.as_deref()
     }
 
     /// Bytes per second over the recent window, once there is enough history.
@@ -123,36 +142,77 @@ impl Download {
             return;
         }
         self.last_poll = Instant::now();
-        if let Some(files) = self.listing.as_mut().and_then(hub::PendingListing::take) {
-            self.files = files;
-            self.listing = None;
-        }
+        let listing_changed =
+            if let Some(result) = self.listing.as_mut().and_then(hub::PendingListing::take) {
+                self.listing = None;
+                match result {
+                    Ok(files) => self.files = files,
+                    Err(error) => self.listing_error = Some(error),
+                }
+                true
+            } else {
+                false
+            };
 
-        let scan = cache::scan(&self.repo);
-        self.resolve_target(&scan);
-        let downloaded = if self.oids.is_empty() {
-            scan.total_bytes()
+        let completed_scan = self
+            .pending_scan
+            .as_ref()
+            .and_then(cache::PendingScan::take);
+        let scan_changed = if let Some(scan) = completed_scan {
+            self.pending_scan = None;
+            let first_scan = !self.scan_ready;
+            self.scan_ready = true;
+            self.scan = scan;
+            let scan = self.scan.clone();
+            self.resolve_target(&scan);
+            self.update_from_scan(first_scan, true);
+            true
         } else {
-            scan.bytes_of(&self.oids)
+            false
         };
-        let in_flight = scan.in_flight().next().is_some();
-        self.active = if in_flight || downloaded > self.downloaded {
+
+        if listing_changed && !scan_changed && self.scan_ready {
+            let scan = self.scan.clone();
+            self.resolve_target(&scan);
+            self.update_from_scan(false, false);
+        }
+        if scan_changed {
+            self.pending_scan = Some(cache::scan_async(&self.repo));
+        }
+    }
+
+    fn update_from_scan(&mut self, first_scan: bool, add_sample: bool) {
+        let downloaded = if self.oids.is_empty() {
+            self.scan.total_bytes()
+        } else {
+            self.scan.bytes_of(&self.oids)
+        };
+        let in_flight = self.scan.in_flight().next().is_some();
+        let complete_by_estimate =
+            !cache::looks_incomplete_scan(&self.scan, self.estimated_size_gib);
+        self.active = if first_scan && !in_flight && complete_by_estimate {
+            false
+        } else if in_flight || downloaded > self.downloaded {
             true
         } else if self.total.is_some_and(|total| downloaded >= total) {
+            false
+        } else if self.total.is_none() && complete_by_estimate {
             false
         } else {
             self.active
         };
         self.downloaded = downloaded;
 
-        let now = Instant::now();
-        self.samples.push_back((now, downloaded));
-        while self
-            .samples
-            .front()
-            .is_some_and(|(at, _)| now.duration_since(*at) > RATE_WINDOW)
-        {
-            self.samples.pop_front();
+        if add_sample {
+            let now = Instant::now();
+            self.samples.push_back((now, downloaded));
+            while self
+                .samples
+                .front()
+                .is_some_and(|(at, _)| now.duration_since(*at) > RATE_WINDOW)
+            {
+                self.samples.pop_front();
+            }
         }
     }
 
@@ -162,10 +222,26 @@ impl Download {
         if self.total.is_some() || self.files.is_empty() {
             return;
         }
-        let Some(blob) = scan.in_flight().next().or_else(|| scan.blobs.first()) else {
+        let oid = scan
+            .in_flight()
+            .find_map(|blob| {
+                self.files
+                    .iter()
+                    .find(|file| file.oid == blob.oid && is_model_file(&file.path))
+                    .map(|file| file.oid.clone())
+            })
+            .or_else(|| {
+                scan.blobs.iter().find_map(|blob| {
+                    self.files
+                        .iter()
+                        .find(|file| file.oid == blob.oid && is_model_file(&file.path))
+                        .map(|file| file.oid.clone())
+                })
+            });
+        let Some(oid) = oid else {
             return;
         };
-        let Some(wanted) = self.files.iter().find(|file| file.oid == blob.oid) else {
+        let Some(wanted) = self.files.iter().find(|file| file.oid == oid) else {
             return;
         };
         let family = hub::family(&self.files, &wanted.path);
@@ -177,6 +253,10 @@ impl Download {
     fn finish(&mut self) {
         self.active = false;
     }
+}
+
+fn is_model_file(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".gguf")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -312,6 +392,7 @@ pub struct App {
     pub process_usage: Option<ProcessUsage>,
     pub server_metrics: Option<ServerMetrics>,
     process_monitor: ProcessMonitor,
+    probe: Option<PendingProbe>,
     missing_server_prompt: bool,
     last_probe: Instant,
     last_stats_refresh: Instant,
@@ -357,6 +438,7 @@ impl App {
             process_usage: None,
             server_metrics: None,
             process_monitor: ProcessMonitor::default(),
+            probe: None,
             missing_server_prompt: !executable_found,
             last_probe: Instant::now() - Duration::from_secs(2),
             last_stats_refresh: Instant::now() - Duration::from_secs(2),
@@ -422,8 +504,8 @@ impl App {
                     path.display().to_string()
                 }
             }
-            SettingField::Host => self.config.server.host.clone(),
-            SettingField::Port => self.config.server.port.to_string(),
+            SettingField::Host => self.config.effective_host(),
+            SettingField::Port => self.config.effective_port().to_string(),
             SettingField::Context => format!("{} tokens", self.config.runtime.context_size),
             SettingField::Batch => self.config.runtime.batch_size.to_string(),
             SettingField::MicroBatch => self.config.runtime.micro_batch_size.to_string(),
@@ -590,6 +672,7 @@ impl App {
             KeyCode::Char('l') => self.view = View::Logs,
             KeyCode::Char('t') => {
                 self.view = View::Stats;
+                self.last_probe = Instant::now() - Duration::from_secs(2);
                 self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
             }
             KeyCode::Char('y') => self.copy_endpoint(),
@@ -707,6 +790,7 @@ impl App {
                 self.download = None;
                 self.process_usage = None;
                 self.server_metrics = None;
+                self.probe = None;
                 self.status = if status.success() {
                     ServerStatus::Stopped
                 } else {
@@ -740,18 +824,16 @@ impl App {
             }
         }
 
-        if self.process.is_some() && self.last_probe.elapsed() >= Duration::from_secs(1) {
-            self.endpoint_online = self.running_config.as_ref().is_some_and(endpoint_healthy);
-            self.last_probe = Instant::now();
-            if self.endpoint_online {
-                self.download = None;
-                self.startup_frame = 0;
-                self.status = ServerStatus::Ready;
-                if let Some(config) = &self.running_config {
-                    self.status_detail = format!("Listening at {}", config.endpoint());
+        if self.process.is_some() {
+            if let Some(result) = self.probe.as_ref().and_then(PendingProbe::take) {
+                self.probe = None;
+                self.apply_probe_result(result);
+            }
+            if self.probe.is_none() && self.last_probe.elapsed() >= Duration::from_secs(1) {
+                if let Some(config) = self.running_config.clone() {
+                    self.probe = Some(probe_async(&config, self.view == View::Stats));
                 }
-            } else if self.status != ServerStatus::Downloading {
-                self.status = ServerStatus::Starting;
+                self.last_probe = Instant::now();
             }
         }
 
@@ -761,12 +843,25 @@ impl App {
         {
             let process_id = self.process.as_ref().map(ServerProcess::id);
             self.process_usage = process_id.and_then(|pid| self.process_monitor.refresh(pid));
-            if !self.endpoint_online {
-                self.server_metrics = None;
-            } else if let Some(metrics) = self.running_config.as_ref().and_then(fetch_metrics) {
-                self.server_metrics = Some(metrics);
-            }
             self.last_stats_refresh = Instant::now();
+        }
+    }
+
+    fn apply_probe_result(&mut self, result: ProbeResult) {
+        self.endpoint_online = result.endpoint_online;
+        if result.metrics_requested {
+            self.server_metrics = result.metrics;
+        }
+        if self.endpoint_online {
+            self.download = None;
+            self.startup_frame = 0;
+            self.status = ServerStatus::Ready;
+            if let Some(config) = &self.running_config {
+                self.status_detail = format!("Listening at {}", config.endpoint());
+            }
+        } else if self.status != ServerStatus::Downloading {
+            self.server_metrics = None;
+            self.status = ServerStatus::Starting;
         }
     }
 
@@ -797,6 +892,7 @@ impl App {
                     self.status_detail = format!("Waking llama-server (PID {pid})");
                 }
                 self.endpoint_online = false;
+                self.probe = None;
                 self.startup_frame = 0;
                 self.last_probe = Instant::now() - Duration::from_secs(2);
                 self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
@@ -852,6 +948,7 @@ impl App {
             }
         }
         self.endpoint_online = false;
+        self.probe = None;
         self.download = None;
         self.process_usage = None;
         self.server_metrics = None;
@@ -907,8 +1004,8 @@ impl App {
             SettingField::Model => self.config.model_label(),
             SettingField::EstimatedSize => self.config.model.estimated_size_gib.to_string(),
             SettingField::Executable => self.config.server.executable.display().to_string(),
-            SettingField::Host => self.config.server.host.clone(),
-            SettingField::Port => self.config.server.port.to_string(),
+            SettingField::Host => self.config.effective_host(),
+            SettingField::Port => self.config.effective_port().to_string(),
             SettingField::Context => self.config.runtime.context_size.to_string(),
             SettingField::Batch => self.config.runtime.batch_size.to_string(),
             SettingField::MicroBatch => self.config.runtime.micro_batch_size.to_string(),
@@ -1182,18 +1279,17 @@ impl App {
 
 /// Watch a Hugging Face launch for a download.
 ///
-/// The cache decides whether the indicator starts out visible, so a first run
-/// is announced immediately instead of a second later; llama-server may also
-/// re-fetch a model that looks cached, which the watch picks up from growth on
-/// disk. Local models are never downloaded.
+/// The cache is inspected in the background, so the indicator can correct
+/// itself quickly for an already-cached model without blocking the interface.
+/// llama-server may also re-fetch a model that looks cached, which the watch
+/// picks up from growth on disk. Local models are never downloaded.
 fn watch_download(config: &Config) -> Option<Download> {
     let ModelSource::HuggingFace(repo) = &config.model.source else {
         return None;
     };
-    let active = cache::looks_incomplete(repo, config.model.estimated_size_gib);
     Some(Download::new(
         repo,
-        active,
+        config.model.estimated_size_gib,
         Some(hub::list_files_async(repo)),
     ))
 }
@@ -1451,7 +1547,7 @@ mod tests {
     }
 
     fn download_of(files: Vec<hub::RemoteFile>) -> Download {
-        let mut download = Download::new("owner/model", true, None);
+        let mut download = Download::new("owner/model", 59.1, None);
         download.files = files;
         download
     }
@@ -1480,6 +1576,21 @@ mod tests {
         assert_eq!(download.file.as_deref(), Some("model-Q8.gguf"));
         assert_eq!(download.total, Some(800));
         assert_eq!(download.oids, ["bbb"]);
+    }
+
+    #[test]
+    fn metadata_blobs_do_not_become_download_targets() {
+        let mut download = download_of(vec![remote(".gitattributes", "meta", 1_000)]);
+        download.resolve_target(&cache::CacheScan {
+            blobs: vec![cache::CachedBlob {
+                oid: "meta".into(),
+                bytes: 1_000,
+                in_flight: true,
+            }],
+            flat_bytes: 0,
+        });
+        assert_eq!(download.file, None);
+        assert_eq!(download.total, None);
     }
 
     #[test]
@@ -1525,7 +1636,7 @@ mod tests {
     #[test]
     fn loading_the_weights_ends_the_download() {
         let mut app = App::new(Config::default(), "test.toml".into());
-        app.download = Some(Download::new(DEFAULT_MODEL, true, None));
+        app.download = Some(Download::new(DEFAULT_MODEL, 59.1, None));
         assert!(app.active_download().is_some());
 
         app.observe_startup_line("srv    load_model: loading model");

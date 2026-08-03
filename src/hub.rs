@@ -8,6 +8,7 @@
 //! llama.cpp chose.
 
 use std::{
+    fmt::Write as _,
     sync::mpsc::{Receiver, TryRecvError},
     thread,
     time::Duration,
@@ -52,29 +53,34 @@ struct LfsEntry {
 
 /// List the files of `repo`, ignoring any `:quant` tag on it.
 pub fn list_files(repo: &str) -> Result<Vec<RemoteFile>> {
-    let path = repo.trim().split(':').next().unwrap_or_default().trim();
-    if path.is_empty() || !path.contains('/') {
-        bail!("{repo} is not an owner/model repository");
-    }
-    let url = format!("https://huggingface.co/api/models/{path}/tree/main?recursive=true");
+    let (owner, name) = repository_parts(repo)?;
+    let path = format!("{owner}/{name}");
+    let url = format!(
+        "https://huggingface.co/api/models/{}/{}/tree/main?recursive=true",
+        encode_segment(&owner),
+        encode_segment(&name)
+    );
     let body = get(&url).with_context(|| format!("could not list files for {path}"))?;
-    Ok(parse_tree(&body))
+    let files = parse_tree(&body)?;
+    if files.is_empty() {
+        bail!("Hugging Face returned no files for {path}");
+    }
+    Ok(files)
 }
 
 /// A listing being fetched off the interface thread.
 #[derive(Debug)]
 pub struct PendingListing {
-    receiver: Receiver<Vec<RemoteFile>>,
+    receiver: Receiver<Result<Vec<RemoteFile>, String>>,
 }
 
 impl PendingListing {
-    /// The files, once they arrive. `None` while the request is still running;
-    /// an empty listing when it failed, so callers stop waiting for it.
-    pub fn take(&mut self) -> Option<Vec<RemoteFile>> {
+    /// The result, once it arrives. `None` while the request is still running.
+    pub fn take(&mut self) -> Option<Result<Vec<RemoteFile>, String>> {
         match self.receiver.try_recv() {
             Ok(files) => Some(files),
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Vec::new()),
+            Err(TryRecvError::Disconnected) => Some(Err("listing worker stopped".into())),
         }
     }
 }
@@ -84,7 +90,8 @@ pub fn list_files_async(repo: &str) -> PendingListing {
     let (sender, receiver) = std::sync::mpsc::channel();
     let repo = repo.to_string();
     thread::spawn(move || {
-        let _ = sender.send(list_files(&repo).unwrap_or_default());
+        let result = list_files(&repo).map_err(|error| format!("{error:#}"));
+        let _ = sender.send(result);
     });
     PendingListing { receiver }
 }
@@ -107,9 +114,9 @@ fn get(url: &str) -> Result<String> {
         .context("could not read the response")
 }
 
-fn parse_tree(body: &str) -> Vec<RemoteFile> {
-    serde_json::from_str::<Vec<TreeEntry>>(body)
-        .unwrap_or_default()
+fn parse_tree(body: &str) -> Result<Vec<RemoteFile>> {
+    let files = serde_json::from_str::<Vec<TreeEntry>>(body)
+        .context("Hugging Face returned invalid JSON")?
         .into_iter()
         .filter(|entry| entry.r#type == "file")
         .map(|entry| {
@@ -126,7 +133,41 @@ fn parse_tree(body: &str) -> Vec<RemoteFile> {
             }
         })
         .filter(|file| !file.oid.is_empty())
-        .collect()
+        .collect();
+    Ok(files)
+}
+
+fn repository_parts(repo: &str) -> Result<(String, String)> {
+    let path = repo.trim().split(':').next().unwrap_or_default().trim();
+    let Some((owner, name)) = path.split_once('/') else {
+        bail!("{repo} is not an owner/model repository");
+    };
+    if owner.is_empty()
+        || name.is_empty()
+        || name.contains('/')
+        || [owner, name].iter().any(|part| {
+            part.chars().any(|character| {
+                character.is_control()
+                    || character.is_whitespace()
+                    || matches!(character, '?' | '#' | '\\')
+            })
+        })
+    {
+        bail!("{repo} is not a valid owner/model repository");
+    }
+    Ok((owner.to_string(), name.to_string()))
+}
+
+fn encode_segment(segment: &str) -> String {
+    let mut encoded = String::with_capacity(segment.len());
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
 }
 
 /// Every file llama.cpp fetches when it is asked for `path`.
@@ -168,7 +209,7 @@ mod tests {
 
     #[test]
     fn lfs_files_report_the_blob_id_and_real_size() {
-        let files = parse_tree(TREE);
+        let files = parse_tree(TREE).unwrap();
         assert_eq!(files.len(), 4);
         let gguf = files
             .iter()
@@ -186,7 +227,7 @@ mod tests {
 
     #[test]
     fn a_split_model_counts_every_shard() {
-        let files = parse_tree(TREE);
+        let files = parse_tree(TREE).unwrap();
         let sizes = |path| family(&files, path).iter().map(|f| f.size).sum::<u64>();
         assert_eq!(sizes("m-00001-of-00002.gguf"), 30);
         assert_eq!(sizes("m-00002-of-00002.gguf"), 30);
@@ -196,14 +237,19 @@ mod tests {
 
     #[test]
     fn malformed_listings_do_not_panic() {
-        assert!(parse_tree("not json").is_empty());
-        assert!(parse_tree("[]").is_empty());
-        assert!(parse_tree(r#"[{"type":"file","path":"x"}]"#).is_empty());
+        assert!(parse_tree("not json").is_err());
+        assert!(parse_tree("[]").unwrap().is_empty());
+        assert!(
+            parse_tree(r#"[{"type":"file","path":"x"}]"#)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn repository_names_are_validated_before_a_request() {
         assert!(list_files("").is_err());
         assert!(list_files("no-slash").is_err());
+        assert!(list_files("owner/model/extra").is_err());
     }
 }

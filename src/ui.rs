@@ -238,22 +238,31 @@ fn download_summary(download: &Download) -> String {
 /// Live progress: how far along, how fast, and how much longer.
 fn download_progress(download: &Download) -> String {
     let mut parts = Vec::new();
-    match (download.fraction(), download.total) {
-        (Some(fraction), Some(total)) => {
-            parts.push(format!(
-                "{}  {:.0}%",
-                progress_bar(fraction, 20),
-                fraction * 100.0
-            ));
-            parts.push(format!(
-                "{} of {}",
-                format_bytes(download.downloaded),
-                format_bytes(total)
-            ));
+    if download.listing_error().is_some() {
+        parts.push("progress unavailable".into());
+        if download.downloaded == 0 {
+            parts.push("preparing".into());
+        } else {
+            parts.push(format!("{} fetched", format_bytes(download.downloaded)));
         }
-        // Nothing has landed yet, or the repository listing is unavailable.
-        _ if download.downloaded == 0 => parts.push("preparing".into()),
-        _ => parts.push(format!("{} fetched", format_bytes(download.downloaded))),
+    } else {
+        match (download.fraction(), download.total) {
+            (Some(fraction), Some(total)) => {
+                parts.push(format!(
+                    "{}  {:.0}%",
+                    progress_bar(fraction, 20),
+                    fraction * 100.0
+                ));
+                parts.push(format!(
+                    "{} of {}",
+                    format_bytes(download.downloaded),
+                    format_bytes(total)
+                ));
+            }
+            // Nothing has landed yet, or the repository listing is unavailable.
+            _ if download.downloaded == 0 => parts.push("preparing".into()),
+            _ => parts.push(format!("{} fetched", format_bytes(download.downloaded))),
+        }
     }
     if let Some(rate) = download.rate() {
         parts.push(format!("{}/s", format_bytes(rate.round() as u64)));
@@ -827,7 +836,7 @@ mod tests {
         app.dismiss_server_prompt();
         app.status = ServerStatus::Downloading;
         app.startup_frame = 4;
-        let mut download = Download::new("tinyinference/uncached", true, None);
+        let mut download = Download::new("tinyinference/uncached", 59.1, None);
         download.file = Some("gpt-oss-120b-MXFP4.gguf".into());
         download.total = Some(63_387_346_208);
         download.downloaded = 63_387_346_208 / 4;
@@ -851,7 +860,7 @@ mod tests {
 
     #[test]
     fn a_download_without_a_listing_still_reports_the_bytes() {
-        let mut download = Download::new("tinyinference/uncached", true, None);
+        let mut download = Download::new("tinyinference/uncached", 59.1, None);
         download.downloaded = 5 * 1024 * 1024;
         assert_eq!(download_progress(&download), "5.0 MiB fetched");
         download.downloaded = 0;
@@ -860,6 +869,14 @@ mod tests {
             download_summary(&download),
             "Downloading tinyinference/uncached"
         );
+    }
+
+    #[test]
+    fn a_failed_listing_explains_why_progress_is_unavailable() {
+        let mut download = Download::new("tinyinference/uncached", 59.1, None);
+        download.listing_error = Some("network unavailable".into());
+        download.downloaded = 5 * 1024 * 1024;
+        assert!(download_progress(&download).contains("progress unavailable"));
     }
 
     #[test]

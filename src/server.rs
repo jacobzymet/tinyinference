@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Read as _, Write},
     net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver, Sender},
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -149,6 +149,46 @@ pub struct ServerMetrics {
 }
 
 #[derive(Debug)]
+pub struct ProbeResult {
+    pub endpoint_online: bool,
+    pub metrics_requested: bool,
+    pub metrics: Option<ServerMetrics>,
+}
+
+#[derive(Debug)]
+pub struct PendingProbe {
+    receiver: Receiver<ProbeResult>,
+}
+
+impl PendingProbe {
+    pub fn take(&self) -> Option<ProbeResult> {
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
+        }
+    }
+}
+
+pub fn probe_async(config: &Config, metrics_requested: bool) -> PendingProbe {
+    let (sender, receiver) = mpsc::channel();
+    let config = config.clone();
+    thread::spawn(move || {
+        let endpoint_online = endpoint_healthy(&config);
+        let metrics = if endpoint_online && metrics_requested {
+            fetch_metrics(&config)
+        } else {
+            None
+        };
+        let _ = sender.send(ProbeResult {
+            endpoint_online,
+            metrics_requested,
+            metrics,
+        });
+    });
+    PendingProbe { receiver }
+}
+
+#[derive(Debug)]
 pub struct ServerProcess {
     child: Child,
     receiver: Receiver<ServerEvent>,
@@ -274,16 +314,13 @@ pub fn fetch_metrics(config: &Config) -> Option<ServerMetrics> {
 }
 
 fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, String)> {
-    let host = match config.server.host.as_str() {
-        "0.0.0.0" => "127.0.0.1",
-        "::" => "::1",
-        host => host,
-    };
+    let host = config.connect_host();
+    let port = config.effective_port();
     let address = host
         .parse::<IpAddr>()
         .ok()
-        .map(|ip| SocketAddr::new(ip, config.server.port))
-        .or_else(|| (host, config.server.port).to_socket_addrs().ok()?.next());
+        .map(|ip| SocketAddr::new(ip, port))
+        .or_else(|| (host.as_str(), port).to_socket_addrs().ok()?.next());
     let mut stream =
         address.and_then(|address| TcpStream::connect_timeout(&address, timeout).ok())?;
     if stream.set_read_timeout(Some(timeout)).is_err()
@@ -291,10 +328,13 @@ fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, Stri
     {
         return None;
     }
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n\r\n",
-        config.server.host, config.server.port,
-    );
+    let host_header = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).ok()?;
     let mut response = String::new();
     (&mut stream)
@@ -428,6 +468,14 @@ mod tests {
     }
 
     #[test]
+    fn health_uses_the_effective_port() {
+        assert!(probe_test_health_with_extra_args(
+            "200 OK",
+            vec!["--port".into(), "PORT".into()]
+        ));
+    }
+
+    #[test]
     fn prometheus_metrics_are_parsed() {
         let body = "\
 llamacpp:prompt_tokens_total 128
@@ -447,6 +495,10 @@ llamacpp:requests_processing 1
     }
 
     fn probe_test_health(status: &str) -> bool {
+        probe_test_health_with_extra_args(status, Vec::new())
+    }
+
+    fn probe_test_health_with_extra_args(status: &str, mut extra_args: Vec<String>) -> bool {
         use std::io::Read;
         use std::net::TcpListener;
 
@@ -465,7 +517,22 @@ llamacpp:requests_processing 1
         });
         let mut config = Config::default();
         config.server.host = "127.0.0.1".into();
-        config.server.port = port;
+        if extra_args.iter().any(|argument| argument == "PORT") {
+            extra_args = extra_args
+                .into_iter()
+                .map(|argument| {
+                    if argument == "PORT" {
+                        port.to_string()
+                    } else {
+                        argument
+                    }
+                })
+                .collect();
+            config.server.port = 1;
+        } else {
+            config.server.port = port;
+        }
+        config.server.extra_args = extra_args;
         let healthy = endpoint_healthy(&config);
         server.join().unwrap();
         healthy
