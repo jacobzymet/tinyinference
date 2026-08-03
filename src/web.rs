@@ -233,6 +233,7 @@ struct PresetState {
     id: &'static str,
     label: &'static str,
     description: &'static str,
+    warning: Option<&'static str>,
     available: bool,
 }
 
@@ -348,6 +349,7 @@ impl AppState {
                 id: preset.id(),
                 label: preset.label(),
                 description: preset.description(),
+                warning: preset.warning(),
                 available: !(unified_memory && preset.blocked_on_unified_memory()),
             })
             .collect();

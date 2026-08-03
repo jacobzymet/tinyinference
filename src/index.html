@@ -390,6 +390,34 @@
     }
     .size-value.is-muted { color: var(--color-muted); font-size: var(--text-lg); font-weight: 500; }
     .text-error { color: var(--color-danger); font-size: var(--text-sm); }
+    .preset-warning {
+      margin-top: var(--space-xs);
+      padding: var(--space-xs) var(--space-sm);
+      border: 1px solid color-mix(in oklch, var(--color-danger) 55%, var(--color-rule));
+      border-left: 3px solid var(--color-danger);
+      border-radius: var(--radius-input);
+      background: color-mix(in oklch, var(--color-danger) 14%, var(--color-paper));
+      color: color-mix(in oklch, var(--color-danger) 35%, var(--color-ink));
+      font-size: var(--text-sm);
+      line-height: 1.4;
+    }
+    .preset-warning > strong {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--color-danger);
+      margin-bottom: 0.25rem;
+    }
+    .preset-warning a {
+      color: var(--color-danger);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .preset-warning a:hover {
+      color: color-mix(in oklch, var(--color-danger) 80%, white);
+    }
     .stack-md > * + * { margin-top: var(--space-sm); }
 
     .log-view {
@@ -586,6 +614,7 @@
           <label class="field-label" for="runtimePreset">Runtime preset</label>
           <select class="field-select" id="runtimePreset"></select>
           <ul id="runtimePresetHelp" class="choice-help"></ul>
+          <div id="runtimePresetWarning" class="preset-warning is-hidden" role="alert"></div>
         </div>
         <div class="size-panel">
           <div class="eyebrow">Model file size</div>
@@ -792,6 +821,27 @@
       select.value = String(selected ? selected.index : next.recent_models[0].index);
     }
 
+    function formatPresetWarning(text) {
+      const escaped = escapeHtml(text);
+      return escaped.replace(
+        /unified memory architecture/g,
+        '<a href="https://carleton.ca/scs/2025/unified-memory/" target="_blank" rel="noopener noreferrer"><strong><u>unified memory architecture</u></strong></a>'
+      );
+    }
+
+    function updatePresetWarning(presets, selectedId) {
+      const warning = document.getElementById('runtimePresetWarning');
+      const preset = presets.find((item) => item.id === selectedId);
+      if (preset?.warning) {
+        warning.classList.remove('is-hidden');
+        warning.innerHTML =
+          `<strong>Unified memory warning · ${escapeHtml(preset.label)}</strong>${formatPresetWarning(preset.warning)}`;
+      } else {
+        warning.classList.add('is-hidden');
+        warning.textContent = '';
+      }
+    }
+
     function renderPresets(next) {
       const select = document.getElementById('runtimePreset');
       const help = document.getElementById('runtimePresetHelp');
@@ -809,6 +859,7 @@
       ).join('') + (custom
         ? '<li>Current settings are custom — pick a preset to reapply a known profile.</li>'
         : '');
+      updatePresetWarning(presets, select.value);
     }
 
     function escapeHtml(value) {
@@ -1078,6 +1129,7 @@
     });
     document.getElementById('runtimePreset').addEventListener('change', async (event) => {
       const preset = event.target.value;
+      updatePresetWarning(state?.presets || [], preset);
       if (!preset) return;
       settingsDirty = false;
       try {

@@ -186,8 +186,17 @@ impl RuntimePreset {
         match self {
             Self::LowRam => "CPU-only + mmap; weights stay file-backed, no GPU offload.",
             Self::GpuFit => {
-                "Discrete GPU only: auto-fit into VRAM, leftover layers on CPU + mmap. Blocked on unified memory — one RAM pool can be exhausted and crash the system."
+                "Discrete GPU only: auto-fit into VRAM; leftover layers stay on CPU + mmap."
             }
+        }
+    }
+
+    pub fn warning(self) -> Option<&'static str> {
+        match self {
+            Self::LowRam => None,
+            Self::GpuFit => Some(
+                "Unsafe on machines with a unified memory architecture (Apple Silicon and similar). GPU and CPU share one RAM pool, and this preset can immediately exhaust it and crash the machine if the machine has too little RAM.",
+            ),
         }
     }
 

@@ -949,7 +949,7 @@ impl App {
     ) -> Result<(), String> {
         if unified_memory && preset.blocked_on_unified_memory() {
             return Err(
-                "GPU + CPU spill is for discrete GPUs only. On unified memory it can exhaust the shared RAM pool and crash the system — use Low RAM instead."
+                "GPU + CPU spill is for discrete GPUs only. On unified memory it can exhaust the shared RAM pool and crash the system. Use Low RAM instead."
                     .into(),
             );
         }
