@@ -16,6 +16,7 @@ use tokio::net::TcpListener;
 
 use crate::{
     app::{App, Download, ServerStatus, SettingField},
+    config::RuntimePreset,
     server::ServerProcess,
 };
 
@@ -41,6 +42,7 @@ pub async fn serve(app: SharedApp, addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/restart", post(restart))
         .route("/api/save", post(save))
         .route("/api/reset", post(reset))
+        .route("/api/presets/{preset}", post(apply_preset))
         .route("/api/settings", post(update_setting))
         .route("/api/settings/{field}/toggle", post(toggle_setting))
         .route("/api/settings/model/select", post(select_model))
@@ -108,6 +110,13 @@ async fn save(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> 
 
 async fn reset(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
     with_app(app, |app| app.reset_to_defaults())
+}
+
+async fn apply_preset(
+    State(app): State<SharedApp>,
+    Path(preset): Path<RuntimePreset>,
+) -> Result<Json<AppState>, ApiError> {
+    with_app(app, |app| app.apply_runtime_preset(preset))
 }
 
 async fn update_setting(
@@ -211,7 +220,16 @@ struct AppState {
     recent_models: Vec<RecentModelState>,
     settings: Vec<SettingState>,
     cache_type_help: Vec<ChoiceHelp>,
+    presets: Vec<PresetState>,
+    active_preset: Option<&'static str>,
     logs: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct PresetState {
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -318,6 +336,16 @@ impl AppState {
             .iter()
             .map(|(value, description)| ChoiceHelp { value, description })
             .collect();
+        let presets = RuntimePreset::ALL
+            .iter()
+            .copied()
+            .map(|preset| PresetState {
+                id: preset.id(),
+                label: preset.label(),
+                description: preset.description(),
+            })
+            .collect();
+        let active_preset = app.active_runtime_preset().map(RuntimePreset::id);
         let mapped_size = MappedSizeState::from_app(app);
         let recent_models = app
             .config
@@ -382,6 +410,8 @@ impl AppState {
             recent_models,
             settings,
             cache_type_help,
+            presets,
+            active_preset,
             logs: app.logs.iter().cloned().collect(),
         }
     }
@@ -828,6 +858,11 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
             <select class="form-select" id="recentModels"></select>
             <div class="setting-hint mt-1">Choose a previously used Hugging Face repo or local GGUF path.</div>
           </div>
+          <div class="mb-4">
+            <label class="form-label mb-1" for="runtimePreset">Runtime preset</label>
+            <select class="form-select" id="runtimePreset"></select>
+            <ul id="runtimePresetHelp" class="choice-help setting-hint"></ul>
+          </div>
           <div class="size-panel mb-4">
             <div class="metric-label mb-1">Model file size</div>
             <div id="mappedSizeValue" class="size-value is-muted">—</div>
@@ -971,6 +1006,7 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
       document.getElementById('configPathLine').textContent = 'Config: ' + next.config_path;
 
       renderRecentModels(next);
+      renderPresets(next);
       renderSettings(next);
       renderLogs(next);
       renderStats(next);
@@ -999,6 +1035,25 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
         `<option value="${model.index}">${model.kind} · ${escapeHtml(model.label)}</option>`
       ).join('');
       select.value = String(selected ? selected.index : next.recent_models[0].index);
+    }
+
+    function renderPresets(next) {
+      const select = document.getElementById('runtimePreset');
+      const help = document.getElementById('runtimePresetHelp');
+      if (document.activeElement === select) return;
+      const presets = next.presets || [];
+      const custom = !next.active_preset;
+      select.innerHTML =
+        (custom ? '<option value="">Custom</option>' : '') +
+        presets.map((preset) =>
+          `<option value="${preset.id}">${escapeHtml(preset.label)}</option>`
+        ).join('');
+      select.value = next.active_preset || '';
+      help.innerHTML = presets.map((preset) =>
+        `<li><code>${escapeHtml(preset.label)}</code> — ${escapeHtml(preset.description)}</li>`
+      ).join('') + (custom
+        ? '<li>Current settings are custom — pick a preset to reapply a known profile.</li>'
+        : '');
     }
 
     function escapeHtml(value) {
@@ -1212,6 +1267,17 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
     document.getElementById('btnReset').addEventListener('click', async () => {
       settingsDirty = false;
       applyState(await api('/api/reset', { method: 'POST' }));
+    });
+    document.getElementById('runtimePreset').addEventListener('change', async (event) => {
+      const preset = event.target.value;
+      if (!preset) return;
+      settingsDirty = false;
+      try {
+        document.getElementById('settingsError').classList.add('d-none');
+        applyState(await api('/api/presets/' + preset, { method: 'POST' }));
+      } catch (error) {
+        showSettingsError(error);
+      }
     });
     document.getElementById('btnSave').addEventListener('click', async () => {
       settingsDirty = false;

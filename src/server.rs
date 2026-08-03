@@ -490,6 +490,25 @@ mod tests {
     }
 
     #[test]
+    fn gpu_fit_preset_command_uses_gpu_and_fit() {
+        let mut config = Config::default();
+        config.runtime = crate::config::RuntimePreset::GpuFit.runtime();
+        let actual = args(&config);
+        assert!(!actual.iter().any(|argument| argument == "--device"));
+        assert!(
+            actual
+                .windows(2)
+                .any(|window| { window[0] == "--n-gpu-layers" && window[1] == "999" })
+        );
+        assert!(
+            actual
+                .windows(2)
+                .any(|window| window[0] == "--fit" && window[1] == "on")
+        );
+        assert!(actual.iter().any(|argument| argument == "--mmap"));
+    }
+
+    #[test]
     fn auto_threads_use_physical_core_count() {
         let actual = args(&Config::default());
         let threads = actual

@@ -155,6 +155,60 @@ impl Default for RuntimeConfig {
     }
 }
 
+/// Named runtime profiles shown in Configure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimePreset {
+    /// Current tinyinference default: CPU + mmap, no GPU offload.
+    LowRam,
+    /// GPU offload with auto-fit; leftover layers stay on CPU with mmap.
+    GpuFit,
+}
+
+impl RuntimePreset {
+    pub const ALL: [Self; 2] = [Self::LowRam, Self::GpuFit];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::LowRam => "low_ram",
+            Self::GpuFit => "gpu_fit",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LowRam => "Low RAM (default)",
+            Self::GpuFit => "GPU + CPU spill",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::LowRam => "CPU-only + mmap; weights stay file-backed, no GPU offload.",
+            Self::GpuFit => {
+                "GPU auto-fit for what fits in VRAM; leftover layers on CPU + mmap. On unified memory (one RAM pool), this can still use a lot of system memory — prefer Low RAM when headroom matters."
+            }
+        }
+    }
+
+    pub fn runtime(self) -> RuntimeConfig {
+        match self {
+            Self::LowRam => RuntimeConfig::default(),
+            Self::GpuFit => RuntimeConfig {
+                cpu_only: false,
+                fit: true,
+                ..RuntimeConfig::default()
+            },
+        }
+    }
+
+    pub fn matching(runtime: &RuntimeConfig) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|preset| &preset.runtime() == runtime)
+    }
+}
+
 pub fn normalize_cache_type(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_lowercase();
     if CACHE_TYPES.contains(&normalized.as_str()) {
@@ -540,6 +594,10 @@ mod tests {
     #[test]
     fn default_matches_low_memory_command() {
         let cfg = Config::default();
+        assert_eq!(
+            RuntimePreset::matching(&cfg.runtime),
+            Some(RuntimePreset::LowRam)
+        );
         assert!(cfg.runtime.cpu_only);
         assert!(cfg.runtime.mmap);
         assert!(!cfg.runtime.fit);
@@ -551,6 +609,20 @@ mod tests {
         assert_eq!(cfg.runtime.context_size, 8192);
         assert_eq!(cfg.runtime.cache_ram_mib, 0);
         assert_eq!(cfg.runtime.context_checkpoints, 0);
+    }
+
+    #[test]
+    fn gpu_fit_preset_enables_gpu_and_auto_fit() {
+        let runtime = RuntimePreset::GpuFit.runtime();
+        assert!(!runtime.cpu_only);
+        assert!(runtime.fit);
+        assert!(runtime.mmap);
+        assert_eq!(
+            RuntimePreset::matching(&runtime),
+            Some(RuntimePreset::GpuFit)
+        );
+        assert_eq!(runtime.batch_size, RuntimeConfig::default().batch_size);
+        assert_eq!(runtime.cache_type_k, "q8_0");
     }
 
     #[test]

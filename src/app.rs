@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cache,
-    config::{CACHE_TYPES, Config, DEFAULT_MODEL, ModelSource, normalize_cache_type},
+    config::{
+        CACHE_TYPES, Config, DEFAULT_MODEL, ModelSource, RuntimePreset, normalize_cache_type,
+    },
     hub,
     server::{
         CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
@@ -933,6 +935,23 @@ impl App {
         self.push_log("configuration reset to defaults".into());
     }
 
+    pub fn apply_runtime_preset(&mut self, preset: RuntimePreset) {
+        self.config.runtime = preset.runtime();
+        self.status_detail = if self.process.is_some() {
+            format!(
+                "Applied {}; restart to apply, save to persist",
+                preset.label()
+            )
+        } else {
+            format!("Applied {}; save to persist", preset.label())
+        };
+        self.push_log(format!("applied runtime preset {}", preset.id()));
+    }
+
+    pub fn active_runtime_preset(&self) -> Option<RuntimePreset> {
+        RuntimePreset::matching(&self.config.runtime)
+    }
+
     pub fn set_field(&mut self, field: SettingField, raw: &str) -> std::result::Result<(), String> {
         self.apply_field_value(field, raw.trim())?;
         if field == SettingField::Model {
@@ -1458,6 +1477,20 @@ mod tests {
             Config::default().runtime.context_size
         );
         assert!(app.config.recent_models.contains(&local));
+    }
+
+    #[test]
+    fn apply_runtime_preset_only_changes_runtime() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.set_field(SettingField::Port, "4242").unwrap();
+        assert_eq!(app.active_runtime_preset(), Some(RuntimePreset::LowRam));
+        app.apply_runtime_preset(RuntimePreset::GpuFit);
+        assert_eq!(app.active_runtime_preset(), Some(RuntimePreset::GpuFit));
+        assert!(!app.config.runtime.cpu_only);
+        assert!(app.config.runtime.fit);
+        assert_eq!(app.config.server.port, 4242);
+        app.set_field(SettingField::Context, "4096").unwrap();
+        assert_eq!(app.active_runtime_preset(), None);
     }
 
     #[test]
