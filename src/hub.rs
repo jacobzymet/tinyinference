@@ -254,14 +254,13 @@ pub fn primary_gguf_files<'a>(files: &'a [RemoteFile], repo: &str) -> Vec<&'a Re
         }
     }
 
-    if quant.is_some() {
-        if let Some((_, _, _, files)) = families
+    if quant.is_some()
+        && let Some((_, _, _, files)) = families
             .iter()
             .filter(|(_, _, matches, _)| *matches)
             .max_by_key(|(_, bytes, _, _)| *bytes)
-        {
-            return files.clone();
-        }
+    {
+        return files.clone();
     }
 
     families
