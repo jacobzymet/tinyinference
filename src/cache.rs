@@ -182,10 +182,7 @@ pub fn discover_models() -> Vec<DiscoveredModel> {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            if PARTIAL_SUFFIXES
-                .iter()
-                .any(|suffix| name.ends_with(suffix))
-            {
+            if PARTIAL_SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) {
                 continue;
             }
             if !name.to_ascii_lowercase().ends_with(".gguf") {
@@ -739,9 +736,7 @@ mod tests {
     #[test]
     fn snapshot_gguf_files_mark_a_hub_model_as_present() {
         let root = tempfile::tempdir().unwrap();
-        let model = root
-            .path()
-            .join("models--owner--tiny-GGUF");
+        let model = root.path().join("models--owner--tiny-GGUF");
         let snapshot = model.join("snapshots").join("abc123");
         fs::create_dir_all(&snapshot).unwrap();
         fs::create_dir_all(model.join("refs")).unwrap();
@@ -754,9 +749,7 @@ mod tests {
     #[test]
     fn non_gguf_hub_repos_are_ignored_without_gguf_snapshots() {
         let root = tempfile::tempdir().unwrap();
-        let model = root
-            .path()
-            .join("models--owner--embeddings");
+        let model = root.path().join("models--owner--embeddings");
         let snapshot = model.join("snapshots").join("abc123");
         fs::create_dir_all(&snapshot).unwrap();
         fs::write(snapshot.join("model.safetensors"), vec![0; 512]).unwrap();
@@ -811,11 +804,8 @@ mod tests {
         fs::create_dir_all(&locks).unwrap();
 
         let mut report = DeleteReport::default();
-        for path in huggingface_cache_paths_in(
-            "owner/tiny-GGUF",
-            &[hub.path().to_path_buf()],
-            &[],
-        ) {
+        for path in huggingface_cache_paths_in("owner/tiny-GGUF", &[hub.path().to_path_buf()], &[])
+        {
             let bytes = path_bytes(&path);
             remove_path(&path).unwrap();
             report.freed_bytes = report.freed_bytes.saturating_add(bytes);

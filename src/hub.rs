@@ -221,8 +221,7 @@ pub fn normalize_repo_id(input: &str) -> Result<String> {
 /// GGUF family in the listing is used (multi-quant repos ship several).
 pub fn primary_gguf_bytes(files: &[RemoteFile], repo: &str) -> Option<u64> {
     let selected = primary_gguf_files(files, repo);
-    (!selected.is_empty())
-        .then(|| selected.iter().map(|file| file.size).sum())
+    (!selected.is_empty()).then(|| selected.iter().map(|file| file.size).sum())
 }
 
 /// The GGUF file(s) llama.cpp / tinyinference should download for `repo`.

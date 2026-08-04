@@ -1209,7 +1209,9 @@ impl App {
         let pending = fetch::fetch_primary_gguf_async(&repo);
         self.library_fetch = Some(LibraryFetch::new(&repo, pending));
         self.status_detail = format!("Downloading {repo}");
-        self.push_log(format!("downloading {repo} into the local Hugging Face cache"));
+        self.push_log(format!(
+            "downloading {repo} into the local Hugging Face cache"
+        ));
         Ok(())
     }
 
@@ -1709,9 +1711,12 @@ impl App {
                     }
                     cache::DiscoveredSource::Local(path) => ModelSource::Local(path.clone()),
                 };
-                if self.config.recent_models.iter().any(|recent| {
-                    sources_equivalent(recent, &source)
-                }) {
+                if self
+                    .config
+                    .recent_models
+                    .iter()
+                    .any(|recent| sources_equivalent(recent, &source))
+                {
                     return None;
                 }
                 Some(ModelPickerEntry {
@@ -1734,10 +1739,9 @@ impl App {
             .discovered_models
             .iter()
             .find(|model| match (&model.source, &source) {
-                (
-                    cache::DiscoveredSource::HuggingFace(left),
-                    ModelSource::HuggingFace(right),
-                ) => left == right,
+                (cache::DiscoveredSource::HuggingFace(left), ModelSource::HuggingFace(right)) => {
+                    left == right
+                }
                 (cache::DiscoveredSource::Local(left), ModelSource::Local(right)) => left == right,
                 _ => false,
             })
@@ -2226,10 +2230,11 @@ mod tests {
             ModelSource::HuggingFace("owner/cached-GGUF".into())
         );
         app.import_available_model("owner/cached-GGUF").unwrap();
-        assert!(app
-            .library_entries()
-            .iter()
-            .any(|entry| entry.source == ModelSource::HuggingFace("owner/cached-GGUF".into())));
+        assert!(
+            app.library_entries()
+                .iter()
+                .any(|entry| entry.source == ModelSource::HuggingFace("owner/cached-GGUF".into()))
+        );
         assert!(app.available_entries().is_empty());
     }
 

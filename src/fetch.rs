@@ -144,14 +144,7 @@ fn fetch_primary_gguf(
             });
         } else {
             downloaded = download_blob(
-                &owner,
-                &name,
-                file,
-                &blobs_dir,
-                downloaded,
-                total,
-                cancel,
-                &mut emit,
+                &owner, &name, file, &blobs_dir, downloaded, total, cancel, &mut emit,
             )?;
         }
         link_snapshot_file(&blobs_dir.join(&file.oid), &snapshot_dir.join(&file.path))?;

@@ -229,9 +229,7 @@ async fn download_model(
     Ok(Json(AppState::from_app(&app)))
 }
 
-async fn cancel_download_model(
-    State(app): State<SharedApp>,
-) -> Result<Json<AppState>, ApiError> {
+async fn cancel_download_model(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
     let mut app = app.lock().map_err(|_| ApiError::lock())?;
     app.cancel_library_download()
         .map_err(ApiError::bad_request)?;
@@ -491,7 +489,9 @@ impl AppState {
                 None
             }
         });
-        let mapped_bytes = app.mapped_model_gib().map(|gib| (gib * 1024.0 * 1024.0 * 1024.0) as u64);
+        let mapped_bytes = app
+            .mapped_model_gib()
+            .map(|gib| (gib * 1024.0 * 1024.0 * 1024.0) as u64);
         let map_entry = |index: usize, entry: crate::app::ModelPickerEntry| {
             let (kind, label) = match &entry.source {
                 crate::config::ModelSource::HuggingFace(id) => ("Hugging Face", id.clone()),
@@ -507,7 +507,9 @@ impl AppState {
                 )
             });
             let size_bytes = if downloading {
-                fetch_total.filter(|total| *total > 0).unwrap_or(entry.bytes)
+                fetch_total
+                    .filter(|total| *total > 0)
+                    .unwrap_or(entry.bytes)
             } else if entry.bytes > 0 {
                 entry.bytes
             } else if entry.source == app.config.model.source {
@@ -523,10 +525,7 @@ impl AppState {
             } else {
                 "Not downloaded"
             };
-            let is_hf = matches!(
-                &entry.source,
-                crate::config::ModelSource::HuggingFace(_)
-            );
+            let is_hf = matches!(&entry.source, crate::config::ModelSource::HuggingFace(_));
             RecentModelState {
                 index,
                 id: label.clone(),
