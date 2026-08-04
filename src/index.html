@@ -436,6 +436,8 @@
       overflow: auto;
       white-space: pre-wrap;
       padding: var(--space-sm);
+      user-select: text;
+      -webkit-user-select: text;
     }
 
     .stats-grid {
@@ -847,6 +849,9 @@
         <div>
           <p class="eyebrow">Output</p>
           <h2>Logs</h2>
+        </div>
+        <div class="mast-actions">
+          <button type="button" class="btn btn-ghost" id="btnCopyLogs">Copy all</button>
         </div>
       </div>
       <div id="logView" class="log-view" aria-live="polite"></div>
@@ -1659,12 +1664,18 @@
       }
     }
 
+    let lastLogText = null;
+
     function renderLogs(next) {
       const view = document.getElementById('logView');
       if (!view) return;
       const lines = Array.isArray(next.logs) ? next.logs : [];
+      const text = lines.length ? lines.join('\n') : 'No log lines yet.';
+      // Avoid rewriting the DOM when nothing changed — live polls were clearing selection.
+      if (text === lastLogText) return;
+      lastLogText = text;
       const atBottom = view.scrollTop + view.clientHeight >= view.scrollHeight - 24;
-      view.textContent = lines.length ? lines.join('\n') : 'No log lines yet.';
+      view.textContent = text;
       if (atBottom) view.scrollTop = view.scrollHeight;
     }
 
@@ -1731,6 +1742,7 @@
         { label: 'Save config', hint: '⌘S', run: () => document.getElementById('btnSaveDash').click() },
         { label: 'Copy /v1 URL', hint: '', run: () => document.getElementById('btnCopyEndpoint').click() },
         { label: 'Copy launch command', hint: '', run: () => document.getElementById('btnCopyCommand').click() },
+        { label: 'Copy all logs', hint: '', run: () => document.getElementById('btnCopyLogs').click() },
       ];
       cmdkIndex = 0;
       document.getElementById('cmdk').classList.remove('is-hidden');
@@ -1892,6 +1904,11 @@
     });
     document.getElementById('btnCopyCommand').addEventListener('click', async () => {
       const data = await api('/api/copy/command', { method: 'POST' });
+      try { await navigator.clipboard.writeText(data.value); } catch (_) {}
+      applyState(data.state);
+    });
+    document.getElementById('btnCopyLogs').addEventListener('click', async () => {
+      const data = await api('/api/copy/logs', { method: 'POST' });
       try { await navigator.clipboard.writeText(data.value); } catch (_) {}
       applyState(data.state);
     });

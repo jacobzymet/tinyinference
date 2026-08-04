@@ -39,7 +39,9 @@ impl CommandSpec {
         if config.runtime.cpu_only {
             push_pair(&mut args, "--device", "none");
             push_pair(&mut args, "--n-gpu-layers", "0");
-        } else {
+        } else if !config.runtime.fit {
+            // --fit refuses to run when n_gpu_layers is already set by the user.
+            // Leave layer count unset so fit can choose how many layers fit in VRAM.
             push_pair(&mut args, "--n-gpu-layers", "999");
         }
 
@@ -630,11 +632,8 @@ mod tests {
         config.runtime = crate::config::RuntimePreset::GpuFit.runtime();
         let actual = args(&config);
         assert!(!actual.iter().any(|argument| argument == "--device"));
-        assert!(
-            actual
-                .windows(2)
-                .any(|window| { window[0] == "--n-gpu-layers" && window[1] == "999" })
-        );
+        // Fit must own n_gpu_layers; setting it to 999 makes llama.cpp abort auto-fit.
+        assert!(!actual.iter().any(|argument| argument == "--n-gpu-layers"));
         assert!(
             actual
                 .windows(2)

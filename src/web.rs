@@ -55,6 +55,7 @@ pub async fn serve(app: SharedApp, addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/models/download/cancel", post(cancel_download_model))
         .route("/api/copy/endpoint", post(copy_endpoint))
         .route("/api/copy/command", post(copy_command))
+        .route("/api/copy/logs", post(copy_logs))
         .route("/api/dismiss-prompt", post(dismiss_prompt))
         .route("/api/configure-server", post(configure_server))
         .with_state(app);
@@ -248,6 +249,15 @@ async fn copy_endpoint(State(app): State<SharedApp>) -> Result<Json<CopyResponse
 async fn copy_command(State(app): State<SharedApp>) -> Result<Json<CopyResponse>, ApiError> {
     let mut app = app.lock().map_err(|_| ApiError::lock())?;
     let value = app.copy_command();
+    Ok(Json(CopyResponse {
+        value,
+        state: AppState::from_app(&app),
+    }))
+}
+
+async fn copy_logs(State(app): State<SharedApp>) -> Result<Json<CopyResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let value = app.copy_logs();
     Ok(Json(CopyResponse {
         value,
         state: AppState::from_app(&app),

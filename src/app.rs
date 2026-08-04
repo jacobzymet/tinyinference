@@ -2010,6 +2010,12 @@ impl App {
         command
     }
 
+    pub fn copy_logs(&mut self) -> String {
+        let logs = self.logs.iter().cloned().collect::<Vec<_>>().join("\n");
+        self.copy_text("logs", &logs);
+        logs
+    }
+
     fn copy_text(&mut self, label: &str, text: &str) {
         self.status_detail = match copy_to_clipboard(text) {
             Ok(()) => format!("Copied {label}"),
