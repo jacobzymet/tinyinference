@@ -989,11 +989,14 @@ impl App {
             .config_path
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."));
+        // Cover every address the proxy may bind (LAN + Tailscale), not just 0.0.0.0.
         let mut extra_ips = Vec::new();
-        if let Ok(host) = self.config.network.resolve_listen_host()
-            && let Ok(ip) = host.parse::<std::net::IpAddr>()
-        {
-            extra_ips.push(ip);
+        if let Ok(hosts) = self.config.network.proxy_bind_hosts() {
+            for host in hosts {
+                if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                    extra_ips.push(ip);
+                }
+            }
         }
         let paths = crate::tls::ensure_self_signed(config_dir, &extra_ips)
             .map_err(|error| format!("could not prepare share TLS certificate: {error:#}"))?;
@@ -1005,7 +1008,21 @@ impl App {
     /// Start/stop/reload the public TLS share proxy for running model ports.
     pub fn sync_share_proxy(&mut self) {
         let expose = self.config.network.expose && self.listening_exposed();
-        let bind_host = self.config.network.resolve_listen_host().ok();
+        let bind_hosts = if expose {
+            match self.config.network.proxy_bind_hosts() {
+                Ok(hosts) => hosts,
+                Err(error) => {
+                    self.share_proxy.shutdown_all();
+                    let line = format!("[network] share proxy: {error}");
+                    if self.logs.back() != Some(&line) {
+                        self.push_log(line);
+                    }
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
         let ports: Vec<(u16, String)> = if expose {
             self.shareable_running_ports()
                 .into_iter()
@@ -1026,8 +1043,8 @@ impl App {
         let key = self.config.tls_key_file.clone();
         let keys = self.config.share_api_keys();
         self.share_proxy.sync(
-            expose,
-            bind_host.as_deref(),
+            expose && !bind_hosts.is_empty(),
+            &bind_hosts,
             &ports,
             cert.as_ref(),
             key.as_ref(),

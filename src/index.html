@@ -449,13 +449,27 @@
         grid-template-columns: minmax(12rem, 0.9fr) minmax(0, 1.4fr);
         grid-template-areas:
           "meter specs"
+          "servers servers"
           "actions actions";
         align-items: start;
       }
       #dashboard .instrument { grid-area: meter; height: 100%; }
-      #dashboard .stack > .panel:nth-of-type(1) { grid-area: specs; }
-      #dashboard .stack > .panel:nth-of-type(2) { grid-area: actions; }
+      #dashboard #dashSpecsPanel { grid-area: specs; }
+      #dashboard #runningServersBlock { grid-area: servers; }
+      #dashboard #dashActionsPanel { grid-area: actions; }
     }
+    #linkedSourceBlock {
+      margin: 0 0 var(--space-md);
+      padding: 0 0 var(--space-md);
+      border-bottom: 1px solid var(--color-rule);
+    }
+    #linkedSourceBlock.is-hidden {
+      display: none;
+      margin: 0;
+      padding: 0;
+      border: 0;
+    }
+    #localModelEyebrow.is-hidden { display: none; }
     .spec-list {
       display: grid;
       grid-template-columns: 6.5rem minmax(0, 1fr);
@@ -1456,33 +1470,6 @@
       <div class="workspace">
     <section id="dashboard" class="stage-panel reveal" data-stage-panel>
       <div class="stack">
-        <div id="linkedSourceBlock" class="panel stack-md source-panel is-hidden">
-          <div class="eyebrow">
-            <span>Linked device</span>
-            <span id="linkedSourceTag" class="source-tag">saved</span>
-          </div>
-          <div id="linkedSourceTitle" class="tps-value" style="font-size:1.05rem">—</div>
-          <p id="linkedSourceDetail" class="source-detail">—</p>
-          <p id="linkedSourceChatHint" class="source-detail is-hidden">Open Chat to pick among these models in the model selector.</p>
-          <ul id="linkedSourceModels" class="network-list is-hidden" style="margin-top:0.5rem"></ul>
-          <div class="actions" style="margin-top:0.65rem">
-            <a class="btn btn-primary is-hidden" id="btnDashOpenChat" href="/chat">
-              <canvas class="chat-cta-orb" id="dashLinkedChatOrb" aria-hidden="true" style="width:16px;height:16px"></canvas>
-              <span>Open Chat</span>
-            </a>
-            <button type="button" class="btn btn-ghost" id="btnDashUseLinked">Use for chat</button>
-            <button type="button" class="btn btn-ghost" id="btnDashUseLocal">Use this PC</button>
-            <a class="btn btn-ghost" href="#network" id="btnDashNetwork" data-stage-jump="network">Devices</a>
-            <a class="btn btn-ghost is-hidden" href="#models" id="btnDashRemoteModels" data-stage-jump="models">Remote models</a>
-          </div>
-        </div>
-        <div id="runningServersBlock" class="panel stack-md source-panel is-hidden">
-          <div class="eyebrow">
-            <span>On this PC</span>
-            <span class="source-tag">local</span>
-          </div>
-          <ul id="runningServersList" class="network-list"></ul>
-        </div>
         <div class="instrument">
           <div class="eyebrow">Live generation</div>
           <div id="genTpsLine" class="tps-value">—<span class="unit">tok/s</span></div>
@@ -1496,25 +1483,59 @@
           </div>
         </div>
 
-        <div class="panel">
-          <h2 id="modelLabel" class="model-title">—</h2>
-          <dl class="spec-list">
-            <dt>Model size</dt><dd id="storageLine">—</dd>
-            <dt>RAM</dt><dd id="ramLine">—</dd>
-            <dt>Runtime</dt><dd id="runtimeLine">—</dd>
-            <dt>Access</dt><dd id="accessLine">—</dd>
-            <dt>Endpoint</dt>
-            <dd>
-              <a id="endpointLink" href="#" target="_blank" rel="noopener noreferrer">
-                <span id="endpointLabel">—</span>
-                <svg xmlns="http://www.w3.org/2000/svg" class="external-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"/><path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"/></svg>
-                <span class="visually-hidden">(opens in a new tab)</span>
+        <div id="dashSpecsPanel" class="panel source-panel">
+          <div id="linkedSourceBlock" class="stack-md is-hidden">
+            <div class="eyebrow">
+              <span>Linked device</span>
+              <span id="linkedSourceTag" class="source-tag">saved</span>
+            </div>
+            <div id="linkedSourceTitle" class="tps-value" style="font-size:1.05rem">—</div>
+            <p id="linkedSourceDetail" class="source-detail">—</p>
+            <p id="linkedSourceChatHint" class="source-detail is-hidden">Open Chat to pick among these models in the model selector.</p>
+            <ul id="linkedSourceModels" class="network-list is-hidden" style="margin-top:0.5rem"></ul>
+            <div class="actions" style="margin-top:0.65rem">
+              <a class="btn btn-primary is-hidden" id="btnDashOpenChat" href="/chat">
+                <canvas class="chat-cta-orb" id="dashLinkedChatOrb" aria-hidden="true" style="width:16px;height:16px"></canvas>
+                <span>Open Chat</span>
               </a>
-            </dd>
-          </dl>
+              <button type="button" class="btn btn-ghost" id="btnDashUseLinked">Use for chat</button>
+              <button type="button" class="btn btn-ghost" id="btnDashUseLocal">Use this PC</button>
+              <a class="btn btn-ghost" href="#network" id="btnDashNetwork" data-stage-jump="network">Devices</a>
+              <a class="btn btn-ghost is-hidden" href="#models" id="btnDashRemoteModels" data-stage-jump="models">Remote models</a>
+            </div>
+          </div>
+          <div id="localModelBlock">
+            <div id="localModelEyebrow" class="eyebrow is-hidden">
+              <span>This PC</span>
+              <span class="source-tag">local</span>
+            </div>
+            <h2 id="modelLabel" class="model-title">—</h2>
+            <dl class="spec-list">
+              <dt>Model size</dt><dd id="storageLine">—</dd>
+              <dt>RAM</dt><dd id="ramLine">—</dd>
+              <dt>Runtime</dt><dd id="runtimeLine">—</dd>
+              <dt>Access</dt><dd id="accessLine">—</dd>
+              <dt>Endpoint</dt>
+              <dd>
+                <a id="endpointLink" href="#" target="_blank" rel="noopener noreferrer">
+                  <span id="endpointLabel">—</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" class="external-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"/><path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"/></svg>
+                  <span class="visually-hidden">(opens in a new tab)</span>
+                </a>
+              </dd>
+            </dl>
+          </div>
         </div>
 
-        <div class="panel">
+        <div id="runningServersBlock" class="panel stack-md source-panel is-hidden">
+          <div class="eyebrow">
+            <span>On this PC</span>
+            <span class="source-tag">local</span>
+          </div>
+          <ul id="runningServersList" class="network-list"></ul>
+        </div>
+
+        <div id="dashActionsPanel" class="panel">
           <div class="actions">
             <a class="btn" id="chatCtaDash" href="/chat">
               <canvas class="chat-cta-orb" id="chatCtaDashOrb" aria-hidden="true"></canvas>
@@ -2722,7 +2743,6 @@
       const remoteModelsBtn = document.getElementById('btnDashRemoteModels');
       if (!saved) {
         block.classList.add('is-hidden');
-        block.classList.remove('is-active-source');
         if (list) { list.innerHTML = ''; list.classList.add('is-hidden'); }
         if (chatHint) chatHint.classList.add('is-hidden');
         if (openChat) openChat.classList.add('is-hidden');
@@ -2731,7 +2751,6 @@
       }
       block.classList.remove('is-hidden');
       const via = !!net.via_remote;
-      block.classList.toggle('is-active-source', via);
       const tag = document.getElementById('linkedSourceTag');
       const title = document.getElementById('linkedSourceTitle');
       const detail = document.getElementById('linkedSourceDetail');
@@ -2933,9 +2952,16 @@
 
       const net = next.network || {};
       const viaRemote = !!net.via_remote;
-      document.getElementById('modelLabel').textContent = viaRemote
-        ? ((net.remote_model || 'Linked LLM') + ' · via ' + (net.remote_name || net.remote_label || 'peer'))
-        : next.model;
+      const localEyebrow = document.getElementById('localModelEyebrow');
+      // Specs are always this PC’s llama — linked identity lives in linkedSourceBlock.
+      document.getElementById('modelLabel').textContent = next.model || '—';
+      if (localEyebrow) {
+        localEyebrow.classList.toggle('is-hidden', !viaRemote);
+      }
+      const specsPanel = document.getElementById('dashSpecsPanel');
+      if (specsPanel) {
+        specsPanel.classList.toggle('is-active-source', viaRemote);
+      }
       const toolbarModel = document.getElementById('toolbarModel');
       if (toolbarModel) {
         if (viaRemote) {

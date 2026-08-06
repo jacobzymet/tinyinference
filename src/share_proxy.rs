@@ -209,18 +209,21 @@ struct ProxyState {
 }
 
 struct ProxyRunner {
-    bind_host: String,
     cert: PathBuf,
     key: PathBuf,
     model: Arc<Mutex<String>>,
     handle: axum_server::Handle,
 }
 
-/// Manages one TLS listener per shared llama port.
+fn runner_key(host: &str, port: u16) -> String {
+    format!("{host}:{port}")
+}
+
+/// Manages TLS listeners on concrete NIC IPs in front of loopback llama.
 pub struct ShareProxyManager {
     activity: Arc<Mutex<ShareActivityStore>>,
     keys: Arc<Mutex<Vec<(String, String, String)>>>,
-    runners: HashMap<u16, ProxyRunner>,
+    runners: HashMap<String, ProxyRunner>,
     last_error: Option<String>,
 }
 
@@ -276,11 +279,14 @@ impl ShareProxyManager {
         self.last_error = None;
     }
 
-    /// Ensure listeners match the desired public bind + running share ports.
+    /// Ensure listeners match concrete public bind hosts + running share ports.
+    ///
+    /// `bind_hosts` must be real NIC addresses (not `0.0.0.0`) so they do not
+    /// clash with llama on `127.0.0.1:<port>`.
     pub fn sync(
         &mut self,
         expose: bool,
-        bind_host: Option<&str>,
+        bind_hosts: &[String],
         ports: &[(u16, String)],
         cert: Option<&PathBuf>,
         key: Option<&PathBuf>,
@@ -288,56 +294,74 @@ impl ShareProxyManager {
     ) {
         self.set_keys(keys);
 
-        if !expose || bind_host.is_none() || cert.is_none() || key.is_none() || ports.is_empty() {
+        if !expose || bind_hosts.is_empty() || cert.is_none() || key.is_none() || ports.is_empty() {
             self.shutdown_all();
             return;
         }
-        let bind_host = bind_host.unwrap().to_string();
         let cert = cert.unwrap().clone();
         let key = key.unwrap().clone();
 
-        if is_loopback_host(&bind_host) {
+        let hosts: Vec<String> = bind_hosts
+            .iter()
+            .filter(|host| !is_loopback_host(host) && *host != "0.0.0.0" && *host != "::")
+            .cloned()
+            .collect();
+        if hosts.is_empty() {
             self.shutdown_all();
-            self.last_error = Some("Share proxy will not bind on loopback".into());
+            self.last_error = Some("Share proxy has no public address to bind".into());
             return;
         }
 
-        let desired: HashMap<u16, &String> = ports.iter().map(|(p, m)| (*p, m)).collect();
+        let desired: HashMap<String, &String> = hosts
+            .iter()
+            .flat_map(|host| {
+                ports
+                    .iter()
+                    .map(|(port, model)| (runner_key(host, *port), model))
+            })
+            .collect();
 
-        let stale: Vec<u16> = self
+        let stale: Vec<String> = self
             .runners
             .iter()
-            .filter(|(port, runner)| {
-                !desired.contains_key(port)
-                    || runner.bind_host != bind_host
+            .filter(|(id, runner)| {
+                !desired.contains_key(id.as_str())
                     || runner.cert != cert
                     || runner.key != key
             })
-            .map(|(port, _)| *port)
+            .map(|(id, _)| id.clone())
             .collect();
-        for port in stale {
-            if let Some(runner) = self.runners.remove(&port) {
+        for id in stale {
+            if let Some(runner) = self.runners.remove(&id) {
                 runner.handle.shutdown();
             }
         }
 
-        for (port, model) in ports {
-            if let Some(runner) = self.runners.get_mut(port) {
-                if let Ok(mut guard) = runner.model.lock() {
-                    *guard = model.clone();
+        let mut errors = Vec::new();
+        for host in &hosts {
+            for (port, model) in ports {
+                let id = runner_key(host, *port);
+                if let Some(runner) = self.runners.get_mut(&id) {
+                    if let Ok(mut guard) = runner.model.lock() {
+                        *guard = model.clone();
+                    }
+                    continue;
                 }
-                continue;
-            }
-            match self.spawn_listener(&bind_host, *port, model, &cert, &key) {
-                Ok(runner) => {
-                    self.runners.insert(*port, runner);
-                    self.last_error = None;
-                }
-                Err(error) => {
-                    self.last_error = Some(format!("share proxy :{port}: {error}"));
+                match self.spawn_listener(host, *port, model, &cert, &key) {
+                    Ok(runner) => {
+                        self.runners.insert(id, runner);
+                    }
+                    Err(error) => {
+                        errors.push(format!("{host}:{port}: {error}"));
+                    }
                 }
             }
         }
+        self.last_error = if errors.is_empty() {
+            None
+        } else {
+            Some(format!("share proxy bind failed — {}", errors.join("; ")))
+        };
     }
 
     fn spawn_listener(
@@ -349,6 +373,13 @@ impl ShareProxyManager {
         key: &PathBuf,
     ) -> Result<ProxyRunner, String> {
         let addr = resolve_bind_addr(bind_host, port)?;
+        // Fail fast if the address is unavailable (don't pretend the proxy is up).
+        {
+            let probe = std::net::TcpListener::bind(addr)
+                .map_err(|error| format!("cannot bind {addr}: {error}"))?;
+            drop(probe);
+        }
+
         let handle = axum_server::Handle::new();
         let serve_handle = handle.clone();
         let activity = Arc::clone(&self.activity);
@@ -359,13 +390,12 @@ impl ShareProxyManager {
         let key_path = key.clone();
         let cert_for_spawn = cert_path.clone();
         let key_for_spawn = key_path.clone();
-        let bind_host = bind_host.to_string();
 
         tokio::spawn(async move {
             let tls = match RustlsConfig::from_pem_file(&cert_for_spawn, &key_for_spawn).await {
                 Ok(config) => config,
                 Err(error) => {
-                    eprintln!("[share-proxy] TLS config :{port}: {error}");
+                    eprintln!("[share-proxy] TLS config {addr}: {error}");
                     return;
                 }
             };
@@ -388,7 +418,6 @@ impl ShareProxyManager {
         });
 
         Ok(ProxyRunner {
-            bind_host,
             cert: cert_path,
             key: key_path,
             model: model_arc,
