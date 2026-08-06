@@ -36,6 +36,13 @@ pub struct AgentRequest {
     pub agent: bool,
     #[serde(default)]
     pub skills: AgentSkills,
+    /// Forwarded to llama-server for reasoning / thinking models.
+    #[serde(default)]
+    pub chat_template_kwargs: Option<Value>,
+    #[serde(default)]
+    pub thinking_budget_tokens: Option<i64>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -57,11 +64,15 @@ struct ToolCall {
 }
 
 /// Run the agent loop on a background thread and stream SSE to the client.
-pub fn stream_agent(api_base: &str, mut request: AgentRequest) -> ChatStream {
+pub fn stream_agent(api_base: &str, api_key: Option<&str>, mut request: AgentRequest) -> ChatStream {
     let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
     let api_base = api_base.trim_end_matches('/').to_string();
+    let api_key = api_key
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string);
     thread::spawn(move || {
-        if let Err(error) = run_agent_loop(&api_base, &mut request, &tx) {
+        if let Err(error) = run_agent_loop(&api_base, api_key.as_deref(), &mut request, &tx) {
             let _ = tx.blocking_send(Ok(sse_error(&error)));
         }
     });
@@ -70,6 +81,7 @@ pub fn stream_agent(api_base: &str, mut request: AgentRequest) -> ChatStream {
 
 fn run_agent_loop(
     api_base: &str,
+    api_key: Option<&str>,
     request: &mut AgentRequest,
     tx: &mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
 ) -> Result<(), String> {
@@ -87,7 +99,7 @@ fn run_agent_loop(
 
         // Stream tokens live from llama-server. Tool-call rounds suppress the
         // XML once detected; final answers appear token-by-token in the UI.
-        let reply = stream_once(api_base, &request.messages, tx)?;
+        let reply = stream_once(api_base, api_key, request, tx)?;
         let visible = strip_think_blocks(&reply);
 
         if let Some(call) = extract_tool_call(&visible) {
@@ -189,15 +201,27 @@ fn agent_system_block(skills: &AgentSkills) -> String {
 /// `content_clear` agent event is sent so the UI does not keep tool XML.
 fn stream_once(
     api_base: &str,
-    messages: &[Value],
+    api_key: Option<&str>,
+    request: &AgentRequest,
     tx: &mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
 ) -> Result<String, String> {
     let url = format!("{api_base}/chat/completions");
-    let payload = json!({
+    let mut payload = json!({
         "model": "local",
         "stream": true,
-        "messages": messages,
+        "messages": request.messages,
     });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(kwargs) = &request.chat_template_kwargs {
+            object.insert("chat_template_kwargs".into(), kwargs.clone());
+        }
+        if let Some(budget) = request.thinking_budget_tokens {
+            object.insert("thinking_budget_tokens".into(), json!(budget));
+        }
+        if let Some(effort) = &request.reasoning_effort {
+            object.insert("reasoning_effort".into(), json!(effort));
+        }
+    }
 
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(REQUEST_TIMEOUT))
@@ -205,8 +229,11 @@ fn stream_once(
         .build()
         .new_agent();
 
-    let mut response = agent
-        .post(&url)
+    let mut request_builder = agent.post(&url);
+    if let Some(key) = api_key.map(str::trim).filter(|key| !key.is_empty()) {
+        request_builder = request_builder.header("Authorization", &format!("Bearer {key}"));
+    }
+    let mut response = request_builder
         .send_json(&payload)
         .map_err(|error| error.to_string())?;
 

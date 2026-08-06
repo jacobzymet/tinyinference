@@ -145,6 +145,10 @@ impl CommandSpec {
         args.push("--metrics".into());
         push_pair(&mut args, "--host", config.server.host.as_str());
         push_pair(&mut args, "--port", config.server.port.to_string());
+        let api_key = config.server.api_key.trim();
+        if !api_key.is_empty() && !has_extra_option(&config.server.extra_args, "--api-key") {
+            push_pair(&mut args, "--api-key", api_key);
+        }
         args.extend(config.server.extra_args.iter().map(OsString::from));
 
         Self {
@@ -220,6 +224,26 @@ pub struct ProbeResult {
     pub metrics_requested: bool,
     pub metrics: Option<ServerMetrics>,
     pub slots: Option<SlotsSnapshot>,
+}
+
+#[derive(Debug)]
+pub struct PendingThinkingProbe {
+    receiver: Receiver<Option<bool>>,
+}
+
+impl PendingThinkingProbe {
+    pub fn take(&self) -> Option<Option<bool>> {
+        self.receiver.try_recv().ok()
+    }
+}
+
+pub fn thinking_support_async(config: &Config) -> PendingThinkingProbe {
+    let (sender, receiver) = mpsc::channel();
+    let config = config.clone();
+    thread::spawn(move || {
+        let _ = sender.send(fetch_thinking_support(&config));
+    });
+    PendingThinkingProbe { receiver }
 }
 
 #[derive(Debug)]
@@ -382,6 +406,108 @@ pub fn endpoint_healthy(config: &Config) -> bool {
     http_get(config, "/health", Duration::from_millis(500)).is_some_and(|(status, _)| status == 200)
 }
 
+/// Whether the loaded model/template looks like it supports controllable thinking.
+///
+/// Uses llama-server `GET /props` (chat template / caps) with a model-name fallback.
+pub fn fetch_thinking_support(config: &Config) -> Option<bool> {
+    let (status, body) = http_get(config, "/props", Duration::from_secs(2))?;
+    if status != 200 {
+        return None;
+    }
+    let path = extract_props_model_path(&body).unwrap_or_default();
+    Some(
+        thinking_support_from_props(&body)
+            || model_name_suggests_thinking(&config.model_label())
+            || model_name_suggests_thinking(&path),
+    )
+}
+
+pub fn model_name_suggests_thinking(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if name.is_empty() {
+        return false;
+    }
+    [
+        "gpt-oss",
+        "qwen3",
+        "qwen2.5-thinking",
+        "qwq",
+        "deepseek-r1",
+        "deepseek-reasoner",
+        "reasoning",
+        "reasoner",
+        "thinking",
+        "hunyuan-t1",
+        "seed-oss",
+        "seed_oss",
+    ]
+    .iter()
+    .any(|needle| name.contains(needle))
+        || name.contains("/r1")
+        || name.contains("-r1-")
+        || name.contains("_r1_")
+}
+
+fn extract_props_model_path(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    value
+        .get("model_path")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+fn thinking_support_from_props(body: &str) -> bool {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(caps) = value.get("chat_template_caps").and_then(|v| v.as_object()) {
+            const FLAGS: &[&str] = &[
+                "supports_thinking",
+                "enable_thinking",
+                "supports_enable_thinking",
+                "supports_reasoning_effort",
+                "reasoning_budget",
+                "supports_preserve_reasoning",
+            ];
+            if FLAGS
+                .iter()
+                .any(|key| caps.get(*key).and_then(|v| v.as_bool()) == Some(true))
+            {
+                return true;
+            }
+        }
+        if let Some(template) = value.get("chat_template").and_then(|v| v.as_str()) {
+            if template_suggests_thinking(template) {
+                return true;
+            }
+        }
+    }
+    // Truncated or non-JSON body — still scan the raw payload.
+    template_suggests_thinking(body)
+}
+
+fn template_suggests_thinking(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("enable_thinking")
+        || lower.contains("reasoning_effort")
+        || lower.contains("<think>")
+        || lower.contains("</think>")
+        || lower.contains("reasoning_content")
+        || lower.contains("redacted_thinking")
+}
+
+#[cfg(test)]
+mod thinking_support_tests {
+    use super::model_name_suggests_thinking;
+
+    #[test]
+    fn recognises_common_reasoning_models() {
+        assert!(model_name_suggests_thinking("ggml-org/gpt-oss-120b-GGUF"));
+        assert!(model_name_suggests_thinking("Qwen/Qwen3-8B"));
+        assert!(model_name_suggests_thinking("deepseek-ai/DeepSeek-R1-Distill"));
+        assert!(!model_name_suggests_thinking("meta-llama/Llama-3.1-8B-Instruct"));
+        assert!(!model_name_suggests_thinking(""));
+    }
+}
+
 /// Timeout for task-queue endpoints (`/slots`, `/metrics`). These only answer
 /// between `llama_decode` steps, so short timeouts falsely look "offline".
 const TASK_QUEUE_HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -455,8 +581,17 @@ fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, Stri
     } else {
         format!("{host}:{port}")
     };
-    let request =
-        format!("GET {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n");
+    let auth_header = {
+        let key = config.server.api_key.trim();
+        if key.is_empty() {
+            String::new()
+        } else {
+            format!("Authorization: Bearer {key}\r\n")
+        }
+    };
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host_header}\r\n{auth_header}Connection: close\r\n\r\n"
+    );
     stream.write_all(request.as_bytes()).ok()?;
     let mut response = String::new();
     (&mut stream)

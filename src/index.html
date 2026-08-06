@@ -456,6 +456,73 @@
       align-items: center; gap: var(--space-xs); margin-bottom: var(--space-sm);
     }
     .stage-head h2 { font-size: var(--text-lg); }
+    .stage-head-title {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.55rem 0.75rem;
+      min-width: 0;
+    }
+    .autosave-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      letter-spacing: 0.03em;
+      color: var(--color-muted);
+      user-select: none;
+    }
+    .autosave-status .autosave-icon {
+      display: inline-grid;
+      place-items: center;
+      width: 1rem;
+      height: 1rem;
+      border-radius: 999px;
+      font-size: 0.65rem;
+      line-height: 1;
+      border: 1px solid var(--color-rule-2);
+      transition: background var(--dur-short) var(--ease-out),
+                  border-color var(--dur-short) var(--ease-out),
+                  color var(--dur-short) var(--ease-out),
+                  transform 180ms var(--ease-out);
+    }
+    .autosave-status.is-saving .autosave-icon {
+      border-color: var(--color-accent);
+      color: var(--color-accent);
+      animation: autosave-pulse 0.9s var(--ease-out) infinite;
+    }
+    .autosave-status.is-saved {
+      color: var(--color-ok);
+    }
+    .autosave-status.is-saved .autosave-icon {
+      border-color: color-mix(in oklch, var(--color-ok) 55%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-ok) 18%, transparent);
+      color: var(--color-ok);
+      transform: scale(1.08);
+    }
+    .autosave-status.is-error {
+      color: var(--color-danger);
+    }
+    .autosave-status.is-error .autosave-icon {
+      border-color: color-mix(in oklch, var(--color-danger) 55%, var(--color-rule));
+      color: var(--color-danger);
+    }
+    @keyframes autosave-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    .btn-text {
+      background: transparent;
+      border-color: transparent;
+      color: var(--color-muted);
+      padding-inline: 0.4rem;
+    }
+    .btn-text:hover {
+      color: var(--color-ink);
+      border-color: transparent;
+      background: transparent;
+    }
 
     .settings-grid {
       display: grid;
@@ -920,7 +987,7 @@
         <li><button type="button" class="is-active" data-stage="dashboard" role="tab" aria-selected="true">Dash</button></li>
         <li><button type="button" data-stage="models" role="tab" aria-selected="false">Models</button></li>
         <li><button type="button" data-stage="configure" role="tab" aria-selected="false">Config</button></li>
-        <li><button type="button" data-stage="network" role="tab" aria-selected="false">Network</button></li>
+        <li><button type="button" data-stage="network" role="tab" aria-selected="false">Network sharing</button></li>
         <li><button type="button" data-stage="logs" role="tab" aria-selected="false">Logs</button></li>
         <li><button type="button" data-stage="stats" role="tab" aria-selected="false">Stats</button></li>
       </ul>
@@ -942,6 +1009,7 @@
         <div class="toolbar-actions">
           <span id="statusBadge" class="status-chip status-stopped">stopped</span>
           <button type="button" id="btnRestart" class="btn btn-ghost">Restart</button>
+          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden">Start another</button>
           <button type="button" id="btnStartStop" class="btn btn-primary">Start</button>
         </div>
       </header>
@@ -949,6 +1017,10 @@
       <div class="workspace">
     <section id="dashboard" class="stage-panel reveal" data-stage-panel>
       <div class="stack">
+        <div id="runningServersBlock" class="panel stack-md is-hidden">
+          <div class="eyebrow">Running models</div>
+          <ul id="runningServersList" class="network-list"></ul>
+        </div>
         <div class="instrument">
           <div class="eyebrow">Live generation</div>
           <div id="genTpsLine" class="tps-value">—<span class="unit">tok/s</span></div>
@@ -992,7 +1064,6 @@
             </a>
             <button type="button" class="btn btn-ghost" id="btnCopyEndpoint">Copy /v1 URL</button>
             <button type="button" class="btn btn-ghost" id="btnCopyCommand">Copy command</button>
-            <button type="button" class="btn btn-primary" id="btnSaveDash">Save</button>
           </div>
           <div class="meta-block">
             <div id="machineLine">—</div>
@@ -1070,10 +1141,15 @@
 
     <section id="configure" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
-        <h2>Configure</h2>
+        <div class="stage-head-title">
+          <h2>Configure</h2>
+          <span id="autosaveStatus" class="autosave-status is-idle" aria-live="polite" title="Settings write to disk as you change them">
+            <span class="autosave-icon" aria-hidden="true">✓</span>
+            <span class="autosave-label">Autosaved</span>
+          </span>
+        </div>
         <div class="mast-actions">
-          <button type="button" class="btn btn-ghost" id="btnReset">Reset</button>
-          <button type="button" class="btn btn-primary" id="btnSave">Save</button>
+          <button type="button" class="btn btn-text" id="btnReset">Reset defaults</button>
         </div>
       </div>
       <div class="panel stack-md">
@@ -1090,7 +1166,7 @@
 
     <section id="network" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
-        <h2>Network</h2>
+        <h2>Network sharing</h2>
         <div class="mast-actions">
           <span id="networkStatusChip" class="status-chip status-stopped">local only</span>
         </div>
@@ -1100,22 +1176,40 @@
           <div class="eyebrow">This device</div>
           <div class="field-switch">
             <input type="checkbox" id="networkExposeToggle">
-            <label for="networkExposeToggle">Expose on LAN / Tailscale</label>
+            <label for="networkExposeToggle">Share LLM API</label>
           </div>
-          <p class="setting-hint">Shares the control panel and chat only. llama-server stays on loopback. Anyone with the URL and access token can chat and change settings.</p>
-          <div id="networkRestartBanner" class="preset-warning is-hidden" role="status">Restart tinyinference to apply the new listen address.</div>
+          <p class="setting-hint">Exposes only the OpenAI-compatible llama-server endpoint so other devices (or another tinyinference) can use your model. The control panel and chat stay private on this computer. Clients authenticate with the API key — there is no separate login on the LLM.</p>
+          <div id="networkScopeBlock" class="stack-md is-hidden">
+            <div>
+              <label class="field-label" for="networkListenScope">Who can reach this?</label>
+              <select class="field-select" id="networkListenScope">
+                <option value="all">Wi‑Fi / LAN and Tailscale — easiest</option>
+                <option value="tailscale">Tailscale only — more private</option>
+                <option value="custom">A specific address — advanced</option>
+              </select>
+              <p id="networkScopeHint" class="setting-hint"></p>
+              <p id="networkScopeDetail" class="setting-hint" style="font-family:var(--font-mono);font-size:var(--text-xs)"></p>
+            </div>
+            <div id="networkCustomHostBlock" class="is-hidden">
+              <label class="field-label" for="networkListenHost">Listen address</label>
+              <select class="field-select" id="networkListenHost"></select>
+              <p class="setting-hint">Choose one detected IP. The app will only accept connections on that address.</p>
+            </div>
+            <div id="networkBindError" class="preset-warning is-hidden" role="alert"></div>
+          </div>
+          <div id="networkRestartBanner" class="preset-warning is-hidden" role="status">Restart the model server to apply the new listen address or API key.</div>
           <div id="networkShareBlock" class="stack-md is-hidden">
             <div>
-              <div class="field-label">Access token</div>
+              <div class="field-label">API key</div>
               <div class="network-token-row">
                 <code id="networkTokenDisplay" class="network-mono">—</code>
                 <button type="button" class="btn btn-ghost" id="btnCopyToken">Copy</button>
                 <button type="button" class="btn btn-ghost" id="btnRegenToken">Regenerate</button>
               </div>
-              <p id="networkTokenHint" class="setting-hint">Token is shown once after enable or regenerate. Store it safely.</p>
+              <p id="networkTokenHint" class="setting-hint">Key is shown once after enable or regenerate. Clients send <code>Authorization: Bearer …</code>.</p>
             </div>
             <div>
-              <div class="field-label">Share links</div>
+              <div class="field-label">API base URLs</div>
               <ul id="networkShareList" class="network-list"></ul>
             </div>
           </div>
@@ -1123,20 +1217,20 @@
         </div>
 
         <div class="panel stack-md">
-          <div class="eyebrow">Linked device</div>
-          <p class="setting-hint">Run chat on this PC using another tinyinference instance’s model.</p>
+          <div class="eyebrow">Linked LLM</div>
+          <p class="setting-hint">Use your local chat UI against an OpenAI-compatible LLM hosted elsewhere (another tinyinference with Share LLM API, or any llama-server).</p>
           <div class="segmented" role="tablist" aria-label="Inference mode">
             <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
-            <button type="button" id="modeRemoteBtn" data-mode="remote">Linked device</button>
+            <button type="button" id="modeRemoteBtn" data-mode="remote">Linked LLM</button>
           </div>
           <div id="networkRemoteFields" class="stack-md is-hidden">
             <div>
-              <label class="field-label" for="networkRemoteBase">Remote URL</label>
-              <input class="field-input" id="networkRemoteBase" type="url" placeholder="http://100.x.x.x:3920" autocomplete="off" spellcheck="false">
+              <label class="field-label" for="networkRemoteBase">Remote API base</label>
+              <input class="field-input" id="networkRemoteBase" type="url" placeholder="http://100.x.x.x:8080/v1" autocomplete="off" spellcheck="false">
             </div>
             <div>
-              <label class="field-label" for="networkRemoteToken">Remote access token</label>
-              <input class="field-input" id="networkRemoteToken" type="password" placeholder="Bearer token from the other device" autocomplete="off" spellcheck="false">
+              <label class="field-label" for="networkRemoteToken">Remote API key</label>
+              <input class="field-input" id="networkRemoteToken" type="password" placeholder="API key from the host" autocomplete="off" spellcheck="false">
             </div>
             <div class="mast-actions" style="justify-content:flex-start">
               <button type="button" class="btn btn-primary" id="btnSaveRemoteLink">Link</button>
@@ -1146,7 +1240,7 @@
           <div>
             <div class="field-label">Discovered on LAN</div>
             <ul id="networkPeerList" class="network-list"></ul>
-            <p id="networkPeerEmpty" class="setting-hint">No peers yet. Both devices need to be on the same LAN with expose enabled (after restart).</p>
+            <p id="networkPeerEmpty" class="setting-hint">No peers yet. Hosts need Share LLM API on, model server running, and LAN reachability.</p>
           </div>
           <p id="networkError" class="text-error is-hidden"></p>
         </div>
@@ -1201,11 +1295,11 @@
 
   <div id="exposeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="exposeConfirmTitle">
     <div class="dialog">
-      <h2 id="exposeConfirmTitle">Expose on the network?</h2>
-      <p>There is no login. Anyone on the network who has the share URL and access token can open chat and control this server. llama-server itself stays on this machine’s loopback. You will need to restart tinyinference after enabling.</p>
+      <h2 id="exposeConfirmTitle">Share the LLM API?</h2>
+      <p>Only llama-server’s OpenAI-compatible endpoint is exposed — not the control panel or chat. Anyone who can reach the address and has the API key can call the model. Restart the model server after enabling to apply the bind and key.</p>
       <div class="dialog-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelExpose">Cancel</button>
-        <button type="button" class="btn btn-primary" id="btnConfirmExpose">Expose</button>
+        <button type="button" class="btn btn-primary" id="btnConfirmExpose">Continue</button>
       </div>
     </div>
   </div>
@@ -1269,6 +1363,9 @@
     let lastShareSignature = '';
     let lastPeerSignature = '';
     let settingsDirty = false;
+    let autosaveTimer = null;
+    let autosaveToken = 0;
+    let autosaveIdleTimer = null;
     let prompted = false;
     let activeStage = 'dashboard';
     let cmdkIndex = 0;
@@ -1427,10 +1524,10 @@
       }
       const chip = document.getElementById('networkStatusChip');
       if (next.listening_exposed) {
-        chip.textContent = 'exposed';
-        chip.className = 'status-chip status-ready';
+        chip.textContent = next.restart_required ? 'restart LLM' : 'LLM shared';
+        chip.className = next.restart_required ? 'status-chip status-starting' : 'status-chip status-ready';
       } else if (next.expose) {
-        chip.textContent = 'restart needed';
+        chip.textContent = next.restart_required ? 'restart LLM' : 'share on';
         chip.className = 'status-chip status-starting';
       } else {
         chip.textContent = 'local only';
@@ -1439,23 +1536,63 @@
 
       const toggle = document.getElementById('networkExposeToggle');
       toggle.checked = !!next.expose;
+      document.getElementById('networkScopeBlock').classList.toggle('is-hidden', !next.expose);
       document.getElementById('networkRestartBanner').classList.toggle('is-hidden', !next.restart_required);
       document.getElementById('networkShareBlock').classList.toggle('is-hidden', !next.expose);
-      document.getElementById('networkLlamaHint').textContent = next.llama_binds_loopback
-        ? 'Managed llama-server bind: loopback only.'
-        : 'Warning: llama-server host is not loopback — that is separate from this expose toggle.';
+      document.getElementById('networkLlamaHint').textContent = next.expose
+        ? (next.llama_endpoint
+          ? 'Managed llama-server will listen on ' + next.llama_endpoint + ' with the API key.'
+          : 'Managed llama-server will follow the share scope above.')
+        : 'Managed llama-server bind: loopback only. Control panel & chat always stay local.';
+
+      const scopeSelect = document.getElementById('networkListenScope');
+      if (document.activeElement !== scopeSelect) {
+        scopeSelect.value = next.listen_scope || 'all';
+      }
+      document.getElementById('networkScopeHint').textContent = next.listen_scope_hint || '';
+      document.getElementById('networkScopeDetail').textContent = next.listen_scope_detail || '';
+      const customBlock = document.getElementById('networkCustomHostBlock');
+      customBlock.classList.toggle('is-hidden', (next.listen_scope || 'all') !== 'custom');
+      const hostSelect = document.getElementById('networkListenHost');
+      const candidates = next.listen_candidates || [];
+      const hostSignature = JSON.stringify(candidates.map((c) => c.address)) + '|' + (next.listen_host || '');
+      if (hostSelect.dataset.signature !== hostSignature) {
+        hostSelect.dataset.signature = hostSignature;
+        if (candidates.length === 0) {
+          hostSelect.innerHTML = '<option value="">No addresses detected</option>';
+        } else {
+          hostSelect.innerHTML = candidates.map((c) =>
+            `<option value="${escapeHtml(c.address)}">${escapeHtml(c.label)}</option>`
+          ).join('');
+        }
+        if (next.listen_host && candidates.some((c) => c.address === next.listen_host)) {
+          hostSelect.value = next.listen_host;
+        } else if (candidates.length && document.activeElement !== hostSelect) {
+          // Prefer Tailscale in the advanced picker when available.
+          const preferred = candidates.find((c) => c.kind === 'tailscale') || candidates[0];
+          hostSelect.value = preferred.address;
+        }
+      }
+      const bindError = document.getElementById('networkBindError');
+      if (next.listen_bind_error) {
+        bindError.textContent = next.listen_bind_error;
+        bindError.classList.remove('is-hidden');
+      } else {
+        bindError.textContent = '';
+        bindError.classList.add('is-hidden');
+      }
 
       const tokenDisplay = document.getElementById('networkTokenDisplay');
       const tokenHint = document.getElementById('networkTokenHint');
       if (revealedToken) {
         tokenDisplay.textContent = revealedToken;
-        tokenHint.textContent = 'Copy this token now — it will be masked after reload.';
+        tokenHint.textContent = 'Copy this API key now — it will be masked after reload.';
       } else if (next.access_token_masked) {
         tokenDisplay.textContent = next.access_token_masked;
-        tokenHint.textContent = 'Token is masked. Regenerate if you need the full value again.';
+        tokenHint.textContent = 'API key is masked. Regenerate if you need the full value again.';
       } else {
         tokenDisplay.textContent = '—';
-        tokenHint.textContent = 'Token is created when expose is enabled.';
+        tokenHint.textContent = 'API key is created when sharing is enabled.';
       }
 
       const shareList = document.getElementById('networkShareList');
@@ -1463,16 +1600,18 @@
       if (shareSignature !== lastShareSignature) {
         lastShareSignature = shareSignature;
         if (!next.share_urls || next.share_urls.length === 0) {
-          shareList.innerHTML = '<li><div class="network-meta"><strong>No LAN / Tailscale address found</strong><span>Connect to a network or start Tailscale, then refresh.</span></div></li>';
+          const emptyMsg = (next.listen_scope === 'tailscale' && !next.tailscale_available)
+            ? '<li><div class="network-meta"><strong>No Tailscale IP found</strong><span>Start Tailscale on this computer, or choose “Wi‑Fi / LAN and Tailscale”.</span></div></li>'
+            : '<li><div class="network-meta"><strong>No shareable address found</strong><span>Connect to a network or start Tailscale, then refresh.</span></div></li>';
+          shareList.innerHTML = emptyMsg;
         } else {
           shareList.innerHTML = next.share_urls.map((item) => `
             <li>
               <div class="network-meta">
                 <strong>${escapeHtml(item.label)}</strong>
-                <span>${escapeHtml(item.chat)}</span>
+                <span>${escapeHtml(item.api_base)}</span>
               </div>
-              <button type="button" class="btn btn-ghost" data-copy="${escapeHtml(item.control)}">Copy control</button>
-              <button type="button" class="btn btn-ghost" data-copy="${escapeHtml(item.chat)}">Copy chat</button>
+              <button type="button" class="btn btn-ghost" data-copy="${escapeHtml(item.api_base)}">Copy API base</button>
             </li>`).join('');
         }
       }
@@ -1487,7 +1626,7 @@
       if (document.activeElement !== tokenInput && !tokenInput.value) {
         tokenInput.placeholder = next.remote_token_set
           ? ('saved · ' + (next.remote_token_masked || '••••'))
-          : 'Bearer token from the other device';
+          : 'API key from the host';
       }
 
       const health = document.getElementById('networkRemoteHealth');
@@ -1577,6 +1716,27 @@
       else el.innerHTML = text + '<span class="unit">tok/s</span>';
     }
 
+    function renderRunningServers(next) {
+      const block = document.getElementById('runningServersBlock');
+      const list = document.getElementById('runningServersList');
+      const servers = next.servers || [];
+      if (!servers.length) {
+        block.classList.add('is-hidden');
+        list.innerHTML = '';
+        return;
+      }
+      block.classList.remove('is-hidden');
+      list.innerHTML = servers.map((server) => `
+        <li class="${server.active ? 'is-active' : ''}">
+          <div class="network-meta">
+            <strong>${escapeHtml(server.model)}</strong>
+            <span>:${server.port} · ${escapeHtml(server.status_label)}${server.active ? ' · focused' : ''}</span>
+          </div>
+          <button type="button" class="btn btn-ghost" data-server-action="select" data-server-id="${escapeHtml(server.id)}" ${server.active ? 'disabled' : ''}>Focus</button>
+          <button type="button" class="btn btn-ghost" data-server-action="stop" data-server-id="${escapeHtml(server.id)}">Stop</button>
+        </li>`).join('');
+    }
+
     function applyState(next) {
       state = next;
       const badge = document.getElementById('statusBadge');
@@ -1589,12 +1749,21 @@
       document.getElementById('statusDetail').textContent = detail;
 
       const startStop = document.getElementById('btnStartStop');
+      const startAnother = document.getElementById('btnStartAnother');
+      const count = next.running_server_count || (next.running ? 1 : 0);
       startStop.textContent = next.running ? 'Stop' : 'Start';
       startStop.className = next.running ? 'btn btn-danger' : 'btn btn-primary';
+      startAnother.classList.toggle('is-hidden', count < 1);
+      startAnother.disabled = !next.has_active_model;
 
       document.getElementById('modelLabel').textContent = next.model;
       const toolbarModel = document.getElementById('toolbarModel');
-      if (toolbarModel) toolbarModel.textContent = next.model || '—';
+      if (toolbarModel) {
+        toolbarModel.textContent = count > 1
+          ? (next.model || '—') + ' · ' + count + ' running'
+          : (next.model || '—');
+      }
+      renderRunningServers(next);
       document.getElementById('storageLine').textContent =
         next.mapped_size.gib != null
           ? next.mapped_size.display + ' mapped from disk · does not need to fit in RAM'
@@ -1802,8 +1971,8 @@
         }
       }
       const startBtn = document.getElementById('btnStartFromModels');
-      startBtn.textContent = next.running ? 'Server running' : 'Start server';
-      startBtn.disabled = !!next.running || !hasModel;
+      startBtn.textContent = next.running ? 'Start another' : 'Start server';
+      startBtn.disabled = !hasModel;
     }
 
     function renderLibraryDownload(next) {
@@ -1982,8 +2151,8 @@
     function formatPresetDescription(text) {
       const escaped = escapeHtml(text);
       return escaped.replace(
-        /low-RAM machines or oversized LLMs relative to your hardware/g,
-        '<strong>low-RAM machines or oversized LLMs relative to your hardware</strong>'
+        /with enough RAM the working set stays cached at normal speed; otherwise as much as fits stays in RAM and the rest is read from disk/g,
+        '<strong>with enough RAM the working set stays cached at normal speed; otherwise as much as fits stays in RAM and the rest is read from disk</strong>'
       );
     }
 
@@ -2028,6 +2197,30 @@
         .replaceAll('"', '&quot;');
     }
 
+    function setAutosaveState(state) {
+      const el = document.getElementById('autosaveStatus');
+      if (!el) return;
+      const label = el.querySelector('.autosave-label');
+      const icon = el.querySelector('.autosave-icon');
+      el.classList.remove('is-idle', 'is-saving', 'is-saved', 'is-error');
+      el.classList.add('is-' + state);
+      clearTimeout(autosaveIdleTimer);
+      if (state === 'saving') {
+        icon.textContent = '·';
+        label.textContent = 'Saving…';
+      } else if (state === 'saved') {
+        icon.textContent = '✓';
+        label.textContent = 'Saved';
+        autosaveIdleTimer = setTimeout(() => setAutosaveState('idle'), 1400);
+      } else if (state === 'error') {
+        icon.textContent = '!';
+        label.textContent = 'Save failed';
+      } else {
+        icon.textContent = '✓';
+        label.textContent = 'Autosaved';
+      }
+    }
+
     function appendSettingControl(col, setting, options = {}) {
       const onDirty = options.onDirty || (() => { settingsDirty = true; });
       const onSettled = options.onSettled || (() => { settingsDirty = false; });
@@ -2038,7 +2231,10 @@
         select.id = 'setting-' + setting.id;
         select.innerHTML = '<option value="hugging_face">Hugging Face</option><option value="local">Local GGUF</option>';
         select.value = setting.raw;
-        select.addEventListener('change', () => updateSetting(setting.field, select.value, onError).finally(onSettled));
+        select.addEventListener('change', () => {
+          onDirty();
+          updateSetting(setting.field, select.value, onError).finally(onSettled);
+        });
         col.appendChild(select);
       } else if (setting.choices && setting.choices.length) {
         const select = document.createElement('select');
@@ -2049,7 +2245,10 @@
         ).join('');
         select.value = setting.raw;
         select.disabled = !setting.editable;
-        select.addEventListener('change', () => updateSetting(setting.field, select.value, onError).finally(onSettled));
+        select.addEventListener('change', () => {
+          onDirty();
+          updateSetting(setting.field, select.value, onError).finally(onSettled);
+        });
         col.appendChild(select);
       } else if (setting.toggle) {
         const wrap = document.createElement('div');
@@ -2058,7 +2257,20 @@
         input.type = 'checkbox';
         input.id = 'setting-' + setting.id;
         input.checked = setting.raw === 'true';
-        input.addEventListener('change', () => api('/api/settings/' + setting.field + '/toggle', { method: 'POST' }).then(applyState).catch(onError));
+        input.addEventListener('change', async () => {
+          onDirty();
+          setAutosaveState('saving');
+          const token = ++autosaveToken;
+          try {
+            applyState(await api('/api/settings/' + setting.field + '/toggle', { method: 'POST' }));
+            if (token === autosaveToken) setAutosaveState('saved');
+          } catch (error) {
+            if (token === autosaveToken) setAutosaveState('error');
+            onError(error);
+          } finally {
+            onSettled();
+          }
+        });
         const checkLabel = document.createElement('label');
         checkLabel.setAttribute('for', input.id);
         checkLabel.textContent = setting.value;
@@ -2071,9 +2283,19 @@
         input.id = 'setting-' + setting.id;
         input.value = setting.raw;
         input.disabled = !setting.editable;
-        input.addEventListener('input', onDirty);
+        input.addEventListener('input', () => {
+          if (!setting.editable) return;
+          onDirty();
+          setAutosaveState('saving');
+          clearTimeout(autosaveTimer);
+          autosaveTimer = setTimeout(() => {
+            updateSetting(setting.field, input.value, onError).finally(onSettled);
+          }, 320);
+        });
         input.addEventListener('change', () => {
           if (!setting.editable) return;
+          // Flush pending debounce immediately on blur/enter.
+          clearTimeout(autosaveTimer);
           updateSetting(setting.field, input.value, onError).finally(onSettled);
         });
         col.appendChild(input);
@@ -2204,6 +2426,8 @@
     }
 
     async function updateSetting(field, value, onError = showSettingsError) {
+      setAutosaveState('saving');
+      const token = ++autosaveToken;
       try {
         document.getElementById('settingsError').classList.add('is-hidden');
         clearModelsError();
@@ -2212,7 +2436,9 @@
           body: JSON.stringify({ field, value }),
         });
         applyState(next);
+        if (token === autosaveToken) setAutosaveState('saved');
       } catch (error) {
+        if (token === autosaveToken) setAutosaveState('error');
         onError(error);
       }
     }
@@ -2237,13 +2463,12 @@
         { label: 'Go to Dashboard', hint: '1', run: () => showStage('dashboard') },
         { label: 'Go to Models', hint: '2', run: () => showStage('models') },
         { label: 'Go to Configure', hint: '3', run: () => showStage('configure') },
-        { label: 'Go to Network', hint: '4', run: () => showStage('network') },
+        { label: 'Go to Network sharing', hint: '4', run: () => showStage('network') },
         { label: 'Go to Logs', hint: '5', run: () => showStage('logs') },
         { label: 'Go to Stats', hint: '6', run: () => showStage('stats') },
         { label: 'Add model', hint: '', run: () => { showStage('models'); addModelModal.show(); } },
         { label: state?.running ? 'Stop llama-server' : 'Start llama-server', hint: 'S', run: () => document.getElementById('btnStartStop').click() },
         { label: 'Restart llama-server', hint: 'R', run: () => document.getElementById('btnRestart').click() },
-        { label: 'Save config', hint: '⌘S', run: () => document.getElementById('btnSaveDash').click() },
         { label: 'Copy /v1 URL', hint: '', run: () => document.getElementById('btnCopyEndpoint').click() },
         { label: 'Copy launch command', hint: '', run: () => document.getElementById('btnCopyCommand').click() },
         { label: 'Copy all logs', hint: '', run: () => document.getElementById('btnCopyLogs').click() },
@@ -2291,33 +2516,72 @@
     });
 
     document.getElementById('btnStartStop').addEventListener('click', async () => {
-      applyState(await api(state?.running ? '/api/stop' : '/api/start', { method: 'POST' }));
+      if (state?.running) {
+        applyState(await api('/api/stop', {
+          method: 'POST',
+          body: JSON.stringify({ id: state.active_server_id || 'main' }),
+        }));
+      } else {
+        applyState(await api('/api/start', { method: 'POST' }));
+      }
+    });
+    document.getElementById('btnStartAnother').addEventListener('click', async () => {
+      applyState(await api('/api/start', { method: 'POST' }));
     });
     document.getElementById('btnRestart').addEventListener('click', async () => {
-      applyState(await api('/api/restart', { method: 'POST' }));
+      applyState(await api('/api/restart', {
+        method: 'POST',
+        body: JSON.stringify({ id: state?.active_server_id || 'main' }),
+      }));
+    });
+    document.getElementById('runningServersList').addEventListener('click', async (event) => {
+      const btn = event.target.closest('[data-server-action]');
+      if (!btn) return;
+      const id = btn.getAttribute('data-server-id');
+      const action = btn.getAttribute('data-server-action');
+      try {
+        if (action === 'select') {
+          applyState(await api('/api/servers/select', {
+            method: 'POST',
+            body: JSON.stringify({ id }),
+          }));
+        } else if (action === 'stop') {
+          applyState(await api('/api/stop', {
+            method: 'POST',
+            body: JSON.stringify({ id }),
+          }));
+        }
+      } catch (error) {
+        document.getElementById('statusDetail').textContent = error.message || String(error);
+      }
     });
     document.getElementById('btnReset').addEventListener('click', async () => {
       settingsDirty = false;
-      applyState(await api('/api/reset', { method: 'POST' }));
+      setAutosaveState('saving');
+      const token = ++autosaveToken;
+      try {
+        applyState(await api('/api/reset', { method: 'POST' }));
+        if (token === autosaveToken) setAutosaveState('saved');
+      } catch (error) {
+        if (token === autosaveToken) setAutosaveState('error');
+        showSettingsError(error);
+      }
     });
     document.getElementById('runtimePreset').addEventListener('change', async (event) => {
       const preset = event.target.value;
       updatePresetWarning(state?.presets || [], preset);
       if (!preset) return;
       settingsDirty = false;
+      setAutosaveState('saving');
+      const token = ++autosaveToken;
       try {
         document.getElementById('settingsError').classList.add('is-hidden');
         applyState(await api('/api/presets/' + preset, { method: 'POST' }));
+        if (token === autosaveToken) setAutosaveState('saved');
       } catch (error) {
+        if (token === autosaveToken) setAutosaveState('error');
         showSettingsError(error);
       }
-    });
-    document.getElementById('btnSave').addEventListener('click', async () => {
-      settingsDirty = false;
-      applyState(await api('/api/save', { method: 'POST' }));
-    });
-    document.getElementById('btnSaveDash').addEventListener('click', async () => {
-      applyState(await api('/api/save', { method: 'POST' }));
     });
     document.getElementById('btnAddModel').addEventListener('click', () => addModelModal.show());
     document.getElementById('btnAddModelEmpty').addEventListener('click', () => addModelModal.show());
@@ -2326,7 +2590,7 @@
       addModelModal.show(prefill === 'No model selected' ? '' : prefill);
     });
     document.getElementById('btnStartFromModels').addEventListener('click', async () => {
-      if (state?.running || !state?.has_active_model) return;
+      if (!state?.has_active_model) return;
       try {
         clearModelsError();
         applyState(await api('/api/start', { method: 'POST' }));
@@ -2472,10 +2736,6 @@
           return;
         }
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-        event.preventDefault();
-        document.getElementById('btnSaveDash').click();
-      }
     });
 
     // The chat mark spins continuously — it is the live sign of the surface it
@@ -2508,11 +2768,31 @@
     });
     document.getElementById('btnConfirmExpose').addEventListener('click', async () => {
       try {
-        await postNetwork({ expose: true });
+        await postNetwork({ expose: true, listen_scope: 'all' });
         exposeModal.hide();
       } catch (error) {
         showNetworkError(error);
       }
+    });
+    document.getElementById('networkListenScope').addEventListener('change', (event) => {
+      const listen_scope = event.target.value;
+      const body = { listen_scope };
+      if (listen_scope === 'custom') {
+        let host = document.getElementById('networkListenHost').value.trim();
+        if (!host && networkState?.listen_candidates?.length) {
+          const preferred = networkState.listen_candidates.find((c) => c.kind === 'tailscale')
+            || networkState.listen_candidates[0];
+          host = preferred.address;
+        }
+        if (host) body.listen_host = host;
+      }
+      postNetwork(body).catch(showNetworkError);
+    });
+    document.getElementById('networkListenHost').addEventListener('change', (event) => {
+      postNetwork({
+        listen_scope: 'custom',
+        listen_host: event.target.value.trim(),
+      }).catch(showNetworkError);
     });
     document.getElementById('networkShareList').addEventListener('click', (event) => {
       const btn = event.target.closest('[data-copy]');

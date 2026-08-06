@@ -42,10 +42,76 @@ impl InferenceMode {
     }
 }
 
+/// Where managed llama-server should listen when LLM sharing is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ListenScope {
+    /// All IPv4 interfaces (`0.0.0.0`) — LAN + Tailscale + others.
+    #[default]
+    All,
+    /// First Tailscale CGNAT address only (`100.64/10`).
+    Tailscale,
+    /// Explicit host/IP in [`NetworkConfig::listen_host`].
+    Custom,
+}
+
+impl ListenScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Tailscale => "tailscale",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "all" | "lan" | "any" => Some(Self::All),
+            "tailscale" | "ts" => Some(Self::Tailscale),
+            "custom" | "host" | "address" => Some(Self::Custom),
+            _ => None,
+        }
+    }
+
+    pub fn novice_label(self) -> &'static str {
+        match self {
+            Self::All => "Wi‑Fi / LAN and Tailscale",
+            Self::Tailscale => "Tailscale only",
+            Self::Custom => "A specific address",
+        }
+    }
+
+    pub fn novice_hint(self) -> &'static str {
+        match self {
+            Self::All => {
+                "Easiest option. Other machines on your home/office network or Tailscale can call this computer’s OpenAI-compatible API (with the API key)."
+            }
+            Self::Tailscale => {
+                "More private. Only devices on your Tailscale network can reach the LLM API — not random devices on café Wi‑Fi. Tailscale must be running."
+            }
+            Self::Custom => {
+                "Advanced: bind llama-server to one IP you choose (for example a single LAN or Tailscale address)."
+            }
+        }
+    }
+
+    pub fn technical_detail(self) -> &'static str {
+        match self {
+            Self::All => "Listens on 0.0.0.0 (all interfaces).",
+            Self::Tailscale => "Listens on your Tailscale IP (100.x) only.",
+            Self::Custom => "Listens on the address you select below.",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct NetworkConfig {
     pub expose: bool,
+    /// Used when [`Self::expose`] is true.
+    pub listen_scope: ListenScope,
+    /// Host/IP for [`ListenScope::Custom`] (and remembered Tailscale pin if set).
+    pub listen_host: String,
     pub access_token: String,
     pub inference_mode: InferenceMode,
     pub remote_base: String,
@@ -57,6 +123,8 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             expose: false,
+            listen_scope: ListenScope::All,
+            listen_host: String::new(),
             access_token: String::new(),
             inference_mode: InferenceMode::Local,
             remote_base: String::new(),
@@ -88,17 +156,101 @@ impl NetworkConfig {
         sanitize_instance_name(&default_hostname())
     }
 
+    /// Control-panel `/api` stays local; auth for shared LLMs is llama `--api-key`.
     pub fn inbound_auth_required(&self) -> bool {
-        self.expose && !self.access_token.trim().is_empty()
+        false
     }
 
+    /// Host string llama-server should bind to (without port).
+    pub fn resolve_listen_host(&self) -> Result<String, String> {
+        if !self.expose {
+            return Ok("127.0.0.1".into());
+        }
+        match self.listen_scope {
+            ListenScope::All => Ok("0.0.0.0".into()),
+            ListenScope::Tailscale => {
+                let (_, ts) = shareable_ipv4_addrs();
+                ts.first()
+                    .map(|ip| ip.to_string())
+                    .ok_or_else(|| {
+                        "Tailscale only is selected, but no Tailscale IP (100.x) was found. Start Tailscale, or choose Wi‑Fi / LAN and Tailscale.".into()
+                    })
+            }
+            ListenScope::Custom => {
+                let host = self.listen_host.trim();
+                if host.is_empty() {
+                    return Err(
+                        "Pick a specific address to listen on, or choose another sharing option."
+                            .into(),
+                    );
+                }
+                if host.parse::<IpAddr>().is_err()
+                    && host != "localhost"
+                    && !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':')
+                {
+                    return Err(format!("Listen address looks invalid: {host}"));
+                }
+                Ok(host.to_string())
+            }
+        }
+    }
+
+    pub fn should_advertise_mdns(&self) -> bool {
+        // mDNS is a LAN discovery tool; only advertise when we actually listen for LAN.
+        self.expose && self.listen_scope == ListenScope::All
+    }
+
+    /// OpenAI-compatible chat completions URL on a linked LLM (`…/v1/chat/completions`).
     pub fn remote_chat_url(&self) -> Option<String> {
-        let base = self.remote_base.trim().trim_end_matches('/');
-        if base.is_empty() || self.inference_mode != InferenceMode::Remote {
+        let base = self.normalize_remote_base()?;
+        if self.inference_mode != InferenceMode::Remote {
             return None;
         }
-        Some(format!("{base}/api/chat/completions"))
+        Some(format!("{base}/chat/completions"))
     }
+
+    /// Normalize a remote OpenAI base to `http://host:port/v1` (no trailing slash).
+    pub fn normalize_remote_base(&self) -> Option<String> {
+        let mut base = self.remote_base.trim().trim_end_matches('/').to_string();
+        if base.is_empty() {
+            return None;
+        }
+        if !base.contains("://") {
+            base = format!("http://{base}");
+        }
+        // Accept pasted roots without `/v1`.
+        if !base.ends_with("/v1") {
+            base = format!("{base}/v1");
+        }
+        Some(base)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListenCandidate {
+    pub kind: &'static str,
+    pub address: String,
+    pub label: String,
+}
+
+pub fn listen_candidates() -> Vec<ListenCandidate> {
+    let (lan, ts) = shareable_ipv4_addrs();
+    let mut out = Vec::new();
+    for ip in ts {
+        out.push(ListenCandidate {
+            kind: "tailscale",
+            address: ip.to_string(),
+            label: format!("Tailscale · {ip}"),
+        });
+    }
+    for ip in lan {
+        out.push(ListenCandidate {
+            kind: "lan",
+            address: ip.to_string(),
+            label: format!("LAN · {ip}"),
+        });
+    }
+    out
 }
 
 pub fn generate_access_token() -> String {
@@ -186,50 +338,47 @@ pub fn is_tailscale_cg_nat(ip: Ipv4Addr) -> bool {
 pub struct ShareUrl {
     pub kind: &'static str,
     pub label: String,
-    pub control: String,
-    pub chat: String,
+    /// OpenAI-compatible API base, e.g. `http://192.168.1.10:8080/v1`.
+    pub api_base: String,
 }
 
 pub fn lan_share_urls(port: u16, token: &str) -> Vec<ShareUrl> {
     let (lan, _) = shareable_ipv4_addrs();
     lan.into_iter()
-        .map(|ip| share_url("lan", format!("LAN ({ip})"), ip, port, token))
+        .map(|ip| share_url_for("lan", format!("LAN ({ip})"), ip, port, token))
         .collect()
 }
 
 pub fn tailscale_urls(port: u16, token: &str) -> Vec<ShareUrl> {
     let (_, ts) = shareable_ipv4_addrs();
     ts.into_iter()
-        .map(|ip| share_url("tailscale", format!("Tailscale ({ip})"), ip, port, token))
+        .map(|ip| share_url_for("tailscale", format!("Tailscale ({ip})"), ip, port, token))
         .collect()
 }
 
-fn share_url(kind: &'static str, label: String, ip: Ipv4Addr, port: u16, token: &str) -> ShareUrl {
-    let authority = format!("{ip}:{port}");
-    let token_q = if token.is_empty() {
-        String::new()
-    } else {
-        format!("?token={}", urlencoding_minimal(token))
-    };
+pub fn share_url_for(
+    kind: &'static str,
+    label: String,
+    ip: Ipv4Addr,
+    port: u16,
+    token: &str,
+) -> ShareUrl {
+    share_url_host(kind, label, &ip.to_string(), port, token)
+}
+
+pub fn share_url_host(
+    kind: &'static str,
+    label: String,
+    host: &str,
+    port: u16,
+    _token: &str,
+) -> ShareUrl {
+    let authority = format!("{host}:{port}");
     ShareUrl {
         kind,
         label,
-        control: format!("http://{authority}/{token_q}"),
-        chat: format!("http://{authority}/chat{token_q}"),
+        api_base: format!("http://{authority}/v1"),
     }
-}
-
-fn urlencoding_minimal(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 pub fn extract_request_token(headers: &axum::http::HeaderMap) -> Option<String> {
@@ -394,7 +543,7 @@ impl NetworkDiscovery {
 
         let instance = sanitize_instance_name(device_name);
         let host_name = format!("{ip}.local.");
-        let properties = [("path", "/"), ("ver", "1")];
+        let properties = [("path", "/v1"), ("ver", "1")];
         let Ok(service) = ServiceInfo::new(
             SERVICE_TYPE,
             &instance,
@@ -449,7 +598,7 @@ fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer>
         name: short_name,
         host: host.clone(),
         port,
-        base_url: format!("http://{host}:{port}"),
+        base_url: format!("http://{host}:{port}/v1"),
         fullname: info.fullname.clone(),
     })
 }
@@ -497,7 +646,7 @@ impl HealthCache {
 }
 
 fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
-    let base = base.trim().trim_end_matches('/');
+    let mut base = base.trim().trim_end_matches('/').to_string();
     if base.is_empty() {
         return RemoteHealth {
             ok: false,
@@ -506,7 +655,13 @@ fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
             error: Some("No remote URL configured".into()),
         };
     }
-    let url = format!("{base}/api/state");
+    if !base.contains("://") {
+        base = format!("http://{base}");
+    }
+    if !base.ends_with("/v1") {
+        base = format!("{base}/v1");
+    }
+    let url = format!("{base}/models");
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(2)))
         .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
@@ -527,19 +682,21 @@ fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
                 };
             }
             match response.body_mut().read_json::<serde_json::Value>() {
-                Ok(body) => RemoteHealth {
-                    ok: true,
-                    model: body
-                        .get("model")
+                Ok(body) => {
+                    let model = body
+                        .get("data")
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|m| m.get("id"))
                         .and_then(|v| v.as_str())
-                        .map(str::to_string),
-                    status: body
-                        .get("status_label")
-                        .or_else(|| body.get("status"))
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string),
-                    error: None,
-                },
+                        .map(str::to_string);
+                    RemoteHealth {
+                        ok: true,
+                        model,
+                        status: Some("ready".into()),
+                        error: None,
+                    }
+                }
                 Err(error) => RemoteHealth {
                     ok: false,
                     model: None,
@@ -578,5 +735,20 @@ mod tests {
         let masked = mask_token(&token);
         assert!(masked.contains('…'));
         assert!(!masked.contains(&token));
+    }
+
+    #[test]
+    fn listen_scope_resolves_all_and_custom() {
+        let mut cfg = NetworkConfig::default();
+        cfg.expose = true;
+        cfg.listen_scope = ListenScope::All;
+        assert_eq!(cfg.resolve_listen_host().unwrap(), "0.0.0.0");
+
+        cfg.listen_scope = ListenScope::Custom;
+        cfg.listen_host = "10.0.0.8".into();
+        assert_eq!(cfg.resolve_listen_host().unwrap(), "10.0.0.8");
+
+        cfg.expose = false;
+        assert_eq!(cfg.resolve_listen_host().unwrap(), "127.0.0.1");
     }
 }

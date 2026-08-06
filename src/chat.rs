@@ -23,9 +23,17 @@ pub type ChatStream = ReceiverStream<Result<Vec<u8>, std::io::Error>>;
 /// they arrive. Upstream failures are turned into an `event: error` SSE frame
 /// instead of failing the HTTP response, since headers are already committed
 /// by the time a mid-stream error can happen.
-pub fn stream_completion(api_base: &str, mut payload: serde_json::Value) -> ChatStream {
+pub fn stream_completion(
+    api_base: &str,
+    api_key: Option<&str>,
+    mut payload: serde_json::Value,
+) -> ChatStream {
     let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
     let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+    let auth = api_key
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(|key| format!("Bearer {key}"));
     thread::spawn(move || {
         if let Some(object) = payload.as_object_mut() {
             object.insert("stream".into(), serde_json::json!(true));
@@ -33,28 +41,35 @@ pub fn stream_completion(api_base: &str, mut payload: serde_json::Value) -> Chat
                 .entry("model")
                 .or_insert_with(|| serde_json::json!("local"));
         }
-        proxy_sse_post(&url, None, &payload, &tx, "llama-server");
+        proxy_sse_post(&url, auth.as_deref(), &payload, &tx, "llama-server");
     });
     ReceiverStream::new(rx)
 }
 
-/// Proxy a chat/agent request to another tinyinference instance's
-/// `/api/chat/completions` endpoint (keeps the peer's agent loop authoritative).
+/// Proxy a chat request to a remote OpenAI-compatible `/v1/chat/completions` endpoint.
 pub fn stream_remote_completion(
     remote_url: &str,
     token: &str,
-    payload: serde_json::Value,
+    mut payload: serde_json::Value,
 ) -> ChatStream {
     let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
     let url = remote_url.to_string();
     let token = token.trim().to_string();
     thread::spawn(move || {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("stream".into(), serde_json::json!(true));
+            object.remove("agent");
+            object.remove("skills");
+            object
+                .entry("model")
+                .or_insert_with(|| serde_json::json!("local"));
+        }
         let auth = if token.is_empty() {
             None
         } else {
             Some(format!("Bearer {token}"))
         };
-        proxy_sse_post(&url, auth.as_deref(), &payload, &tx, "remote tinyinference");
+        proxy_sse_post(&url, auth.as_deref(), &payload, &tx, "remote LLM");
     });
     ReceiverStream::new(rx)
 }

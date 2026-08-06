@@ -18,12 +18,15 @@ use tokio::net::TcpListener;
 
 use crate::{
     agent::{self, AgentRequest},
-    app::{App, Download, LibraryFetch, NetworkUpdate, ServerStatus, SettingField},
+    app::{
+        App, Download, LibraryFetch, NetworkUpdate, PRIMARY_SERVER_ID, ServerStatus, ServerSummary,
+        SettingField,
+    },
     chat,
     config::RuntimePreset,
     network::{
-        DiscoveredPeer, InferenceMode, RemoteHealth, ShareUrl, extract_request_token,
-        is_loopback_addr, mask_token, token_matches,
+        DiscoveredPeer, InferenceMode, ListenCandidate, RemoteHealth, ShareUrl,
+        extract_request_token, is_loopback_addr, mask_token, token_matches,
     },
     server::ServerProcess,
 };
@@ -53,6 +56,7 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/start", post(start))
         .route("/api/stop", post(stop))
         .route("/api/restart", post(restart))
+        .route("/api/servers/select", post(select_server))
         .route("/api/save", post(save))
         .route("/api/reset", post(reset))
         .route("/api/presets/{preset}", post(apply_preset))
@@ -190,8 +194,13 @@ async fn ui_mark() -> impl IntoResponse {
 
 async fn chat_completions(
     State(app): State<SharedApp>,
-    Json(body): Json<serde_json::Value>,
+    Json(mut body): Json<serde_json::Value>,
 ) -> Result<Response, ApiError> {
+    let server_id = body
+        .as_object_mut()
+        .and_then(|obj| obj.remove("server_id"))
+        .and_then(|v| v.as_str().map(str::to_string));
+
     let remote = {
         let app = app.lock().map_err(|_| ApiError::lock())?;
         let network = &app.config.network;
@@ -208,18 +217,32 @@ async fn chat_completions(
     };
 
     let stream = if let Some((url, token)) = remote {
-        // Peer runs agent + local llama; forward the request as-is.
+        // Linked OpenAI-compatible LLM; agent skills stay on this machine only.
         chat::stream_remote_completion(&url, &token, body)
     } else {
-        let api_base = {
+        let (api_base, api_key) = {
             let app = app.lock().map_err(|_| ApiError::lock())?;
-            if app.status != ServerStatus::Ready {
+            let id = server_id
+                .as_deref()
+                .unwrap_or(app.active_server_id.as_str());
+            let Some(lookup) = app.server_by_id(id) else {
                 return Err(ApiError::bad_request(
-                    "The model server is not ready. Start it from the dashboard first.".into(),
+                    "The selected model server is not running. Start it from the dashboard first."
+                        .into(),
+                ));
+            };
+            if !lookup.ready {
+                return Err(ApiError::bad_request(
+                    "The selected model server is not ready yet.".into(),
                 ));
             }
-            app.displayed_config().api_endpoint()
+            (
+                lookup.config.api_endpoint(),
+                lookup.config.server.api_key.clone(),
+            )
         };
+        let key_owned = api_key;
+        let api_key = (!key_owned.trim().is_empty()).then_some(key_owned.as_str());
 
         // Agent mode runs a tool loop server-side; plain chat still streams through.
         // Strip tinyinference-only fields before proxying to llama-server.
@@ -228,7 +251,7 @@ async fn chat_completions(
                 if request.messages.is_empty() {
                     return Err(ApiError::bad_request("messages must not be empty".into()));
                 }
-                agent::stream_agent(&api_base, request)
+                agent::stream_agent(&api_base, api_key, request)
             }
             _ => {
                 let mut upstream = body;
@@ -236,7 +259,7 @@ async fn chat_completions(
                     object.remove("agent");
                     object.remove("skills");
                 }
-                chat::stream_completion(&api_base, upstream)
+                chat::stream_completion(&api_base, api_key, upstream)
             }
         }
     };
@@ -280,12 +303,40 @@ async fn start(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError>
     with_app(app, |app| app.start())
 }
 
-async fn stop(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
-    with_app(app, |app| app.stop())
+#[derive(Debug, Default, Deserialize)]
+struct ServerIdBody {
+    id: Option<String>,
 }
 
-async fn restart(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
-    with_app(app, |app| app.restart())
+async fn stop(
+    State(app): State<SharedApp>,
+    body: Option<Json<ServerIdBody>>,
+) -> Result<Json<AppState>, ApiError> {
+    let id = body.and_then(|Json(b)| b.id);
+    with_app(app, |app| app.stop_server(id.as_deref()))
+}
+
+async fn restart(
+    State(app): State<SharedApp>,
+    body: Option<Json<ServerIdBody>>,
+) -> Result<Json<AppState>, ApiError> {
+    let id = body.and_then(|Json(b)| b.id);
+    with_app(app, move |app| {
+        if let Some(id) = id.as_deref() {
+            let _ = app.select_server(id);
+        }
+        app.restart();
+    })
+}
+
+async fn select_server(
+    State(app): State<SharedApp>,
+    Json(body): Json<ServerIdBody>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let id = body.id.as_deref().unwrap_or(PRIMARY_SERVER_ID);
+    app.select_server(id).map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
 }
 
 async fn save(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
@@ -517,6 +568,7 @@ struct AppState {
     status_detail: String,
     running: bool,
     endpoint_online: bool,
+    thinking_supported: bool,
     pending_changes: bool,
     missing_server: bool,
     model: String,
@@ -541,6 +593,9 @@ struct AppState {
     active_preset: Option<&'static str>,
     logs: Vec<String>,
     network: NetworkSummary,
+    servers: Vec<ServerSummary>,
+    active_server_id: String,
+    running_server_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -562,6 +617,15 @@ struct NetworkState {
     expose: bool,
     listening_exposed: bool,
     restart_required: bool,
+    listen_scope: &'static str,
+    listen_scope_label: &'static str,
+    listen_scope_hint: &'static str,
+    listen_scope_detail: &'static str,
+    listen_host: String,
+    listen_bind_host: Option<String>,
+    listen_bind_error: Option<String>,
+    listen_candidates: Vec<ListenCandidate>,
+    tailscale_available: bool,
     access_token_set: bool,
     access_token_masked: String,
     device_name: String,
@@ -573,6 +637,7 @@ struct NetworkState {
     peers: Vec<DiscoveredPeer>,
     remote_health: Option<RemoteHealth>,
     llama_binds_loopback: bool,
+    llama_endpoint: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -588,10 +653,23 @@ impl NetworkState {
         let network = &app.config.network;
         let host = app.config.effective_host();
         let llama_loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+        let scope = network.listen_scope;
+        let candidates = app.listen_candidates();
+        let tailscale_available = candidates.iter().any(|c| c.kind == "tailscale");
+        let listen_bind_host = network.resolve_listen_host().ok();
         Self {
             expose: network.expose,
             listening_exposed: app.listening_exposed(),
             restart_required: app.network_restart_required(),
+            listen_scope: scope.as_str(),
+            listen_scope_label: scope.novice_label(),
+            listen_scope_hint: scope.novice_hint(),
+            listen_scope_detail: scope.technical_detail(),
+            listen_host: network.listen_host.clone(),
+            listen_bind_host,
+            listen_bind_error: app.listen_bind_error(),
+            listen_candidates: candidates,
+            tailscale_available,
             access_token_set: !network.access_token.trim().is_empty(),
             access_token_masked: mask_token(&network.access_token),
             device_name: network.resolved_device_name(),
@@ -603,6 +681,15 @@ impl NetworkState {
             peers: app.discovered_peers(),
             remote_health: app.remote_health(),
             llama_binds_loopback: llama_loopback,
+            llama_endpoint: if network.expose {
+                Some(format!(
+                    "{}:{}",
+                    app.config.effective_host(),
+                    app.config.effective_port()
+                ))
+            } else {
+                None
+            },
         }
     }
 }
@@ -786,7 +873,12 @@ impl AppState {
             .collect();
         let active_preset = app.active_runtime_preset().map(RuntimePreset::id);
         let mapped_size = MappedSizeState::from_app(app);
-        let server_running = app.process.is_some();
+        let server_running = app.running_server_count() > 0;
+        let servers = app.server_summaries();
+        let active_extra = app
+            .extra_servers
+            .iter()
+            .find(|s| s.id == app.active_server_id);
         let fetch_repo = app
             .library_fetch
             .as_ref()
@@ -866,12 +958,80 @@ impl AppState {
             .collect();
         let recent_models = library.clone();
 
+        let (
+            status,
+            status_label,
+            endpoint_online,
+            pid,
+            process,
+            metrics,
+            download_state,
+        ) = if let Some(extra) = active_extra {
+            (
+                extra.status,
+                extra.status.label(),
+                extra.endpoint_online,
+                extra.process.as_ref().map(ServerProcess::id),
+                extra.process_usage.as_ref().map(|usage| ProcessState {
+                    cpu_percent: usage.cpu_percent,
+                    resident_memory_gib: usage.resident_memory_gib,
+                    virtual_memory_gib: usage.virtual_memory_gib,
+                    uptime_seconds: usage.uptime_seconds,
+                }),
+                extra.server_metrics.as_ref().map(|metrics| MetricsState {
+                    prompt_tokens: metrics.prompt_tokens,
+                    generated_tokens: metrics.generated_tokens,
+                    prompt_tokens_per_second: metrics.prompt_tokens_per_second,
+                    generated_tokens_per_second: metrics.generated_tokens_per_second,
+                    requests_processing: metrics.requests_processing,
+                    requests_deferred: metrics.requests_deferred,
+                }),
+                extra
+                    .download
+                    .as_ref()
+                    .filter(|d| d.is_active())
+                    .map(DownloadState::from_download),
+            )
+        } else {
+            (
+                app.status,
+                app.status.label(),
+                app.endpoint_online,
+                app.process.as_ref().map(ServerProcess::id),
+                app.process_usage.as_ref().map(|usage| ProcessState {
+                    cpu_percent: usage.cpu_percent,
+                    resident_memory_gib: usage.resident_memory_gib,
+                    virtual_memory_gib: usage.virtual_memory_gib,
+                    uptime_seconds: usage.uptime_seconds,
+                }),
+                app.server_metrics.as_ref().map(|metrics| MetricsState {
+                    prompt_tokens: metrics.prompt_tokens,
+                    generated_tokens: metrics.generated_tokens,
+                    prompt_tokens_per_second: metrics.prompt_tokens_per_second,
+                    generated_tokens_per_second: metrics.generated_tokens_per_second,
+                    requests_processing: metrics.requests_processing,
+                    requests_deferred: metrics.requests_deferred,
+                }),
+                download.or_else(|| {
+                    app.library_fetch
+                        .as_ref()
+                        .filter(|fetch| fetch.is_active())
+                        .map(DownloadState::from_library_fetch)
+                }),
+            )
+        };
+
         Self {
-            status: app.status,
-            status_label: app.status.label(),
-            status_detail: app.status_detail.clone(),
-            running: app.process.is_some(),
-            endpoint_online: app.endpoint_online,
+            status,
+            status_label,
+            status_detail: if let Some(extra) = active_extra {
+                extra.status_detail.clone()
+            } else {
+                app.status_detail.clone()
+            },
+            running: server_running,
+            endpoint_online,
+            thinking_supported: app.thinking_supported(),
             pending_changes: app.has_pending_changes(),
             missing_server: app.should_prompt_for_server(),
             model: config.model_label(),
@@ -879,7 +1039,7 @@ impl AppState {
             api_endpoint: config.api_endpoint(),
             command: crate::server::CommandSpec::from_config(config).display(),
             config_path: app.config_path.display().to_string(),
-            pid: app.process.as_ref().map(ServerProcess::id),
+            pid,
             machine: MachineState {
                 cpu_name: app.machine.cpu_name.clone(),
                 logical_cpus: app.machine.logical_cpus,
@@ -890,27 +1050,10 @@ impl AppState {
                 access_summary: access_summary(config),
             },
             mapped_size,
-            download: download.or_else(|| {
-                app.library_fetch
-                    .as_ref()
-                    .filter(|fetch| fetch.is_active())
-                    .map(DownloadState::from_library_fetch)
-            }),
+            download: download_state,
             library_download,
-            process: app.process_usage.as_ref().map(|usage| ProcessState {
-                cpu_percent: usage.cpu_percent,
-                resident_memory_gib: usage.resident_memory_gib,
-                virtual_memory_gib: usage.virtual_memory_gib,
-                uptime_seconds: usage.uptime_seconds,
-            }),
-            metrics: app.server_metrics.as_ref().map(|metrics| MetricsState {
-                prompt_tokens: metrics.prompt_tokens,
-                generated_tokens: metrics.generated_tokens,
-                prompt_tokens_per_second: metrics.prompt_tokens_per_second,
-                generated_tokens_per_second: metrics.generated_tokens_per_second,
-                requests_processing: metrics.requests_processing,
-                requests_deferred: metrics.requests_deferred,
-            }),
+            process,
+            metrics,
             recent_models,
             library,
             available,
@@ -921,6 +1064,9 @@ impl AppState {
             active_preset,
             logs: app.logs.iter().cloned().collect(),
             network: NetworkSummary::from_app(app),
+            servers,
+            active_server_id: app.active_server_id.clone(),
+            running_server_count: app.running_server_count(),
         }
     }
 }

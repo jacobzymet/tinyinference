@@ -66,6 +66,8 @@ pub struct ServerConfig {
     pub executable: PathBuf,
     pub host: String,
     pub port: u16,
+    /// Passed to llama-server as `--api-key` when non-empty (OpenAI Bearer).
+    pub api_key: String,
     pub extra_args: Vec<String>,
 }
 
@@ -119,6 +121,7 @@ impl Default for ServerConfig {
             executable: PathBuf::from("llama-server"),
             host: "127.0.0.1".into(),
             port: 8080,
+            api_key: String::new(),
             extra_args: Vec::new(),
         }
     }
@@ -188,7 +191,7 @@ impl RuntimePreset {
     pub fn description(self) -> &'static str {
         match self {
             Self::LowRam => {
-                "Designed for low-RAM machines or oversized LLMs relative to your hardware. CPU-only + mmap; weights stay file-backed, no GPU offload."
+                "Max RAM efficiency for low-RAM machines or oversized models. CPU-only + mmap: with enough RAM the working set stays cached at normal speed; otherwise as much as fits stays in RAM and the rest is read from disk. No GPU offload."
             }
             Self::GpuFit => {
                 "Discrete GPU only: auto-fit into VRAM; leftover layers stay on CPU + mmap."
@@ -299,8 +302,8 @@ impl Config {
 
     /// Resolve the UI listen address before the web server starts.
     ///
-    /// Priority: `--bind` CLI flag, then `TINYINFERENCE_BIND`, then
-    /// `[network].expose` → `0.0.0.0:port`, then `[ui]` in the config file.
+    /// Priority: `--bind` CLI flag, then `TINYINFERENCE_BIND`, then `[ui]`.
+    /// The control panel and chat stay local; Network sharing exposes llama-server only.
     pub fn resolve_ui_bind(cli_bind: Option<SocketAddr>, config: &Self) -> Result<SocketAddr> {
         Self::resolve_ui_bind_with_env(cli_bind, std::env::var("TINYINFERENCE_BIND").ok(), config)
     }
@@ -320,18 +323,48 @@ impl Config {
                     .with_context(|| format!("invalid TINYINFERENCE_BIND value: {raw}"));
             }
         }
-        if config.network.expose {
-            return parse_ui_addr("0.0.0.0", config.ui.port);
-        }
-        config.ui_addr()
+        config.desired_ui_bind()
     }
 
-    /// Desired UI bind after applying expose (ignores CLI/env overrides).
+    /// Desired UI bind from config (ignores CLI/env overrides). Always the local UI.
     pub fn desired_ui_bind(&self) -> Result<SocketAddr> {
+        parse_ui_addr(&self.ui.host, self.ui.port)
+    }
+
+    /// Keep the control panel on loopback. Network sharing binds llama-server instead.
+    pub fn keep_ui_private(&mut self) {
+        let host = self.ui.host.trim();
+        if host != DEFAULT_UI_HOST && host != "localhost" && host != "::1" {
+            self.ui.host = DEFAULT_UI_HOST.into();
+        }
+    }
+
+    /// Apply Network sharing listen scope to the managed llama-server bind + API key.
+    pub fn sync_llama_bind_from_network(&mut self) {
+        match self.network.resolve_listen_host() {
+            Ok(host) => {
+                self.server.host = host;
+                if self.network.expose {
+                    self.server.api_key = self.network.access_token.clone();
+                } else {
+                    self.server.api_key.clear();
+                }
+            }
+            Err(_) if !self.network.expose => {
+                self.server.host = "127.0.0.1".into();
+                self.server.api_key.clear();
+            }
+            Err(_) => {
+                // Keep previous llama host; UI surfaces the listen error.
+            }
+        }
+    }
+
+    /// Older builds exposed the UI; migrate those configs to expose llama instead.
+    pub fn migrate_network_expose_to_llama(&mut self) {
+        self.keep_ui_private();
         if self.network.expose {
-            parse_ui_addr("0.0.0.0", self.ui.port)
-        } else {
-            self.ui_addr()
+            self.sync_llama_bind_from_network();
         }
     }
 
@@ -782,19 +815,36 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ui_bind_exposes_all_interfaces_when_enabled() {
+    fn resolve_ui_bind_stays_loopback_when_network_expose_enabled() {
         let mut config = Config::default();
         config.ui.port = 3920;
         config.network.expose = true;
+        config.network.listen_scope = crate::network::ListenScope::All;
         assert_eq!(
             Config::resolve_ui_bind_with_env(None, None, &config).unwrap(),
-            "0.0.0.0:3920".parse().unwrap()
+            "127.0.0.1:3920".parse().unwrap()
         );
-        let cli = "127.0.0.1:3920".parse().unwrap();
+        let cli = "127.0.0.1:3921".parse().unwrap();
         assert_eq!(
             Config::resolve_ui_bind_with_env(Some(cli), None, &config).unwrap(),
             cli
         );
+    }
+
+    #[test]
+    fn sync_llama_bind_follows_network_scope() {
+        let mut config = Config::default();
+        config.network.expose = true;
+        config.network.listen_scope = crate::network::ListenScope::Custom;
+        config.network.listen_host = "192.168.1.50".into();
+        config.network.access_token = "secret-token".into();
+        config.sync_llama_bind_from_network();
+        assert_eq!(config.server.host, "192.168.1.50");
+        assert_eq!(config.server.api_key, "secret-token");
+        config.network.expose = false;
+        config.sync_llama_bind_from_network();
+        assert_eq!(config.server.host, "127.0.0.1");
+        assert!(config.server.api_key.is_empty());
     }
 
     #[test]

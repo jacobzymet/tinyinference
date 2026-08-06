@@ -14,21 +14,29 @@ use crate::{
     },
     fetch::{self, FetchEvent},
     hub,
+    instance::ManagedServer,
     network::{
-        self, DiscoveredPeer, HealthCache, InferenceMode, NetworkDiscovery, RemoteHealth, ShareUrl,
+        self, DiscoveredPeer, HealthCache, InferenceMode, ListenCandidate, ListenScope,
+        NetworkDiscovery, RemoteHealth, ShareUrl,
     },
     server::{
-        CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
-        SlotsSnapshot, parse_log_throughput, probe_async,
+        CommandSpec, PendingProbe, PendingThinkingProbe, ProbeResult, ServerEvent, ServerMetrics,
+        ServerProcess, SlotsSnapshot, model_name_suggests_thinking, parse_log_throughput,
+        probe_async, thinking_support_async,
     },
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
 };
+
+/// Id used for the primary (first) managed llama-server slot.
+pub const PRIMARY_SERVER_ID: &str = "main";
 
 const MAX_LOG_LINES: usize = 2_000;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct NetworkUpdate {
     pub expose: Option<bool>,
+    pub listen_scope: Option<String>,
+    pub listen_host: Option<String>,
     pub regenerate_token: Option<bool>,
     pub inference_mode: Option<String>,
     pub remote_base: Option<String>,
@@ -40,6 +48,29 @@ pub struct NetworkUpdate {
 pub struct NetworkUpdateResult {
     pub restart_required: bool,
     pub access_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ServerSummary {
+    pub id: String,
+    pub model: String,
+    pub status: ServerStatus,
+    pub status_label: &'static str,
+    pub endpoint: String,
+    pub api_endpoint: String,
+    pub port: u16,
+    pub ready: bool,
+    pub pid: Option<u32>,
+    pub thinking_supported: bool,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerLookup<'a> {
+    pub id: &'a str,
+    pub config: &'a Config,
+    pub ready: bool,
+    pub thinking_supported: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,7 +200,7 @@ impl Download {
     }
 
     /// Re-read the cache, and the listing if it has arrived.
-    fn poll(&mut self) {
+    pub(crate) fn poll(&mut self) {
         if self.last_poll.elapsed() < POLL_INTERVAL {
             return;
         }
@@ -596,6 +627,15 @@ pub struct App {
     listen_addr: Option<SocketAddr>,
     discovery: NetworkDiscovery,
     remote_health: HealthCache,
+    /// Whether the loaded model supports controllable thinking / reasoning effort.
+    thinking_supported: Option<bool>,
+    thinking_probe_for: Option<String>,
+    pending_thinking_probe: Option<PendingThinkingProbe>,
+    /// Additional llama-server processes beyond the primary slot (`process`).
+    pub extra_servers: Vec<ManagedServer>,
+    /// Chat / dashboard focus: [`PRIMARY_SERVER_ID`] or an extra server id.
+    pub active_server_id: String,
+    next_server_seq: u64,
 }
 
 impl App {
@@ -615,6 +655,7 @@ impl App {
                 config.server.executable.display()
             )
         };
+        config.migrate_network_expose_to_llama();
         let mut app = Self {
             config,
             config_path,
@@ -642,12 +683,18 @@ impl App {
             listen_addr: None,
             discovery: NetworkDiscovery::new(),
             remote_health: HealthCache::default(),
+            thinking_supported: None,
+            thinking_probe_for: None,
+            pending_thinking_probe: None,
             last_throughput_at: None,
             discovered_models: Vec::new(),
             pending_discover: Some(cache::discover_models_async()),
             last_discover: Instant::now(),
             library_fetch: None,
             focus_hook: None,
+            extra_servers: Vec::new(),
+            active_server_id: PRIMARY_SERVER_ID.into(),
+            next_server_seq: 1,
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -685,32 +732,38 @@ impl App {
         self.listen_addr
     }
 
+    /// True when Network sharing is on and llama is bound beyond loopback.
     pub fn listening_exposed(&self) -> bool {
-        self.listen_addr
-            .is_some_and(|addr| !addr.ip().is_loopback())
+        if !self.config.network.expose {
+            return false;
+        }
+        let host = self.config.effective_host();
+        !(host == "127.0.0.1" || host == "localhost" || host == "::1")
     }
 
+    /// Running llama needs a restart to pick up a new share bind / API key.
     pub fn network_restart_required(&self) -> bool {
-        match self.config.desired_ui_bind() {
-            Ok(desired) => self.listen_addr.is_some_and(|bound| {
-                let desired_exposed = !desired.ip().is_loopback();
-                let bound_exposed = !bound.ip().is_loopback();
-                desired_exposed != bound_exposed || desired.port() != bound.port()
-            }),
-            Err(_) => false,
+        let Some(running) = &self.running_config else {
+            return false;
+        };
+        if !self.config.network.expose {
+            let host = running.effective_host();
+            let still_shared = host != "127.0.0.1" && host != "localhost" && host != "::1";
+            return still_shared || !running.server.api_key.trim().is_empty();
         }
+        let Ok(desired_host) = self.config.network.resolve_listen_host() else {
+            return true;
+        };
+        let desired_key = self.config.network.access_token.trim();
+        running.effective_host() != desired_host || running.server.api_key.trim() != desired_key
     }
 
     pub fn sync_mdns_advertise(&self) {
-        // Advertise only when config wants expose AND we are actually listening
-        // on a non-loopback address (post-restart).
-        let expose = self.config.network.expose && self.listening_exposed();
-        let port = self
-            .listen_addr
-            .map(|addr| addr.port())
-            .unwrap_or(self.config.ui.port);
+        // Advertise the LLM port on LAN when sharing is on and llama is reachable.
+        let advertise = self.config.network.should_advertise_mdns() && self.listening_exposed();
+        let port = self.config.effective_port();
         self.discovery.sync_advertise(
-            expose,
+            advertise,
             &self.config.network.resolved_device_name(),
             port,
         );
@@ -718,10 +771,7 @@ impl App {
 
     pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
         let self_name = self.config.network.resolved_device_name();
-        let port = self
-            .listen_addr
-            .map(|a| a.port())
-            .unwrap_or(self.config.ui.port);
+        let port = self.config.effective_port();
         self.discovery
             .discovered_peers()
             .into_iter()
@@ -730,11 +780,72 @@ impl App {
     }
 
     pub fn network_share_urls(&self) -> Vec<ShareUrl> {
-        let port = self.config.ui.port;
         let token = self.config.network.access_token.as_str();
-        let mut urls = network::lan_share_urls(port, token);
-        urls.extend(network::tailscale_urls(port, token));
+        let network = &self.config.network;
+        if !network.expose {
+            return Vec::new();
+        }
+        let mut ports: Vec<u16> = self
+            .server_summaries()
+            .into_iter()
+            .filter(|s| s.ready || s.status == ServerStatus::Starting || s.status == ServerStatus::Downloading)
+            .map(|s| s.port)
+            .collect();
+        if ports.is_empty() {
+            ports.push(self.config.effective_port());
+        }
+        ports.sort_unstable();
+        ports.dedup();
+
+        let mut urls = Vec::new();
+        for port in ports {
+            match network.listen_scope {
+                ListenScope::All => {
+                    urls.extend(network::lan_share_urls(port, token));
+                    urls.extend(network::tailscale_urls(port, token));
+                }
+                ListenScope::Tailscale => urls.extend(network::tailscale_urls(port, token)),
+                ListenScope::Custom => {
+                    let host = network.listen_host.trim();
+                    if host.is_empty() {
+                        continue;
+                    }
+                    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+                        let kind = if network::is_tailscale_cg_nat(ip) {
+                            "tailscale"
+                        } else {
+                            "custom"
+                        };
+                        let label = if kind == "tailscale" {
+                            format!("Tailscale ({ip})")
+                        } else {
+                            format!("Custom ({ip})")
+                        };
+                        urls.push(network::share_url_for(kind, label, ip, port, token));
+                    } else {
+                        urls.push(network::share_url_host(
+                            "custom",
+                            format!("Custom ({host})"),
+                            host,
+                            port,
+                            token,
+                        ));
+                    }
+                }
+            }
+        }
         urls
+    }
+
+    pub fn listen_candidates(&self) -> Vec<ListenCandidate> {
+        network::listen_candidates()
+    }
+
+    pub fn listen_bind_error(&self) -> Option<String> {
+        if !self.config.network.expose {
+            return None;
+        }
+        self.config.network.resolve_listen_host().err()
     }
 
     pub fn remote_health(&self) -> Option<RemoteHealth> {
@@ -762,21 +873,36 @@ impl App {
         &mut self,
         update: NetworkUpdate,
     ) -> Result<NetworkUpdateResult, String> {
-        let mut restart_required = false;
         let mut token_revealed: Option<String> = None;
 
         if let Some(expose) = update.expose {
-            if expose != self.config.network.expose {
-                self.config.network.expose = expose;
-                if expose {
-                    self.config.ui.host = "0.0.0.0".into();
-                    if self.config.network.ensure_token() {
-                        token_revealed = Some(self.config.network.access_token.clone());
-                    }
-                } else {
-                    self.config.ui.host = crate::config::DEFAULT_UI_HOST.into();
+            self.config.network.expose = expose;
+            if expose {
+                if self.config.network.ensure_token() {
+                    token_revealed = Some(self.config.network.access_token.clone());
                 }
-                restart_required = true;
+            }
+        }
+
+        if let Some(scope) = update.listen_scope.as_deref() {
+            let Some(parsed) = ListenScope::parse(scope) else {
+                return Err(
+                    "listen_scope must be \"all\", \"tailscale\", or \"custom\"".into(),
+                );
+            };
+            self.config.network.listen_scope = parsed;
+        }
+
+        if let Some(host) = update.listen_host {
+            self.config.network.listen_host = host.trim().to_string();
+        }
+
+        // Validate the chosen scope can resolve before persisting a bad Tailscale-only setup
+        // as the only option — still allow saving so the UI can show the error + fix path.
+        if self.config.network.expose {
+            if let Err(error) = self.config.network.resolve_listen_host() {
+                // Soft: keep config, surface error via listen_bind_error in API state.
+                self.push_log(format!("network listen warning: {error}"));
             }
         }
 
@@ -793,7 +919,12 @@ impl App {
         }
 
         if let Some(base) = update.remote_base {
-            self.config.network.remote_base = base.trim().trim_end_matches('/').to_string();
+            let trimmed = base.trim().trim_end_matches('/').to_string();
+            self.config.network.remote_base = trimmed;
+            // Normalize pasted roots to …/v1 when possible.
+            if let Some(normalized) = self.config.network.normalize_remote_base() {
+                self.config.network.remote_base = normalized;
+            }
         }
 
         if let Some(token) = update.remote_token {
@@ -804,30 +935,160 @@ impl App {
             self.config.network.device_name = name.trim().to_string();
         }
 
+        self.config.keep_ui_private();
+        self.config.sync_llama_bind_from_network();
         self.config
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
         self.sync_mdns_advertise();
+        let restart_required = self.network_restart_required();
         self.push_log(format!(
-            "network updated (expose={}, mode={})",
+            "network updated (expose={}, scope={}, mode={}, llama={}:{})",
             self.config.network.expose,
-            self.config.network.inference_mode.as_str()
+            self.config.network.listen_scope.as_str(),
+            self.config.network.inference_mode.as_str(),
+            self.config.effective_host(),
+            self.config.effective_port()
         ));
 
         Ok(NetworkUpdateResult {
-            restart_required: restart_required || self.network_restart_required(),
+            restart_required,
             access_token: token_revealed,
         })
     }
 
     pub fn displayed_config(&self) -> &Config {
+        if self.active_server_id != PRIMARY_SERVER_ID
+            && let Some(extra) = self.extra_servers.iter().find(|s| s.id == self.active_server_id)
+        {
+            return &extra.running_config;
+        }
         self.running_config.as_ref().unwrap_or(&self.config)
     }
 
     pub fn has_pending_changes(&self) -> bool {
+        if self.active_server_id != PRIMARY_SERVER_ID {
+            return self
+                .extra_servers
+                .iter()
+                .find(|s| s.id == self.active_server_id)
+                .is_some_and(|s| s.running_config != self.config);
+        }
         self.running_config
             .as_ref()
             .is_some_and(|running| running != &self.config)
+    }
+
+    pub fn used_ports(&self) -> Vec<u16> {
+        let mut ports = Vec::new();
+        if let Some(running) = &self.running_config {
+            ports.push(running.effective_port());
+        }
+        for server in &self.extra_servers {
+            if server.is_running() {
+                ports.push(server.port());
+            }
+        }
+        ports
+    }
+
+    pub fn allocate_port(&self) -> u16 {
+        let used = self.used_ports();
+        let mut port = self.config.server.port.max(1);
+        while used.contains(&port) {
+            port = port.saturating_add(1);
+            if port == 0 {
+                port = 8080;
+            }
+        }
+        port
+    }
+
+    pub fn select_server(&mut self, id: &str) -> Result<(), String> {
+        if id == PRIMARY_SERVER_ID {
+            self.active_server_id = PRIMARY_SERVER_ID.into();
+            return Ok(());
+        }
+        if self.extra_servers.iter().any(|s| s.id == id) {
+            self.active_server_id = id.to_string();
+            Ok(())
+        } else {
+            Err(format!("Unknown server id: {id}"))
+        }
+    }
+
+    pub fn running_server_count(&self) -> usize {
+        let primary = usize::from(self.process.is_some());
+        primary
+            + self
+                .extra_servers
+                .iter()
+                .filter(|s| s.is_running())
+                .count()
+    }
+
+    /// Snapshot of every managed llama-server (primary + extras) for UI/API.
+    pub fn server_summaries(&self) -> Vec<ServerSummary> {
+        let mut out = Vec::new();
+        if self.process.is_some() || self.running_config.is_some() {
+            let config = self.running_config.as_ref().unwrap_or(&self.config);
+            out.push(ServerSummary {
+                id: PRIMARY_SERVER_ID.into(),
+                model: config.model_label(),
+                status: self.status,
+                status_label: self.status.label(),
+                endpoint: config.endpoint(),
+                api_endpoint: config.api_endpoint(),
+                port: config.effective_port(),
+                ready: self.status == ServerStatus::Ready && self.endpoint_online,
+                pid: self.process.as_ref().map(ServerProcess::id),
+                thinking_supported: self.thinking_supported.unwrap_or_else(|| {
+                    model_name_suggests_thinking(&config.model_label())
+                }),
+                active: self.active_server_id == PRIMARY_SERVER_ID,
+            });
+        }
+        for server in &self.extra_servers {
+            if !server.is_running() && server.status == ServerStatus::Stopped {
+                continue;
+            }
+            out.push(ServerSummary {
+                id: server.id.clone(),
+                model: server.model_label(),
+                status: server.status,
+                status_label: server.status.label(),
+                endpoint: server.running_config.endpoint(),
+                api_endpoint: server.running_config.api_endpoint(),
+                port: server.port(),
+                ready: server.status == ServerStatus::Ready && server.endpoint_online,
+                pid: server.process.as_ref().map(ServerProcess::id),
+                thinking_supported: server.thinking_supported_flag(),
+                active: self.active_server_id == server.id,
+            });
+        }
+        out
+    }
+
+    pub fn server_by_id(&self, id: &str) -> Option<ServerLookup<'_>> {
+        if id == PRIMARY_SERVER_ID {
+            let config = self.running_config.as_ref()?;
+            return Some(ServerLookup {
+                id: PRIMARY_SERVER_ID,
+                config,
+                ready: self.process.is_some()
+                    && self.status == ServerStatus::Ready
+                    && self.endpoint_online,
+                thinking_supported: self.thinking_supported.unwrap_or_else(|| {
+                    model_name_suggests_thinking(&config.model_label())
+                }),
+            });
+        }
+        self.extra_servers.iter().find(|s| s.id == id).map(|s| ServerLookup {
+            id: s.id.as_str(),
+            config: &s.running_config,
+            ready: s.status == ServerStatus::Ready && s.endpoint_online,
+            thinking_supported: s.thinking_supported_flag(),
+        })
     }
 
     pub fn should_prompt_for_server(&self) -> bool {
@@ -1066,6 +1327,7 @@ impl App {
                 self.process_usage = None;
                 self.server_metrics = None;
                 self.clear_live_throughput();
+                self.clear_thinking_support();
                 self.probe = None;
                 self.status = if status.success() {
                     ServerStatus::Stopped
@@ -1111,6 +1373,7 @@ impl App {
                 }
                 self.last_probe = Instant::now();
             }
+            self.poll_thinking_support();
         }
 
         if self.process.is_some() && self.last_stats_refresh.elapsed() >= Duration::from_secs(1) {
@@ -1120,6 +1383,34 @@ impl App {
         }
 
         self.expire_stale_throughput();
+
+        // Additional concurrent llama-server instances.
+        let mut extra_logs = Vec::new();
+        for server in &mut self.extra_servers {
+            extra_logs.extend(server.tick());
+        }
+        for line in extra_logs {
+            self.observe_startup_line(&line);
+            self.push_log(line);
+        }
+        self.extra_servers
+            .retain(|s| s.is_running() || s.status == ServerStatus::Failed);
+        if self.active_server_id != PRIMARY_SERVER_ID
+            && !self
+                .extra_servers
+                .iter()
+                .any(|s| s.id == self.active_server_id)
+        {
+            self.active_server_id = if self.process.is_some() {
+                PRIMARY_SERVER_ID.into()
+            } else {
+                self.extra_servers
+                    .iter()
+                    .find(|s| s.is_running())
+                    .map(|s| s.id.clone())
+                    .unwrap_or_else(|| PRIMARY_SERVER_ID.into())
+            };
+        }
     }
 
     fn apply_probe_result(&mut self, result: ProbeResult) {
@@ -1140,10 +1431,73 @@ impl App {
             if let Some(config) = &self.running_config {
                 self.status_detail = format!("Listening at {}", config.endpoint());
             }
+            self.ensure_thinking_probe();
         } else if self.status != ServerStatus::Downloading {
             // Process is still up; a timed-out task-queue probe is not a restart.
             self.status = ServerStatus::Starting;
         }
+    }
+
+    fn clear_thinking_support(&mut self) {
+        self.thinking_supported = None;
+        self.thinking_probe_for = None;
+        self.pending_thinking_probe = None;
+    }
+
+    fn ensure_thinking_probe(&mut self) {
+        let label = self.displayed_config().model_label();
+        if self.thinking_probe_for.as_deref() == Some(label.as_str())
+            && (self.thinking_supported.is_some() || self.pending_thinking_probe.is_some())
+        {
+            return;
+        }
+        self.thinking_supported = None;
+        self.thinking_probe_for = Some(label);
+        if let Some(config) = self.running_config.clone() {
+            self.pending_thinking_probe = Some(thinking_support_async(&config));
+        }
+    }
+
+    fn poll_thinking_support(&mut self) {
+        if let Some(result) = self
+            .pending_thinking_probe
+            .as_ref()
+            .and_then(PendingThinkingProbe::take)
+        {
+            self.pending_thinking_probe = None;
+            self.thinking_supported = Some(result.unwrap_or_else(|| {
+                model_name_suggests_thinking(&self.displayed_config().model_label())
+            }));
+        } else if self.status == ServerStatus::Ready {
+            self.ensure_thinking_probe();
+        }
+    }
+
+    pub fn thinking_supported(&self) -> bool {
+        if self.config.network.inference_mode == crate::network::InferenceMode::Remote {
+            let remote = self.config.network.remote_base.trim();
+            if remote.is_empty() {
+                return false;
+            }
+            if let Some(health) = self.remote_health_cached() {
+                if let Some(model) = health.model.as_deref() {
+                    return model_name_suggests_thinking(model);
+                }
+            }
+            // Until the peer is probed, don't show the control.
+            return false;
+        }
+        if self.active_server_id != PRIMARY_SERVER_ID
+            && let Some(extra) = self
+                .extra_servers
+                .iter()
+                .find(|s| s.id == self.active_server_id)
+        {
+            return extra.thinking_supported_flag();
+        }
+        self.thinking_supported.unwrap_or_else(|| {
+            model_name_suggests_thinking(&self.displayed_config().model_label())
+        })
     }
 
     fn clear_live_throughput(&mut self) {
@@ -1260,37 +1614,59 @@ impl App {
     }
 
     pub fn start(&mut self) {
-        if self.process.is_some() {
-            return;
-        }
         if let Err(errors) = self.validate_for_launch() {
             self.status = ServerStatus::Failed;
             self.status_detail = errors.clone();
             self.push_log(format!("[start blocked] {errors}"));
             return;
         }
-        let launch_config = self.config.clone();
+        self.config.keep_ui_private();
+        self.config.sync_llama_bind_from_network();
+        let mut launch_config = self.config.clone();
+        // Additional instances get the next free port; primary keeps the configured port.
+        if self.process.is_some() {
+            launch_config.server.port = self.allocate_port();
+        } else if self.used_ports().contains(&launch_config.effective_port()) {
+            launch_config.server.port = self.allocate_port();
+        }
         let display = CommandSpec::from_config(&launch_config).display();
         self.push_log(format!("$ {display}"));
         match ServerProcess::start(&launch_config) {
             Ok(process) => {
                 let pid = process.id();
-                self.download = watch_download(&launch_config);
-                self.process = Some(process);
-                self.running_config = Some(launch_config);
-                if self.active_download().is_some() {
-                    self.status = ServerStatus::Downloading;
-                    self.status_detail = "Fetching the model from Hugging Face".into();
-                    self.push_log("model is not in the local cache; downloading".into());
+                let download = watch_download(&launch_config);
+                if self.process.is_none() {
+                    self.download = download;
+                    self.process = Some(process);
+                    self.running_config = Some(launch_config);
+                    self.active_server_id = PRIMARY_SERVER_ID.into();
+                    if self.active_download().is_some() {
+                        self.status = ServerStatus::Downloading;
+                        self.status_detail = "Fetching the model from Hugging Face".into();
+                        self.push_log("model is not in the local cache; downloading".into());
+                    } else {
+                        self.status = ServerStatus::Starting;
+                        self.status_detail = format!("Waking llama-server (PID {pid})");
+                        self.push_log(self.status_detail.clone());
+                    }
+                    self.endpoint_online = false;
+                    self.probe = None;
+                    self.last_probe = Instant::now() - Duration::from_secs(2);
+                    self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
                 } else {
-                    self.status = ServerStatus::Starting;
-                    self.status_detail = format!("Waking llama-server (PID {pid})");
-                    self.push_log(self.status_detail.clone());
+                    self.next_server_seq += 1;
+                    let id = format!("srv-{}", self.next_server_seq);
+                    let port = launch_config.effective_port();
+                    let server = ManagedServer::new_launching(id.clone(), launch_config, process, download);
+                    self.push_log(format!(
+                        "started additional llama-server {} on :{} (PID {pid})",
+                        id, port
+                    ));
+                    self.active_server_id = id;
+                    self.status_detail = server.status_detail.clone();
+                    self.extra_servers.push(server);
                 }
-                self.endpoint_online = false;
-                self.probe = None;
-                self.last_probe = Instant::now() - Duration::from_secs(2);
-                self.last_stats_refresh = Instant::now() - Duration::from_secs(2);
+                self.sync_mdns_advertise();
             }
             Err(error) => {
                 self.status = ServerStatus::Failed;
@@ -1477,47 +1853,86 @@ impl App {
     }
 
     pub fn stop(&mut self) {
-        let Some(mut process) = self.process.take() else {
+        self.stop_server(None);
+    }
+
+    pub fn stop_server(&mut self, id: Option<&str>) {
+        let target = id
+            .map(str::to_string)
+            .unwrap_or_else(|| self.active_server_id.clone());
+        if target == PRIMARY_SERVER_ID {
+            let Some(mut process) = self.process.take() else {
+                return;
+            };
+            self.running_config = None;
+            self.status = ServerStatus::Stopping;
+            let stop_result = process.stop();
+            let tail_logs = process.drain_logs().collect::<Vec<_>>();
+            for event in tail_logs {
+                let ServerEvent::Log(line) = event;
+                self.push_log(line);
+            }
+            match stop_result {
+                Ok(()) => {
+                    self.status = ServerStatus::Stopped;
+                    self.status_detail = "Stopped by user".into();
+                    self.push_log("llama-server stopped".into());
+                }
+                Err(error) => {
+                    self.status = ServerStatus::Failed;
+                    self.status_detail = error.to_string();
+                    self.push_log(format!("[stop failed] {error:#}"));
+                }
+            }
+            self.endpoint_online = false;
+            self.probe = None;
+            self.download = None;
+            self.process_usage = None;
+            self.server_metrics = None;
+            self.clear_live_throughput();
+            self.clear_thinking_support();
+            if self.active_server_id == PRIMARY_SERVER_ID {
+                if let Some(extra) = self.extra_servers.iter().find(|s| s.is_running()) {
+                    self.active_server_id = extra.id.clone();
+                }
+            }
+            self.sync_mdns_advertise();
             return;
-        };
-        self.running_config = None;
-        self.status = ServerStatus::Stopping;
-        let stop_result = process.stop();
-        let tail_logs = process.drain_logs().collect::<Vec<_>>();
-        for event in tail_logs {
-            let ServerEvent::Log(line) = event;
-            self.push_log(line);
         }
-        match stop_result {
-            Ok(()) => {
-                self.status = ServerStatus::Stopped;
-                self.status_detail = "Stopped by user".into();
-                self.push_log("llama-server stopped".into());
+
+        if let Some(index) = self.extra_servers.iter().position(|s| s.id == target) {
+            let mut server = self.extra_servers.remove(index);
+            for line in server.stop() {
+                self.push_log(line);
             }
-            Err(error) => {
-                self.status = ServerStatus::Failed;
-                self.status_detail = error.to_string();
-                self.push_log(format!("[stop failed] {error:#}"));
+            self.status_detail = server.status_detail;
+            if self.active_server_id == target {
+                self.active_server_id = if self.process.is_some() {
+                    PRIMARY_SERVER_ID.into()
+                } else if let Some(extra) = self.extra_servers.iter().find(|s| s.is_running()) {
+                    extra.id.clone()
+                } else {
+                    PRIMARY_SERVER_ID.into()
+                };
             }
+            self.sync_mdns_advertise();
         }
-        self.endpoint_online = false;
-        self.probe = None;
-        self.download = None;
-        self.process_usage = None;
-        self.server_metrics = None;
-        self.clear_live_throughput();
     }
 
     pub fn restart(&mut self) {
-        if self.process.is_some() {
-            self.stop();
-        }
+        let active = self.active_server_id.clone();
+        self.stop_server(Some(&active));
+        // Restart always launches from the current config template into a free slot.
         self.start();
     }
 
     pub fn shutdown(&mut self) {
-        if self.process.is_some() {
-            self.stop();
+        while self.process.is_some() {
+            self.stop_server(Some(PRIMARY_SERVER_ID));
+        }
+        let ids: Vec<_> = self.extra_servers.iter().map(|s| s.id.clone()).collect();
+        for id in ids {
+            self.stop_server(Some(&id));
         }
     }
 
@@ -1567,10 +1982,11 @@ impl App {
         self.last_local_model = PathBuf::new();
         self.missing_server_prompt = !executable_exists(&self.config.server.executable);
         self.sync_remote_model_size();
+        self.persist_config();
         self.status_detail = if self.process.is_some() {
-            "Restored defaults; restart to apply, save to persist".into()
+            "Restored defaults; restart to apply".into()
         } else {
-            "Restored defaults; save to persist".into()
+            "Restored defaults".into()
         };
         self.push_log("configuration reset to defaults".into());
     }
@@ -1591,13 +2007,11 @@ impl App {
             );
         }
         self.config.runtime = preset.runtime();
+        self.persist_config();
         self.status_detail = if self.process.is_some() {
-            format!(
-                "Applied {}; restart to apply, save to persist",
-                preset.label()
-            )
+            format!("Applied {}; restart to apply", preset.label())
         } else {
-            format!("Applied {}; save to persist", preset.label())
+            format!("Applied {}", preset.label())
         };
         self.push_log(format!("applied runtime preset {}", preset.id()));
         Ok(())
@@ -1868,10 +2282,11 @@ impl App {
     }
 
     fn mark_setting_changed(&mut self, field: SettingField) {
+        self.persist_config();
         self.status_detail = if self.process.is_some() {
             format!("Changed {}; restart to apply", self.setting_label(field))
         } else {
-            format!("Changed {}; save to persist", self.setting_label(field))
+            format!("Changed {}", self.setting_label(field))
         };
     }
 
@@ -2469,6 +2884,15 @@ mod tests {
         app.config.server.port = 9090;
         assert_eq!(app.displayed_config().server.port, 8080);
         assert!(app.has_pending_changes());
+    }
+
+    #[test]
+    fn allocate_port_skips_used_ports() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.running_config = Some(app.config.clone());
+        assert_eq!(app.allocate_port(), 8081);
+        app.config.server.port = 9090;
+        assert_eq!(app.allocate_port(), 9090);
     }
 
     #[test]

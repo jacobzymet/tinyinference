@@ -96,9 +96,8 @@ On macOS or Linux, use:
 ## Configuration
 
 Open the **Models** tab to manage your model library. Open **Configure** for the
-`llama-server` path, host, port, runtime preset, and other server settings. Use
-**Save** on Configure to write runtime settings to disk; library changes
-(add / use / remove / import) save automatically.
+`llama-server` path, host, port, runtime preset, and other server settings.
+Changes autosave immediately — no manual save step.
 
 On **Models**:
 - **My models** is your explicit library. **Add model** registers a Hugging Face
@@ -158,7 +157,6 @@ cargo run -- --print-command
 | Live statistics | Stats tab |
 | Copy OpenAI-compatible `/v1` URL | Dashboard |
 | Copy resolved `llama-server` command | Dashboard |
-| Save settings | Models, Configure, or Dashboard |
 
 When a Hugging Face model has to be fetched, the status reads `downloading`
 instead of `starting`, with a progress bar, transfer rate, and time remaining.
@@ -175,16 +173,18 @@ metrics remain marked unavailable until the server is ready. Clipboard copy uses
 the browser clipboard API, with a system clipboard fallback via `clip.exe` on
 Windows, `pbcopy` on macOS, and `wl-copy`, `xclip`, or `xsel` on Linux.
 
-The tinyinference server binds to `127.0.0.1:3920` by default (override with
-`--bind`, `TINYINFERENCE_BIND`, or `[ui]` in the config). Use the **Network**
-tab to opt in to LAN / Tailscale sharing: that rebinds the control panel and
-chat to `0.0.0.0` (restart required), generates an access token, and leaves the
-managed `llama-server` on loopback. When exposed, `/api/*` requests from
-non-loopback clients must send `Authorization: Bearer <token>` (or
-`X-Tinyinference-Token`). Share links include `?token=` so a phone browser can
-store it once. There is still no login account — anyone with the URL and token
-can chat and change settings. You can also link another tinyinference instance
-(manual URL or mDNS on the same LAN) so local chat runs inference on that peer.
+The tinyinference control panel binds to `127.0.0.1:3920` by default (override with
+`--bind`, `TINYINFERENCE_BIND`, or `[ui]` in the config) and stays private. Use the
+**Network sharing** tab to expose only the managed `llama-server` OpenAI-compatible
+API (`/v1`) on LAN, Tailscale only (`100.x`), or a specific address. Clients
+authenticate with the API key (`Authorization: Bearer …`). Restart the model
+server after changing share settings so the new bind and key apply. You can also
+point local chat at a remote OpenAI-compatible base URL (another tinyinference
+with Share LLM API, or any llama-server) via Linked LLM.
+
+You can run more than one model at a time: **Start another** launches the
+currently configured model on the next free port. The dashboard lists running
+servers; chat has a model selector at the top.
 
 ## How low-RAM operation works
 
