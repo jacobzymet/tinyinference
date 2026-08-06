@@ -1476,7 +1476,7 @@
               </span>
             </div>
             <ul id="networkPeerList" class="network-list"></ul>
-            <p id="networkPeerEmpty" class="setting-hint">Listening for peers… None found yet. Peers need sharing on and a running model.</p>
+            <p id="networkPeerEmpty" class="setting-hint">Listening for peers… None found yet. Peers must be on the same Wi‑Fi/LAN (not Tailscale-only), with Share on, Listen on “Wi‑Fi / LAN and Tailscale”, and a model running.</p>
           </div>
           <p id="networkError" class="text-error is-hidden"></p>
         </div>
@@ -2026,6 +2026,11 @@
       const peerList = document.getElementById('networkPeerList');
       const empty = document.getElementById('networkPeerEmpty');
       empty.classList.toggle('is-hidden', peers.length > 0);
+      if (peers.length === 0) {
+        empty.textContent = next.mdns_error
+          ? next.mdns_error
+          : 'Listening for peers… None found yet. Peers must be on the same Wi‑Fi/LAN (not Tailscale-only), with Share on, Listen on “Wi‑Fi / LAN and Tailscale”, and a model running.';
+      }
       const peerSignature = JSON.stringify(peers.map((p) => [p.name, p.base_url]));
       if (peerSignature !== lastPeerSignature) {
         lastPeerSignature = peerSignature;

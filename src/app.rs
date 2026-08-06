@@ -865,7 +865,7 @@ impl App {
         running.effective_host() != desired_host || desired != actual
     }
 
-    pub fn sync_mdns_advertise(&self) {
+    pub fn sync_mdns_advertise(&mut self) {
         // Advertise only while a shared llama is actually running.
         let ports = self.shareable_running_ports();
         let advertise = self.config.network.should_advertise_mdns() && !ports.is_empty();
@@ -875,16 +875,34 @@ impl App {
             &self.config.network.resolved_device_name(),
             port,
         );
+        if let Some(error) = self.discovery.last_error() {
+            let line = format!("[network] {error}");
+            if self.logs.back() != Some(&line) {
+                self.push_log(line);
+            }
+        }
+    }
+
+    pub fn mdns_error(&self) -> Option<String> {
+        self.discovery.last_error()
     }
 
     pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
-        let self_name = self.config.network.resolved_device_name();
-        let ports = self.shareable_running_ports();
+        let own_fullname = self.discovery.advertised_fullname();
+        let (lan, ts) = network::shareable_ipv4_addrs();
+        let local_ips: std::collections::HashSet<String> = lan
+            .into_iter()
+            .chain(ts)
+            .map(|ip| ip.to_string())
+            .collect();
         self.discovery
             .discovered_peers()
             .into_iter()
             .filter(|peer| {
-                !(peer.name.eq_ignore_ascii_case(&self_name) && ports.contains(&peer.port))
+                if own_fullname.as_deref() == Some(peer.fullname.as_str()) {
+                    return false;
+                }
+                !local_ips.contains(&peer.host)
             })
             .collect()
     }
@@ -1604,6 +1622,10 @@ impl App {
                     .unwrap_or_else(|| PRIMARY_SERVER_ID.into())
             };
         }
+
+        // Keep mDNS in sync when a server becomes Ready / exits without going
+        // through the start/stop helpers.
+        self.sync_mdns_advertise();
     }
 
     fn apply_probe_result(&mut self, result: ProbeResult) {

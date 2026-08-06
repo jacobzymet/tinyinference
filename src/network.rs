@@ -499,13 +499,16 @@ fn sanitize_instance_name(raw: &str) -> String {
 }
 
 /// Prefer Tailscale CGNAT (`100.64.0.0/10`), then other non-loopback IPv4.
+///
+/// LAN addresses from virtual NICs (WSL, Hyper-V, Docker, …) are sorted last so
+/// mDNS / share URL helpers prefer Wi‑Fi and Ethernet.
 pub fn shareable_ipv4_addrs() -> (Vec<Ipv4Addr>, Vec<Ipv4Addr>) {
-    let mut lan = Vec::new();
+    let mut lan: Vec<(Ipv4Addr, bool, u8)> = Vec::new();
     let mut tailscale = Vec::new();
     let Ok(ifs) = list_afinet_netifas() else {
-        return (lan, tailscale);
+        return (Vec::new(), tailscale);
     };
-    for (_name, addr) in ifs {
+    for (name, addr) in ifs {
         let IpAddr::V4(ip) = addr else { continue };
         if ip.is_loopback() || ip.is_unspecified() || ip.is_link_local() {
             continue;
@@ -514,11 +517,48 @@ pub fn shareable_ipv4_addrs() -> (Vec<Ipv4Addr>, Vec<Ipv4Addr>) {
             if !tailscale.contains(&ip) {
                 tailscale.push(ip);
             }
-        } else if !lan.contains(&ip) {
-            lan.push(ip);
+            continue;
         }
+        if lan.iter().any(|(existing, _, _)| *existing == ip) {
+            continue;
+        }
+        let virtual_iface = is_virtual_iface(&name);
+        lan.push((ip, virtual_iface, lan_range_rank(ip)));
     }
-    (lan, tailscale)
+    lan.sort_by_key(|(_, virtual_iface, rank)| (*virtual_iface, *rank));
+    (lan.into_iter().map(|(ip, _, _)| ip).collect(), tailscale)
+}
+
+fn is_virtual_iface(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.contains("vethernet")
+        || n.contains("docker")
+        || n.contains("wsl")
+        || n.contains("hyper-v")
+        || n.contains("vmware")
+        || n.contains("virtualbox")
+        || n.contains("vbox")
+        || n.contains("virbr")
+        || n.starts_with("br-")
+        || n.contains("veth")
+        || n.contains("utun")
+        || n.contains("tun")
+        || n.contains("tap")
+        || n.contains("bridge")
+}
+
+fn lan_range_rank(ip: Ipv4Addr) -> u8 {
+    let o = ip.octets();
+    if o[0] == 192 && o[1] == 168 {
+        0
+    } else if o[0] == 10 {
+        1
+    } else if o[0] == 172 && (16..=31).contains(&o[1]) {
+        // Often Docker / WSL / Hyper-V — keep, but prefer after RFC1918 home ranges.
+        3
+    } else {
+        2
+    }
 }
 
 pub fn is_tailscale_cg_nat(ip: Ipv4Addr) -> bool {
@@ -609,11 +649,20 @@ impl PeerStore {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AdvertisedService {
+    fullname: String,
+    port: u16,
+    ips: Vec<Ipv4Addr>,
+}
+
 /// Shared mDNS advertise + browse lifecycle for the process.
 pub struct NetworkDiscovery {
     peers: Arc<Mutex<PeerStore>>,
     daemon: Mutex<Option<ServiceDaemon>>,
-    advertised_fullname: Mutex<Option<String>>,
+    browse_started: Mutex<bool>,
+    advertised: Mutex<Option<AdvertisedService>>,
+    last_error: Mutex<Option<String>>,
 }
 
 impl NetworkDiscovery {
@@ -622,43 +671,91 @@ impl NetworkDiscovery {
         let discovery = Self {
             peers: Arc::clone(&peers),
             daemon: Mutex::new(None),
-            advertised_fullname: Mutex::new(None),
+            browse_started: Mutex::new(false),
+            advertised: Mutex::new(None),
+            last_error: Mutex::new(None),
         };
         discovery.ensure_daemon_and_browse();
         discovery
     }
 
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn advertised_fullname(&self) -> Option<String> {
+        self.advertised
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|adv| adv.fullname.clone())
+    }
+
+    fn set_error(&self, message: impl Into<String>) {
+        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(message.into());
+    }
+
+    fn clear_error(&self) {
+        *self.last_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
     fn ensure_daemon_and_browse(&self) {
-        let mut guard = self.daemon.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_some() {
-            return;
-        }
-        let Ok(daemon) = ServiceDaemon::new() else {
-            return;
-        };
-        if let Ok(receiver) = daemon.browse(SERVICE_TYPE) {
-            let peers = Arc::clone(&self.peers);
-            thread::spawn(move || {
-                while let Ok(event) = receiver.recv() {
-                    match event {
-                        ServiceEvent::ServiceResolved(info) => {
-                            if let Some(peer) = peer_from_resolved(&info) {
-                                if let Ok(mut store) = peers.lock() {
-                                    store.upsert(peer);
-                                }
-                            }
-                        }
-                        ServiceEvent::ServiceRemoved(_, fullname) => {
-                            if let Ok(mut store) = peers.lock() {
-                                store.remove(&fullname);
-                            }
-                        }
-                        _ => {}
+        {
+            let mut guard = self.daemon.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_none() {
+                match ServiceDaemon::new() {
+                    Ok(daemon) => *guard = Some(daemon),
+                    Err(error) => {
+                        self.set_error(format!("mDNS unavailable: {error}"));
+                        return;
                     }
                 }
-            });
+            }
         }
-        *guard = Some(daemon);
+
+        let mut browse_started = self
+            .browse_started
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *browse_started {
+            return;
+        }
+        let daemon_guard = self.daemon.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(daemon) = daemon_guard.as_ref() else {
+            return;
+        };
+        match daemon.browse(SERVICE_TYPE) {
+            Ok(receiver) => {
+                *browse_started = true;
+                self.clear_error();
+                let peers = Arc::clone(&self.peers);
+                thread::spawn(move || {
+                    while let Ok(event) = receiver.recv() {
+                        match event {
+                            ServiceEvent::ServiceResolved(info) => {
+                                if let Some(peer) = peer_from_resolved(&info) {
+                                    if let Ok(mut store) = peers.lock() {
+                                        store.upsert(peer);
+                                    }
+                                }
+                            }
+                            ServiceEvent::ServiceRemoved(_, fullname) => {
+                                if let Ok(mut store) = peers.lock() {
+                                    store.remove(&fullname);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+            Err(error) => {
+                self.set_error(format!("mDNS browse failed: {error}"));
+            }
+        }
     }
 
     pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
@@ -675,47 +772,66 @@ impl NetworkDiscovery {
         let Some(daemon) = daemon_guard.as_ref() else {
             return;
         };
-        let mut name_guard = self
-            .advertised_fullname
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut advertised = self.advertised.lock().unwrap_or_else(|e| e.into_inner());
 
         if !expose {
-            if let Some(fullname) = name_guard.take() {
-                let _ = daemon.unregister(&fullname);
+            if let Some(previous) = advertised.take() {
+                let _ = daemon.unregister(&previous.fullname);
             }
             return;
         }
 
-        // mDNS is LAN discovery; prefer a LAN address so peers don't get a Tailscale IP.
-        let (lan, ts) = shareable_ipv4_addrs();
-        let ip = lan.first().copied().or_else(|| ts.first().copied());
-        let Some(ip) = ip else {
+        // Announce every non-virtual LAN IP when possible. mDNS is link-local — a
+        // Tailscale-only IP is useless for “Nearby on LAN”, and a single WSL/
+        // Hyper-V address can hide the service from Wi‑Fi peers.
+        let (lan, _ts) = shareable_ipv4_addrs();
+        let ips: Vec<Ipv4Addr> = lan;
+        if ips.is_empty() {
+            self.set_error(
+                "mDNS advertise skipped: no LAN IPv4 address found (Wi‑Fi/Ethernet)".to_string(),
+            );
+            if let Some(previous) = advertised.take() {
+                let _ = daemon.unregister(&previous.fullname);
+            }
             return;
-        };
+        }
 
         let instance = sanitize_instance_name(device_name);
-        let host_name = format!("{ip}.local.");
-        let properties = [("path", "/v1"), ("ver", "1")];
+        let host_name = format!("{instance}.local.");
+        let ip_addrs: Vec<IpAddr> = ips.iter().copied().map(IpAddr::V4).collect();
+        let properties = [("path", "/v1"), ("ver", "1"), ("scheme", "https")];
         let Ok(service) = ServiceInfo::new(
             SERVICE_TYPE,
             &instance,
             &host_name,
-            &ip.to_string(),
+            ip_addrs.as_slice(),
             port,
             &properties[..],
         ) else {
+            self.set_error("mDNS advertise failed: invalid service info".to_string());
             return;
         };
+        let service = service.enable_addr_auto();
         let fullname = service.get_fullname().to_string();
-        if name_guard.as_deref() == Some(fullname.as_str()) {
+        let next = AdvertisedService {
+            fullname: fullname.clone(),
+            port,
+            ips: ips.clone(),
+        };
+        if advertised.as_ref() == Some(&next) {
             return;
         }
-        if let Some(previous) = name_guard.take() {
-            let _ = daemon.unregister(&previous);
+        if let Some(previous) = advertised.take() {
+            let _ = daemon.unregister(&previous.fullname);
         }
-        if daemon.register(service).is_ok() {
-            *name_guard = Some(fullname);
+        match daemon.register(service) {
+            Ok(()) => {
+                *advertised = Some(next);
+                self.clear_error();
+            }
+            Err(error) => {
+                self.set_error(format!("mDNS advertise failed: {error}"));
+            }
         }
     }
 }
@@ -728,10 +844,11 @@ fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer>
     if port == 0 {
         return None;
     }
-    let host = info
-        .get_addresses_v4()
-        .into_iter()
-        .next()
+    // Prefer a real LAN address over Tailscale/CGNAT when both are published.
+    let mut v4: Vec<Ipv4Addr> = info.get_addresses_v4().into_iter().collect();
+    v4.sort_by_key(|ip| (is_tailscale_cg_nat(*ip), lan_range_rank(*ip)));
+    let host = v4
+        .first()
         .map(|ip| ip.to_string())
         .or_else(|| {
             let host = info.host.trim_end_matches('.');
@@ -747,11 +864,16 @@ fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer>
         .unwrap_or(info.fullname.as_str())
         .trim_end_matches('.')
         .to_string();
+    // Shared llama always uses HTTPS (+ self-signed cert). TXT may say so explicitly.
+    let scheme = info
+        .get_property_val_str("scheme")
+        .filter(|value| *value == "http" || *value == "https")
+        .unwrap_or("https");
     Some(DiscoveredPeer {
         name: short_name,
         host: host.clone(),
         port,
-        base_url: format!("http://{host}:{port}/v1"),
+        base_url: format!("{scheme}://{host}:{port}/v1"),
         fullname: info.fullname.clone(),
     })
 }
