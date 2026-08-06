@@ -240,6 +240,12 @@ cache types (`--cache-type-k/v q8_0`) so more RAM stays free for weight pages.
 Turn these off or change the cache types in Configure if your `llama-server`
 build rejects them.
 
+## Credits
+
+Chat and status “thought orb” animations are adapted from
+[thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) by Jakub Antalik
+(MIT). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## References
 
 - [llama.cpp server options](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)

@@ -24,6 +24,7 @@ use crate::{
         ServerProcess, SlotsSnapshot, parse_log_throughput,
         probe_async, thinking_support_async,
     },
+    share_proxy::ShareProxyManager,
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
 };
 
@@ -658,6 +659,8 @@ pub struct App {
     /// Chat / dashboard focus: [`PRIMARY_SERVER_ID`] or an extra server id.
     pub active_server_id: String,
     next_server_seq: u64,
+    /// Public TLS proxy in front of loopback llama when Share is on.
+    share_proxy: ShareProxyManager,
 }
 
 impl App {
@@ -723,6 +726,7 @@ impl App {
             extra_servers: Vec::new(),
             active_server_id: PRIMARY_SERVER_ID.into(),
             next_server_seq: 1,
+            share_proxy: ShareProxyManager::default(),
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -810,12 +814,16 @@ impl App {
             .map_err(|error| error.to_string())
     }
 
-    /// True when Share is on and the desired llama bind is beyond loopback.
+    /// True when Share is on and the public listen host is beyond loopback.
+    /// llama itself always binds loopback; the share proxy owns the public bind.
     pub fn listening_exposed(&self) -> bool {
         if !self.config.network.expose {
             return false;
         }
-        !is_loopback_host(&self.config.effective_host())
+        match self.config.network.resolve_listen_host() {
+            Ok(host) => !is_loopback_host(&host),
+            Err(_) => false,
+        }
     }
 
     /// Ports of managed servers that are up while Share is actually bound off-loopback.
@@ -853,18 +861,19 @@ impl App {
     }
 
     fn keys_or_host_diverged(&self, running: &Config) -> bool {
-        if !self.config.network.expose {
-            let still_shared = !is_loopback_host(&running.effective_host());
-            return still_shared || !running.llama_api_keys().is_empty();
-        }
-        let Ok(desired_host) = self.config.network.resolve_listen_host() else {
+        // Share proxy owns public bind / TLS / API keys. llama only needs a
+        // restart when Share is toggled (metrics vs no-slots) or an older
+        // process is still bound off-loopback from pre-proxy builds.
+        if running.network.expose != self.config.network.expose {
             return true;
-        };
-        let mut desired = self.config.llama_api_keys();
-        let mut actual = running.llama_api_keys();
-        desired.sort();
-        actual.sort();
-        running.effective_host() != desired_host || desired != actual
+        }
+        if !self.config.network.expose {
+            return false;
+        }
+        if self.config.network.resolve_listen_host().is_err() {
+            return true;
+        }
+        !is_loopback_host(&running.effective_host())
     }
 
     pub fn sync_mdns_advertise(&mut self) {
@@ -921,8 +930,10 @@ impl App {
         if !network.expose {
             return Vec::new();
         }
-        // Only advertise hosts/ports that match the live fail-closed bind.
-        let bind_host = self.config.effective_host();
+        // Public URLs follow the share listen scope; llama stays on loopback.
+        let Ok(bind_host) = network.resolve_listen_host() else {
+            return Vec::new();
+        };
         if is_loopback_host(&bind_host) {
             return Vec::new();
         }
@@ -989,6 +1000,71 @@ impl App {
         self.config
             .set_share_tls(Some((paths.cert_file, paths.key_file)));
         Ok(())
+    }
+
+    /// Start/stop/reload the public TLS share proxy for running model ports.
+    pub fn sync_share_proxy(&mut self) {
+        let expose = self.config.network.expose && self.listening_exposed();
+        let bind_host = self.config.network.resolve_listen_host().ok();
+        let ports: Vec<(u16, String)> = if expose {
+            self.shareable_running_ports()
+                .into_iter()
+                .filter_map(|port| {
+                    let model = self
+                        .server_summaries()
+                        .into_iter()
+                        .find(|s| s.port == port)
+                        .map(|s| s.model)
+                        .unwrap_or_else(|| format!(":{port}"));
+                    Some((port, model))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let cert = self.config.tls_cert_file.clone();
+        let key = self.config.tls_key_file.clone();
+        let keys = self.config.share_api_keys();
+        self.share_proxy.sync(
+            expose,
+            bind_host.as_deref(),
+            &ports,
+            cert.as_ref(),
+            key.as_ref(),
+            keys,
+        );
+
+        // Attach live tok/s from the primary / extra servers onto active peers.
+        if let Some(port) = self.running_config.as_ref().map(|c| c.effective_port()) {
+            self.share_proxy
+                .update_port_tps(port, self.live_generated_tps);
+        }
+        for server in &self.extra_servers {
+            if server.is_running() {
+                self.share_proxy
+                    .update_port_tps(server.port(), server.live_generated_tps());
+            }
+        }
+
+        if let Some(error) = self.share_proxy.last_error() {
+            let line = format!("[network] {error}");
+            if self.logs.back() != Some(&line) {
+                self.push_log(line);
+            }
+        }
+    }
+
+    pub fn connected_clients(
+        &self,
+    ) -> (
+        Vec<crate::share_proxy::ConnectedClientPublic>,
+        crate::share_proxy::ShareActivitySummary,
+    ) {
+        self.share_proxy.snapshot()
+    }
+
+    pub fn share_proxy_error(&self) -> Option<String> {
+        self.share_proxy.last_error().map(str::to_string)
     }
 
     pub fn listen_candidates(&self) -> Vec<ListenCandidate> {
@@ -1170,16 +1246,17 @@ impl App {
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
         self.sync_mdns_advertise();
+        self.sync_share_proxy();
         let restart_required = self.network_restart_required();
         self.push_log(format!(
-            "network updated (expose={}, scope={}, mode={}, remotes={}, llama={}:{}, tls={})",
+            "network updated (expose={}, scope={}, mode={}, remotes={}, llama={}:{}, share_tls={})",
             self.config.network.expose,
             self.config.network.listen_scope.as_str(),
             self.config.network.inference_mode.as_str(),
             self.config.network.remotes.len(),
             self.config.effective_host(),
             self.config.effective_port(),
-            self.config.uses_tls()
+            self.config.share_tls_ready()
         ));
 
         Ok(NetworkUpdateResult {
@@ -1247,6 +1324,7 @@ impl App {
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
         self.sync_mdns_advertise();
+        self.sync_share_proxy();
         self.push_log(format!(
             "network {action} (mode={}, remotes={})",
             self.config.network.inference_mode.as_str(),
@@ -1263,6 +1341,7 @@ impl App {
         self.config
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.sync_share_proxy();
         self.push_log(format!("api key created: {}", key.name));
         Ok(NetworkUpdateResult {
             restart_required: self.network_restart_required(),
@@ -1276,6 +1355,7 @@ impl App {
         self.config
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.sync_share_proxy();
         Ok(NetworkUpdateResult::from_restart(false))
     }
 
@@ -1285,6 +1365,7 @@ impl App {
         self.config
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.sync_share_proxy();
         self.push_log(format!("api key regenerated: {}", key.name));
         Ok(NetworkUpdateResult {
             restart_required: self.network_restart_required(),
@@ -1307,6 +1388,7 @@ impl App {
         self.config
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.sync_share_proxy();
         self.push_log(format!("api key deleted: {name}"));
         Ok(NetworkUpdateResult {
             restart_required: self.network_restart_required(),
@@ -1772,9 +1854,10 @@ impl App {
             };
         }
 
-        // Keep mDNS in sync when a server becomes Ready / exits without going
-        // through the start/stop helpers.
+        // Keep mDNS + share proxy in sync when a server becomes Ready / exits
+        // without going through the start/stop helpers.
         self.sync_mdns_advertise();
+        self.sync_share_proxy();
     }
 
     fn apply_probe_result(&mut self, result: ProbeResult) {
@@ -2293,6 +2376,7 @@ impl App {
         for id in ids {
             self.stop_server(Some(&id));
         }
+        self.share_proxy.shutdown_all();
     }
 
     fn validate_for_launch(&self) -> std::result::Result<(), String> {

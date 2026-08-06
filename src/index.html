@@ -948,6 +948,49 @@
       padding-top: 0;
       border-top: 0;
     }
+    .network-connected-list li {
+      align-items: flex-start;
+    }
+    .network-connected-meta {
+      display: grid;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+    .network-connected-meta strong {
+      font-size: var(--text-sm);
+      color: var(--color-ink);
+    }
+    .network-connected-meta span {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+      word-break: break-all;
+    }
+    .network-connected-pill {
+      flex: 0 0 auto;
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1;
+      padding: 0.28rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid var(--color-rule);
+      color: var(--color-muted);
+      background: var(--color-paper);
+      white-space: nowrap;
+    }
+    .network-connected-pill.is-active {
+      color: var(--color-accent);
+      border-color: color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 10%, var(--color-paper));
+    }
+    .network-activity-summary {
+      margin: 0 0 var(--space-sm);
+      font-size: var(--text-sm);
+      color: var(--color-muted);
+    }
     .network-peers-head {
       display: flex;
       align-items: center;
@@ -1647,7 +1690,7 @@
           </div>
           <p id="networkShareStatus" class="network-share-status">Not sharing. Other devices cannot see or call this PC until Share is on and a model is running.</p>
           <div id="networkRestartBanner" class="preset-warning is-hidden" role="status" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;justify-content:space-between">
-            <span>Restart the model to apply listen or API key changes.</span>
+            <span>Restart the model to apply Share on/off changes.</span>
             <button type="button" class="btn btn-primary" id="btnNetworkRestart">Restart model</button>
           </div>
         </div>
@@ -1655,7 +1698,7 @@
         <div id="networkShareBlock" class="network-share-stack is-hidden">
           <div class="panel network-section">
             <h3 class="network-section-title">Access keys</h3>
-            <p class="network-section-lede">Other devices need one of these as <code>Authorization: Bearer …</code>. Full secrets appear once after create or regenerate.</p>
+            <p class="network-section-lede">Other devices need one of these as <code>Authorization: Bearer …</code>. Name keys after the device (Phone, Laptop) — that name shows up in Connected now. Full secrets appear once after create or regenerate.</p>
             <ul id="networkApiKeyList" class="network-list"></ul>
             <div class="network-token-row">
               <input class="field-input" id="networkNewKeyName" type="text" placeholder="Name (Phone, Laptop…)" autocomplete="off" spellcheck="false" maxlength="64">
@@ -1667,11 +1710,25 @@
             <p class="network-section-lede">OpenAI-compatible HTTPS bases. Trust the self-signed cert in your client, then send a Bearer key.</p>
             <ul id="networkShareList" class="network-list"></ul>
           </div>
+          <div class="panel network-section" id="networkConnectedBlock">
+            <div class="network-peers-head">
+              <h3 class="network-section-title" style="margin:0">Connected now</h3>
+              <span class="network-scan-live" title="Refreshes while this tab is open">
+                <span class="network-scan-spinner" aria-hidden="true"></span>
+                Live
+              </span>
+            </div>
+            <p class="network-section-lede">Devices calling this PC’s share endpoints. Key name, IP, model, and what they’re doing update in realtime.</p>
+            <p id="networkActivitySummary" class="network-activity-summary is-hidden" aria-live="polite"></p>
+            <p id="networkProxyError" class="preset-warning is-hidden" role="alert"></p>
+            <ul id="networkConnectedList" class="network-list network-connected-list" aria-live="polite"></ul>
+            <p id="networkConnectedEmpty" class="setting-hint">No devices connected right now.</p>
+          </div>
         </div>
 
         <div class="panel network-section">
           <h3 class="network-section-title">Linked LLMs</h3>
-          <p class="network-section-lede">Manage saved links to other machines. Name them, pick which one chat uses, or stay on this PC. Linking only updates this device — hosts do not see who linked them.</p>
+          <p class="network-section-lede">Manage saved links to other machines. Name them, pick which one chat uses, or stay on this PC. When you Share, Connected now shows callers using your keys.</p>
           <div class="chat-source-row">
             <div class="segmented" role="tablist" aria-label="Chat source">
               <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
@@ -1770,7 +1827,7 @@
   <div id="exposeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="exposeConfirmTitle">
     <div class="dialog">
       <h2 id="exposeConfirmTitle">Share the LLM API?</h2>
-      <p>Only the model inference API is exposed — not the control panel, chat, or llama web UI. Traffic uses a self-signed TLS certificate (clients will warn until they trust it). Callers need an API key. Default bind is Tailscale only. Restart the model after enabling.</p>
+      <p>Only the model inference API is exposed — not the control panel, chat, or llama web UI. A local TLS proxy serves callers (self-signed cert; clients will warn until they trust it) and shows them in Connected now. Callers need an API key. Default bind is Tailscale only. Restart the model after enabling.</p>
       <div class="dialog-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelExpose">Cancel</button>
         <button type="button" class="btn btn-primary" id="btnConfirmExpose">Continue</button>
@@ -1946,6 +2003,7 @@
     let revealedTokens = {}; // id -> full secret (session only)
     let lastShareSignature = '';
     let lastApiKeySignature = '';
+    let lastConnectedSignature = '';
     let lastPeerSignature = '';
     let lastRemoteSignature = '';
     let settingsDirty = false;
@@ -2141,6 +2199,74 @@
       }).join('');
     }
 
+    function renderConnectedClients(next) {
+      const list = document.getElementById('networkConnectedList');
+      const empty = document.getElementById('networkConnectedEmpty');
+      const summaryEl = document.getElementById('networkActivitySummary');
+      const proxyError = document.getElementById('networkProxyError');
+      if (!list || !empty) return;
+
+      if (proxyError) {
+        if (next.share_proxy_error) {
+          proxyError.textContent = next.share_proxy_error;
+          proxyError.classList.remove('is-hidden');
+        } else {
+          proxyError.textContent = '';
+          proxyError.classList.add('is-hidden');
+        }
+      }
+
+      const clients = next.connected_clients || [];
+      const activity = next.share_activity || {};
+      if (summaryEl) {
+        if (!next.listening_exposed || (!clients.length && !activity.active_count)) {
+          summaryEl.classList.add('is-hidden');
+          summaryEl.textContent = '';
+        } else {
+          const parts = [];
+          const active = activity.active_count || 0;
+          const idle = activity.idle_count || 0;
+          if (active) parts.push(active + ' active');
+          if (idle) parts.push(idle + ' idle');
+          if (activity.tokens_per_second) {
+            parts.push(activity.tokens_per_second.toFixed(1) + ' tok/s');
+          }
+          summaryEl.textContent = parts.length ? parts.join(' · ') : '';
+          summaryEl.classList.toggle('is-hidden', !parts.length);
+        }
+      }
+
+      const signature = JSON.stringify(clients.map((c) => [
+        c.id, c.state, c.last_path, c.last_method, c.model,
+        c.key_name, c.remote_addr, c.tokens_per_second || 0,
+      ]));
+      if (signature === lastConnectedSignature) return;
+      lastConnectedSignature = signature;
+
+      empty.classList.toggle('is-hidden', clients.length > 0);
+      if (!clients.length) {
+        list.innerHTML = '';
+        return;
+      }
+      list.innerHTML = clients.map((client) => {
+        const active = client.state === 'active';
+        const path = client.last_path || '—';
+        const tps = client.tokens_per_second
+          ? (' · ' + Number(client.tokens_per_second).toFixed(1) + ' tok/s')
+          : '';
+        const model = client.model || (':' + client.local_port);
+        return `
+          <li>
+            <div class="network-connected-meta">
+              <strong>${escapeHtml(client.key_name || 'Unknown key')}</strong>
+              <span>${escapeHtml(client.remote_addr)} · ${escapeHtml(model)}</span>
+              <span>${escapeHtml(client.last_method || '')} ${escapeHtml(path)}${escapeHtml(tps)}</span>
+            </div>
+            <span class="network-connected-pill${active ? ' is-active' : ''}">${active ? 'Active' : 'Idle'}</span>
+          </li>`;
+      }).join('');
+    }
+
     function applyNetworkState(next, revealed, revealedId) {
       networkState = next;
       if (revealed && revealedId) {
@@ -2176,8 +2302,8 @@
       document.getElementById('networkRestartBanner').classList.toggle('is-hidden', !next.restart_required);
       document.getElementById('networkShareBlock').classList.toggle('is-hidden', !next.expose);
       const llamaHint = document.getElementById('networkLlamaHint');
-      if (next.expose && next.llama_endpoint) {
-        llamaHint.textContent = 'Listening on ' + next.llama_endpoint;
+      if (next.expose && next.listening_exposed) {
+        llamaHint.textContent = 'Model stays on this PC (loopback). Share proxy serves the public HTTPS endpoints below.';
         llamaHint.classList.remove('is-hidden');
       } else if (next.expose) {
         llamaHint.textContent = 'Start the model server after changing who can reach this.';
@@ -2198,10 +2324,10 @@
       if (shareStatus) {
         const name = next.device_name || 'this PC';
         if (next.listening_exposed && next.advertising) {
-          shareStatus.textContent = 'Sharing and discoverable as “' + name + '”. Nearby devices can Link using an API key from this PC. This screen does not list who linked you.';
+          shareStatus.textContent = 'Sharing and discoverable as “' + name + '”. Nearby devices can Link with an API key. Connected now shows who is calling.';
           shareStatus.classList.add('is-live');
         } else if (next.listening_exposed) {
-          shareStatus.textContent = 'Sharing as “' + name + '” on ' + (next.llama_endpoint || 'the listen address') + '. Clients use Endpoints + an API key. LAN discovery is off for this listen scope (Tailscale/custom stays private).';
+          shareStatus.textContent = 'Sharing as “' + name + '”. Clients use Endpoints + an API key. Connected now lists active callers. LAN discovery is off for this listen scope.';
           shareStatus.classList.add('is-live');
         } else if (next.expose) {
           shareStatus.textContent = 'Share is on as “' + name + '”, but the model is not listening yet. Start (or restart) the model so others can reach Endpoints.';
@@ -2259,6 +2385,7 @@
       }
 
       renderApiKeys(next);
+      renderConnectedClients(next);
 
       const shareList = document.getElementById('networkShareList');
       const shareSignature = JSON.stringify(next.share_urls || []);
@@ -2268,8 +2395,8 @@
           let emptyMsg;
           if (next.listen_bind_error) {
             emptyMsg = `<li><div class="network-meta"><strong>Not sharing yet</strong><span>${escapeHtml(next.listen_bind_error)}</span></div></li>`;
-          } else if (next.llama_binds_loopback) {
-            emptyMsg = '<li><div class="network-meta"><strong>Not sharing yet</strong><span>Bind fell back to this machine only. Fix the scope above, then restart the model.</span></div></li>';
+          } else if (next.expose && !next.listening_exposed) {
+            emptyMsg = '<li><div class="network-meta"><strong>Not sharing yet</strong><span>Could not resolve a public listen address. Fix the scope above, then start the model.</span></div></li>';
           } else if (next.listen_scope === 'tailscale' && !next.tailscale_available) {
             emptyMsg = '<li><div class="network-meta"><strong>No Tailscale IP found</strong><span>Start Tailscale on this computer, or choose “Wi‑Fi / LAN and Tailscale”.</span></div></li>';
           } else {
@@ -3860,7 +3987,8 @@
     });
     {
       const canvas = document.getElementById('dashLinkedChatOrb');
-      if (canvas) mountOrb(canvas, 16);
+      // Primary blue button — white dots to match the label.
+      if (canvas) mountOrb(canvas, 16, { ink: 'bright' });
     }
 
     // Status busy spinner uses the globe ("searching") painter — distinct from

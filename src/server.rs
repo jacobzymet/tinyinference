@@ -912,10 +912,11 @@ mod tests {
             "4".into(),
         ];
         let actual = args(&config);
+        // Share proxy owns the public bind/TLS/keys; llama stays on loopback HTTP.
         assert!(
             actual
                 .windows(2)
-                .any(|window| window[0] == "--host" && window[1] == "100.64.1.2")
+                .any(|window| window[0] == "--host" && window[1] == "127.0.0.1")
         );
         assert!(
             actual
@@ -923,6 +924,7 @@ mod tests {
                 .any(|window| window[0] == "--port" && window[1] == "8080")
         );
         assert!(!actual.iter().any(|argument| argument == "0.0.0.0"));
+        assert!(!actual.iter().any(|argument| argument == "100.64.1.2"));
         assert!(!actual.iter().any(|argument| argument == "evil"));
         assert!(!actual.iter().any(|argument| argument == "9999"));
         assert!(actual.iter().any(|argument| argument == "--mmap"));
@@ -931,12 +933,12 @@ mod tests {
                 .windows(2)
                 .any(|window| window[0] == "--flash-attn" && window[1] == "on")
         );
-        assert!(actual.iter().any(|argument| *argument == "--api-key"));
+        assert!(!actual.iter().any(|argument| *argument == "--api-key"));
         assert!(actual.iter().any(|argument| *argument == "--no-webui"));
         assert!(actual.iter().any(|argument| *argument == "--no-slots"));
         assert!(!actual.iter().any(|argument| *argument == "--metrics"));
-        assert!(actual.iter().any(|argument| *argument == "--ssl-cert-file"));
-        assert!(actual.iter().any(|argument| *argument == "--ssl-key-file"));
+        assert!(!actual.iter().any(|argument| *argument == "--ssl-cert-file"));
+        assert!(!actual.iter().any(|argument| *argument == "--ssl-key-file"));
         assert!(
             actual
                 .windows(2)

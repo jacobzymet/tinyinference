@@ -126,6 +126,10 @@ impl ManagedServer {
         self.thinking_supported.unwrap_or(false)
     }
 
+    pub fn live_generated_tps(&self) -> Option<f64> {
+        self.live_generated_tps
+    }
+
     pub fn tick(&mut self) -> Vec<String> {
         let mut log_lines = Vec::new();
         if let Some(process) = self.process.as_ref() {

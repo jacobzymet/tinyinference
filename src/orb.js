@@ -1,7 +1,12 @@
 /* ================================================================
- * Dotted thought-orbs — ported to plain canvas from thinking-orbs
- * <https://orbs.jakubantalik.com>. MIT License, Copyright (c) 2026
- * Jakub Antalik.
+ * Dotted thought-orbs — adapted from thinking-orbs
+ *   https://github.com/Jakubantalik/thinking-orbs
+ *   https://orbs.jakubantalik.com
+ *
+ * Copyright (c) 2026 Jakub Antalik
+ * SPDX-License-Identifier: MIT
+ *
+ * Full MIT license text: THIRD_PARTY_NOTICES.md
  *
  * Modes carried over:
  *   - orbits ("working") — header / chat CTAs
@@ -112,20 +117,24 @@ function orbRadiusScale(size, pow) {
 }
 
 /** z-sort far→near, then fill matte dots. Ink is mirrored for the dark substrate. */
-function orbPaint(ctx, dots, rMin) {
-  const light =
+function orbPaint(ctx, dots, rMin, ink) {
+  // ink: 'auto' (theme), 'bright' (white-ish on accent/dark), 'dark' (ink on paper)
+  let light =
     typeof document !== 'undefined' &&
     document.documentElement &&
     document.documentElement.dataset.theme === 'light';
+  if (ink === 'bright') light = false;
+  else if (ink === 'dark') light = true;
+  const tint = ink === 'bright' ? [1, 1, 1] : ORB_TINT;
   dots.sort((a, b) => a.z - b.z);
   for (const d of dots) {
     const alpha = d.a === undefined ? 1 : d.a;
     if (alpha < 0.02) continue;
     const w = Math.min(1, Math.max(0, d.white));
     const g = (light ? w : 1 - w) * 255;
-    const r = Math.round(g * ORB_TINT[0]);
-    const gr = Math.round(g * ORB_TINT[1]);
-    const b = Math.round(g * ORB_TINT[2]);
+    const r = Math.round(g * tint[0]);
+    const gr = Math.round(g * tint[1]);
+    const b = Math.round(g * tint[2]);
     ctx.fillStyle = 'rgba(' + r + ',' + gr + ',' + b + ',' + alpha + ')';
     ctx.beginPath();
     ctx.arc(d.x, d.y, Math.max(rMin, d.r), 0, Math.PI * 2);
@@ -134,7 +143,7 @@ function orbPaint(ctx, dots, rMin) {
 }
 
 /** Particles on tilted orbits: a ghost path per orbit plus the ones doing the work. */
-function drawOrbits(ctx, size, t, o) {
+function drawOrbits(ctx, size, t, o, ink) {
   const cx = size / 2;
   const cy = size / 2;
   const R = (size / 2) * 0.82;
@@ -178,11 +187,11 @@ function drawOrbits(ctx, size, t, o) {
       dots.push({ x: p[0], y: p[1], z: p[2], r: (o.partR + o.partRDepth * depth) * rs, white: 0.3 - 0.22 * depth });
     }
   }
-  orbPaint(ctx, dots, o.rMin);
+  orbPaint(ctx, dots, o.rMin, ink);
 }
 
 /** Lat/long field with a scan meridian sweeping — searching. */
-function drawGlobe(ctx, size, t, o) {
+function drawGlobe(ctx, size, t, o, ink) {
   const spin = 0.5;
   const cx = size / 2;
   const cy = size / 2;
@@ -222,13 +231,14 @@ function drawGlobe(ctx, size, t, o) {
       });
     }
   }
-  orbPaint(ctx, dots, o.rMin === undefined ? 0.3 : o.rMin);
+  orbPaint(ctx, dots, o.rMin === undefined ? 0.3 : o.rMin, ink);
 }
 
 /**
  * Drive an orb on `canvas`. Returns { play, pause, stop }.
  *
  * options.mode: 'orbits' (default) | 'globe'
+ * options.ink: 'auto' (theme) | 'bright' (white on accent buttons) | 'dark'
  * With `autoplay: false` the orb paints one static frame and waits — used
  * for the header mark, which only spins while hovered so the control panel
  * chrome stays calm. Pauses on hidden tabs; reduced-motion users always get
@@ -238,6 +248,7 @@ function mountOrb(canvas, size, options) {
   const settings = options || {};
   const autoplay = settings.autoplay !== false;
   const mode = settings.mode || 'orbits';
+  const ink = settings.ink || 'auto';
   const modePresets = ORB_PRESETS[mode] || ORB_PRESETS.orbits;
   const preset = modePresets[size] || modePresets[20] || ORB_PRESETS.orbits[20];
   const draw = mode === 'globe' ? drawGlobe : drawOrbits;
@@ -253,7 +264,7 @@ function mountOrb(canvas, size, options) {
   const frame = (tSec) => {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size, size);
-    draw(ctx, size, tSec, preset.opts);
+    draw(ctx, size, tSec, preset.opts, ink);
   };
   const liveFrame = () => frame((performance.now() / 1000) * preset.speed);
 

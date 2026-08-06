@@ -464,48 +464,39 @@ impl Config {
         }
     }
 
-    /// Apply Network sharing listen scope to the managed llama-server bind + API keys.
+    /// Keep managed llama-server on loopback. Public share bind is owned by the
+    /// TLS share proxy (`share_proxy`), which authenticates API keys.
     ///
-    /// Fail closed: if sharing is on but the scope cannot be resolved (e.g. Tailscale
-    /// missing), bind loopback so a previous `0.0.0.0` listen cannot linger.
+    /// Still validates listen scope when Share is on so unresolved Tailscale /
+    /// custom hosts surface as bind errors rather than a silent public llama.
     pub fn sync_llama_bind_from_network(&mut self) {
         self.network.migrate_api_keys();
-        match self.network.resolve_listen_host() {
-            Ok(host) => {
-                self.server.host = host;
-                if self.network.expose {
-                    // First key used for local probes / chat Authorization header.
-                    self.server.api_key = self
-                        .network
-                        .primary_api_key()
-                        .unwrap_or("")
-                        .to_string();
-                } else {
-                    self.server.api_key.clear();
-                }
-            }
-            Err(_) => {
-                self.server.host = "127.0.0.1".into();
-                if self.network.expose {
-                    self.server.api_key = self
-                        .network
-                        .primary_api_key()
-                        .unwrap_or("")
-                        .to_string();
-                } else {
-                    self.server.api_key.clear();
-                }
-            }
+        // Always bind llama locally. When Share is on, resolve the public host
+        // only to fail closed in the UI if the scope cannot be satisfied.
+        if self.network.expose {
+            let _ = self.network.resolve_listen_host();
         }
+        self.server.host = "127.0.0.1".into();
+        // Proxy owns Bearer auth; local control-panel chat talks to loopback HTTP.
+        self.server.api_key.clear();
     }
 
-    /// Secrets that should be passed to llama-server when sharing is on.
+    /// Secrets passed to llama-server. Empty while Share is on — the share proxy
+    /// validates keys instead so inbound clients can be attributed.
     pub fn llama_api_keys(&self) -> Vec<String> {
-        if self.network.expose {
-            self.network.api_key_secrets()
-        } else {
-            Vec::new()
+        Vec::new()
+    }
+
+    /// Named share secrets accepted by the TLS proxy when Share is on.
+    pub fn share_api_keys(&self) -> Vec<(String, String, String)> {
+        if !self.network.expose {
+            return Vec::new();
         }
+        self.network
+            .api_keys
+            .iter()
+            .map(|key| (key.id.clone(), key.name.clone(), key.secret.clone()))
+            .collect()
     }
 
     /// Older builds exposed the UI; migrate those configs to expose llama instead.
@@ -540,43 +531,52 @@ impl Config {
         loopback_host(&self.effective_host())
     }
 
-    /// True when Share is on and TLS material is attached for llama-server.
+    /// llama-server never terminates TLS; the share proxy does when Share is on.
     pub fn uses_tls(&self) -> bool {
+        false
+    }
+
+    /// True when Share is on and self-signed cert/key paths are attached for the proxy.
+    pub fn share_tls_ready(&self) -> bool {
         self.network.expose
-            && self.tls_cert_file.as_ref().is_some_and(|p| p.as_os_str().len() > 0)
-            && self.tls_key_file.as_ref().is_some_and(|p| p.as_os_str().len() > 0)
+            && self
+                .tls_cert_file
+                .as_ref()
+                .is_some_and(|path| path.as_os_str().len() > 0)
+            && self
+                .tls_key_file
+                .as_ref()
+                .is_some_and(|path| path.as_os_str().len() > 0)
     }
 
+    /// Public share URL scheme (proxy). Local llama endpoints always use HTTP.
     pub fn scheme(&self) -> &'static str {
-        if self.uses_tls() { "https" } else { "http" }
+        if self.network.expose { "https" } else { "http" }
     }
 
-    /// Browser-openable base URL for llama-server (never `0.0.0.0` / `::`).
+    /// Browser-openable base URL for local llama-server (always loopback HTTP).
     pub fn endpoint(&self) -> String {
         format!(
-            "{}://{}",
-            self.scheme(),
+            "http://{}",
             format_authority(&self.connect_host(), self.effective_port())
         )
     }
 
-    /// Human-readable listen description (bind address may be all-interfaces).
+    /// Human-readable llama listen description (always local when managed).
     pub fn listen_label(&self) -> String {
         let bind = self.effective_host();
         let port = self.effective_port();
         let connect = self.connect_host();
-        let scheme = self.scheme();
         if bind == "0.0.0.0" || bind == "::" {
-            format!("{scheme}://{bind}:{port} (open via {connect})")
+            format!("http://{bind}:{port} (open via {connect})")
         } else {
-            format!("{scheme}://{}", format_authority(&bind, port))
+            format!("http://{}", format_authority(&bind, port))
         }
     }
 
     pub fn api_endpoint(&self) -> String {
         format!(
-            "{}://{}/v1",
-            self.scheme(),
+            "http://{}/v1",
             format_authority(&self.connect_host(), self.effective_port())
         )
     }
@@ -652,7 +652,7 @@ impl Config {
             if let Err(error) = self.network.resolve_listen_host() {
                 errors.push(error);
             }
-            if self.llama_api_keys().is_empty() {
+            if self.share_api_keys().is_empty() {
                 errors.push("sharing is on but no API keys are configured".into());
             }
         }
@@ -1069,21 +1069,25 @@ mod tests {
     }
 
     #[test]
-    fn sync_llama_bind_follows_network_scope() {
+    fn sync_llama_bind_stays_loopback_when_sharing() {
         let mut config = Config::default();
         config.network.expose = true;
         config.network.listen_scope = crate::network::ListenScope::Custom;
         config.network.listen_host = "192.168.1.50".into();
         config.network.access_token = "secret-token".into();
         config.sync_llama_bind_from_network();
-        assert_eq!(config.server.host, "192.168.1.50");
-        assert_eq!(config.server.api_key, "secret-token");
-        assert_eq!(config.llama_api_keys(), vec!["secret-token".to_string()]);
+        assert_eq!(config.server.host, "127.0.0.1");
+        assert!(config.server.api_key.is_empty());
+        assert!(config.llama_api_keys().is_empty());
+        assert_eq!(config.share_api_keys().len(), 1);
+        assert_eq!(config.scheme(), "https");
+        assert_eq!(config.api_endpoint(), "http://127.0.0.1:8080/v1");
         config.network.expose = false;
         config.sync_llama_bind_from_network();
         assert_eq!(config.server.host, "127.0.0.1");
         assert!(config.server.api_key.is_empty());
-        assert!(config.llama_api_keys().is_empty());
+        assert!(config.share_api_keys().is_empty());
+        assert_eq!(config.scheme(), "http");
     }
 
     #[test]

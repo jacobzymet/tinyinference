@@ -27,6 +27,7 @@ use crate::{
         RemoteHealth, RemoteModelOption, ShareUrl, mask_token, remote_base_same_host,
     },
     server::ServerProcess,
+    share_proxy::{ConnectedClientPublic, ShareActivitySummary},
 };
 
 pub type SharedApp = Arc<Mutex<App>>;
@@ -969,6 +970,9 @@ struct NetworkState {
     remote_health: Option<RemoteHealth>,
     llama_binds_loopback: bool,
     llama_endpoint: Option<String>,
+    connected_clients: Vec<ConnectedClientPublic>,
+    share_activity: ShareActivitySummary,
+    share_proxy_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1021,6 +1025,7 @@ impl NetworkState {
             })
             .collect::<Vec<_>>();
         let active = network.active_remote();
+        let (connected_clients, share_activity) = app.connected_clients();
         Self {
             expose: network.expose,
             listening_exposed: app.listening_exposed(),
@@ -1063,6 +1068,9 @@ impl NetworkState {
             } else {
                 None
             },
+            connected_clients,
+            share_activity,
+            share_proxy_error: app.share_proxy_error(),
         }
     }
 }
