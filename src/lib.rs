@@ -10,6 +10,7 @@ pub mod hub;
 pub mod instance;
 pub mod network;
 pub mod server;
+pub mod skills;
 pub mod system;
 pub mod tls;
 pub mod web;

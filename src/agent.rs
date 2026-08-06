@@ -23,9 +23,12 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::chat::{sse_error, ChatStream, CHANNEL_CAPACITY, REQUEST_TIMEOUT};
+use crate::{
+    chat::{sse_error, ChatStream, CHANNEL_CAPACITY, REQUEST_TIMEOUT},
+    skills::UserSkill,
+};
 
-const MAX_AGENT_ROUNDS: usize = 4;
+const MAX_AGENT_ROUNDS: usize = 6;
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SEARCH_RESULTS: usize = 6;
 
@@ -64,7 +67,12 @@ struct ToolCall {
 }
 
 /// Run the agent loop on a background thread and stream SSE to the client.
-pub fn stream_agent(api_base: &str, api_key: Option<&str>, mut request: AgentRequest) -> ChatStream {
+pub fn stream_agent(
+    api_base: &str,
+    api_key: Option<&str>,
+    mut request: AgentRequest,
+    user_skills: Vec<UserSkill>,
+) -> ChatStream {
     let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
     let api_base = api_base.trim_end_matches('/').to_string();
     let api_key = api_key
@@ -72,7 +80,9 @@ pub fn stream_agent(api_base: &str, api_key: Option<&str>, mut request: AgentReq
         .filter(|key| !key.is_empty())
         .map(str::to_string);
     thread::spawn(move || {
-        if let Err(error) = run_agent_loop(&api_base, api_key.as_deref(), &mut request, &tx) {
+        if let Err(error) =
+            run_agent_loop(&api_base, api_key.as_deref(), &mut request, &user_skills, &tx)
+        {
             let _ = tx.blocking_send(Ok(sse_error(&error)));
         }
     });
@@ -83,9 +93,10 @@ fn run_agent_loop(
     api_base: &str,
     api_key: Option<&str>,
     request: &mut AgentRequest,
+    user_skills: &[UserSkill],
     tx: &mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
 ) -> Result<(), String> {
-    inject_agent_system_prompt(&mut request.messages, &request.skills);
+    inject_agent_system_prompt(&mut request.messages, &request.skills, user_skills);
     let _ = tx.blocking_send(Ok(sse_agent(json!({
         "phase": "status",
         "message": "Agent mode"
@@ -103,8 +114,8 @@ fn run_agent_loop(
         let visible = strip_think_blocks(&reply);
 
         if let Some(call) = extract_tool_call(&visible) {
-            if !skill_allowed(&call.name, &request.skills) {
-                return Err(format!("Skill '{}' is not enabled.", call.name));
+            if !capability_allowed(&call.name, &request.skills, user_skills) {
+                return Err(format!("Capability '{}' is not enabled.", call.name));
             }
 
             let _ = tx.blocking_send(Ok(sse_agent(json!({
@@ -116,7 +127,7 @@ fn run_agent_loop(
                 "arguments": call.arguments,
             }))));
 
-            let result = execute_tool(&call)?;
+            let result = execute_tool(&call, user_skills)?;
             let preview = result.chars().take(240).collect::<String>();
             let _ = tx.blocking_send(Ok(sse_agent(json!({
                 "phase": "tool_result",
@@ -129,10 +140,15 @@ fn run_agent_loop(
                 "role": "assistant",
                 "content": reply,
             }));
+            let follow_up = if call.name == "activate_skill" || call.name == "read_skill" {
+                "Follow the activated skill instructions for the user's request. You may activate another skill or call web_search if needed. Otherwise reply normally without a tool_call."
+            } else {
+                "Use these results to answer the user. If you need another search or to activate a skill, emit another tool_call. Otherwise reply normally without a tool_call."
+            };
             request.messages.push(json!({
                 "role": "user",
                 "content": format!(
-                    "<tool_result name=\"{}\">\n{}\n</tool_result>\n\nUse these results to answer the user. If you need another search, emit another tool_call. Otherwise reply normally without a tool_call.",
+                    "<tool_result name=\"{}\">\n{}\n</tool_result>\n\n{follow_up}",
                     call.name, result
                 ),
             }));
@@ -146,15 +162,25 @@ fn run_agent_loop(
     Err("Agent stopped after too many tool rounds.".into())
 }
 
-fn skill_allowed(name: &str, skills: &AgentSkills) -> bool {
+fn capability_allowed(name: &str, skills: &AgentSkills, user_skills: &[UserSkill]) -> bool {
     match name {
         "web_search" => skills.web_search,
+        "activate_skill" | "read_skill" => !user_skills.is_empty(),
         _ => false,
     }
 }
 
-fn inject_agent_system_prompt(messages: &mut Vec<Value>, skills: &AgentSkills) {
-    let block = agent_system_block(skills);
+/// True when the request should enter the agent tool loop.
+pub fn should_run_agent(request: &AgentRequest, user_skills: &[UserSkill]) -> bool {
+    request.agent && (request.skills.any_enabled() || !user_skills.is_empty())
+}
+
+fn inject_agent_system_prompt(
+    messages: &mut Vec<Value>,
+    skills: &AgentSkills,
+    user_skills: &[UserSkill],
+) {
+    let block = agent_system_block(skills, user_skills);
     if block.is_empty() {
         return;
     }
@@ -173,25 +199,55 @@ fn inject_agent_system_prompt(messages: &mut Vec<Value>, skills: &AgentSkills) {
     messages.insert(0, json!({ "role": "system", "content": block }));
 }
 
-fn agent_system_block(skills: &AgentSkills) -> String {
+fn agent_system_block(skills: &AgentSkills, user_skills: &[UserSkill]) -> String {
     let mut lines: Vec<String> = vec![
-        "You are running in agent mode with callable skills.".into(),
-        "When a skill would help, emit EXACTLY one tool call in this form and nothing else after it:".into(),
+        "You are running in agent mode with callable capabilities.".into(),
+        "When a capability would help, emit EXACTLY one tool call in this form and nothing else after it:".into(),
         "<tool_call>".into(),
-        r#"{"name":"SKILL_NAME","arguments":{...}}"#.into(),
+        r#"{"name":"CAPABILITY_NAME","arguments":{...}}"#.into(),
         "</tool_call>".into(),
-        "Do not invent skill results. Wait for a <tool_result> message.".into(),
-        "You may call skills multiple times in sequence: after each <tool_result>, either emit another tool_call (for a follow-up search or different query) or reply normally with no tool_call.".into(),
+        "Do not invent capability results. Wait for a <tool_result> message.".into(),
+        "You may call capabilities multiple times in sequence: after each <tool_result>, either emit another tool_call or reply normally with no tool_call.".into(),
         "Prefer a follow-up tool_call when the first result is incomplete, stale, or misses what the user asked.".into(),
-        "If you can answer without a skill, reply normally with no tool_call.".into(),
+        "If you can answer without a capability, reply normally with no tool_call.".into(),
     ];
     if skills.web_search {
         lines.push(
-            "Available skill: web_search — search the public web via DuckDuckGo. Arguments: {\"query\":\"search terms\"}. You can run several searches one after another when that helps."
+            "Available capability: web_search — search the public web via DuckDuckGo. Arguments: {\"query\":\"search terms\"}."
                 .into(),
         );
     }
+    if !user_skills.is_empty() {
+        lines.push(
+            "Available capability: activate_skill — load a skill's full SKILL.md instructions into context. Arguments: {\"name\":\"skill name or id\"}. Only activate skills that match the user's request. read_skill is an alias.".into(),
+        );
+        lines.push(crate::skills::user_skills_catalog_block(user_skills));
+    }
     lines.join("\n")
+}
+
+/// Stage-1 only: put the skill catalog (names/descriptions) into the system prompt.
+pub fn inject_skill_catalog_into_messages(messages: &mut Vec<Value>, user_skills: &[UserSkill]) {
+    let block = crate::skills::user_skills_catalog_block(user_skills);
+    if block.is_empty() {
+        return;
+    }
+    let note = format!(
+        "{block}\n\nTo load full skill instructions you need agent mode (toggle Agent or @agent), which exposes activate_skill."
+    );
+    if let Some(first) = messages.first_mut() {
+        if first.get("role").and_then(|r| r.as_str()) == Some("system") {
+            if let Some(content) = first.get("content").and_then(|c| c.as_str()) {
+                let merged = format!("{content}\n\n{note}");
+                first
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("content".into(), Value::String(merged));
+                return;
+            }
+        }
+    }
+    messages.insert(0, json!({ "role": "system", "content": note }));
 }
 
 /// Stream one chat completion from llama-server, forwarding content deltas to
@@ -336,7 +392,7 @@ fn extract_tool_call(text: &str) -> Option<ToolCall> {
     Some(ToolCall { name, arguments })
 }
 
-fn execute_tool(call: &ToolCall) -> Result<String, String> {
+fn execute_tool(call: &ToolCall, user_skills: &[UserSkill]) -> Result<String, String> {
     match call.name.as_str() {
         "web_search" => {
             let query = call
@@ -348,7 +404,25 @@ fn execute_tool(call: &ToolCall) -> Result<String, String> {
                 .ok_or_else(|| "web_search requires a non-empty \"query\" string.".to_string())?;
             duckduckgo_search(query)
         }
-        other => Err(format!("Unknown skill '{other}'.")),
+        "activate_skill" | "read_skill" => {
+            let key = call
+                .arguments
+                .get("name")
+                .or_else(|| call.arguments.get("id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    "activate_skill requires a non-empty \"name\" (or \"id\") string.".to_string()
+                })?;
+            let skill = crate::skills::find_skill(user_skills, key).ok_or_else(|| {
+                format!(
+                    "Unknown skill '{key}'. Use a name or id from the available skills list."
+                )
+            })?;
+            Ok(skill.full_instructions())
+        }
+        other => Err(format!("Unknown capability '{other}'.")),
     }
 }
 

@@ -1047,6 +1047,69 @@
       color: var(--color-ink-2);
     }
     .field-check input { margin-top: 0.2rem; accent-color: var(--color-accent); }
+    .skills-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 0.85rem;
+    }
+    .skills-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .skills-list > li {
+      border: 1px solid var(--color-rule);
+      border-radius: 10px;
+      padding: 0.7rem 0.8rem;
+      background: var(--color-paper-2);
+      display: grid;
+      gap: 0.45rem;
+    }
+    .skills-list .skill-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.65rem;
+    }
+    .skills-list .skill-title {
+      font-weight: 600;
+      color: var(--color-ink);
+      font-size: var(--text-sm);
+    }
+    .skills-list .skill-desc {
+      margin: 0.15rem 0 0;
+      color: var(--color-muted);
+      font-size: var(--text-xs);
+      line-height: 1.4;
+    }
+    .skills-list .skill-meta {
+      color: var(--color-muted);
+      font-size: var(--text-xs);
+      font-family: var(--font-mono);
+    }
+    .skills-list .skill-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      align-items: center;
+    }
+    .skill-editor {
+      display: grid;
+      gap: 0.65rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--color-rule);
+    }
+    .skill-editor.is-hidden { display: none; }
+    .skills-empty {
+      color: var(--color-muted);
+      font-size: var(--text-sm);
+      margin: 0 0 0.75rem;
+    }
     .dialog-actions {
       flex: 0 0 auto;
       display: flex;
@@ -1800,7 +1863,7 @@
             <button type="button" role="menuitemradio" data-effort="max">Max</button>
           </div>
         </div>
-        <button type="button" class="btn btn-ghost btn-agent" id="btnAgent" aria-pressed="false" title="Agent mode — model can call skills like web search">
+        <button type="button" class="btn btn-ghost btn-agent" id="btnAgent" aria-pressed="false" title="Agent mode — model can call capabilities like web search">
           <span class="btn-agent-switch" aria-hidden="true"></span>
           Agent
         </button>
@@ -1817,7 +1880,8 @@
         <p class="settings-nav-group">Settings</p>
         <button type="button" class="settings-nav-btn is-active" data-settings-pane="personalization">Personalization</button>
         <button type="button" class="settings-nav-btn" data-settings-pane="thinking">Thinking</button>
-        <button type="button" class="settings-nav-btn" data-settings-pane="agent-skills">Agent Skills</button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="agent-capabilities">Agent Capabilities</button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="skills">Skills</button>
         <button type="button" class="settings-nav-btn" data-settings-pane="composer">Composer</button>
       </aside>
       <div class="settings-main">
@@ -1878,11 +1942,11 @@
             </div>
           </section>
 
-          <section class="settings-pane" data-settings-pane="agent-skills">
-            <h2 class="settings-pane-title">Agent Skills</h2>
-            <p class="settings-pane-lede">Skills the model can call in agent mode. Toggle Agent in the composer, or ping <code>@agent</code> once.</p>
+          <section class="settings-pane" data-settings-pane="agent-capabilities">
+            <h2 class="settings-pane-title">Agent Capabilities</h2>
+            <p class="settings-pane-lede">Tools the model can call in agent mode. Toggle Agent in the composer, or ping <code>@agent</code> once.</p>
             <div class="settings-section">
-              <h3 class="settings-section-title">Available skills</h3>
+              <h3 class="settings-section-title">Available capabilities</h3>
               <label class="field-check">
                 <input type="checkbox" id="settingSkillWebSearch" checked>
                 <span>
@@ -1892,6 +1956,46 @@
                   </span>
                 </span>
               </label>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-settings-pane="skills">
+            <h2 class="settings-pane-title">Skills</h2>
+            <p class="settings-pane-lede">Markdown skill docs (like Cursor <code>SKILL.md</code>). Every message gets only name + description. In agent mode the model can <code>activate_skill</code> to load the full markdown when relevant. Optional frontmatter: <code>name</code>, <code>description</code>.</p>
+            <div class="settings-section">
+              <div class="skills-toolbar">
+                <button type="button" class="btn btn-primary" id="btnSkillCreate">New skill</button>
+                <button type="button" class="btn btn-ghost" id="btnSkillUpload">Upload .md</button>
+                <input type="file" id="skillFileInput" accept=".md,text/markdown,text/plain" hidden>
+              </div>
+              <p id="skillsEmpty" class="skills-empty">No skills yet. Upload a markdown file or create one.</p>
+              <ul id="skillsList" class="skills-list"></ul>
+              <div id="skillEditor" class="skill-editor is-hidden">
+                <h3 class="settings-section-title" id="skillEditorTitle">Edit skill</h3>
+                <input type="hidden" id="skillEditId" value="">
+                <div class="settings-row-stack">
+                  <label class="field-label" for="skillEditName">Name</label>
+                  <input class="field-input" id="skillEditName" type="text" maxlength="64" placeholder="e.g. Code review">
+                </div>
+                <div class="settings-row-stack">
+                  <label class="field-label" for="skillEditDescription">Description</label>
+                  <input class="field-input" id="skillEditDescription" type="text" maxlength="280" placeholder="When should the model use this?">
+                  <p class="field-hint">Short trigger blurb — shown in the list and to the model.</p>
+                </div>
+                <div class="settings-row-stack">
+                  <label class="field-label" for="skillEditContent">Markdown</label>
+                  <textarea class="field-textarea" id="skillEditContent" rows="10" placeholder="# Instructions&#10;&#10;Step-by-step guidance for the model…"></textarea>
+                </div>
+                <label class="field-check">
+                  <input type="checkbox" id="skillEditEnabled" checked>
+                  <span>Enabled (include in system prompt)</span>
+                </label>
+                <div class="skills-toolbar">
+                  <button type="button" class="btn btn-primary" id="btnSkillSave">Save skill</button>
+                  <button type="button" class="btn btn-ghost" id="btnSkillCancelEdit">Cancel</button>
+                </div>
+                <p id="skillsError" class="is-hidden" style="margin:0;font-size:var(--text-xs);color:var(--color-danger)"></p>
+              </div>
             </div>
           </section>
 
@@ -2005,7 +2109,7 @@
       {
         id: 'agent',
         label: 'agent',
-        description: 'Enable skills for this message (web search, …)',
+        description: 'Enable agent capabilities for this message (web search, …)',
       },
     ];
     let mentionState = null; // { start, query, activeIndex, items }
@@ -2155,7 +2259,7 @@
       btnAgent.classList.toggle('is-on', on);
       btnAgent.setAttribute('aria-pressed', on ? 'true' : 'false');
       btnAgent.title = on
-        ? 'Agent mode on — skills can run on every message'
+        ? 'Agent mode on — capabilities can run on every message'
         : 'Agent mode off — toggle on, or type @agent for one message';
     }
 
@@ -2363,8 +2467,10 @@
       composerMentions.appendChild(chip);
     }
 
+    let userSkills = [];
+
     function anySkillEnabled() {
-      return !!settings.skillWebSearch;
+      return !!settings.skillWebSearch || userSkills.some((skill) => skill.enabled);
     }
 
     function showSettingsPane(pane) {
@@ -2389,10 +2495,120 @@
       showSettingsPane('personalization');
       settingsModal.classList.remove('is-hidden');
       document.getElementById('settingName').focus();
+      loadUserSkills();
     }
 
     function closeSettings() {
       settingsModal.classList.add('is-hidden');
+      hideSkillEditor();
+    }
+
+    function showSkillsError(error) {
+      const el = document.getElementById('skillsError');
+      if (!el) return;
+      el.textContent = error?.message || String(error || '');
+      el.classList.toggle('is-hidden', !el.textContent);
+    }
+
+    function hideSkillEditor() {
+      const editor = document.getElementById('skillEditor');
+      if (!editor) return;
+      editor.classList.add('is-hidden');
+      document.getElementById('skillEditId').value = '';
+      showSkillsError('');
+    }
+
+    function openSkillEditor(skill) {
+      const editor = document.getElementById('skillEditor');
+      editor.classList.remove('is-hidden');
+      document.getElementById('skillEditorTitle').textContent = skill?.id ? 'Edit skill' : 'New skill';
+      document.getElementById('skillEditId').value = skill?.id || '';
+      document.getElementById('skillEditName').value = skill?.name || '';
+      document.getElementById('skillEditDescription').value = skill?.description || '';
+      document.getElementById('skillEditContent').value = skill?.content || '';
+      document.getElementById('skillEditEnabled').checked = skill?.enabled !== false;
+      showSkillsError('');
+      document.getElementById('skillEditName').focus();
+      editor.scrollIntoView({ block: 'nearest' });
+    }
+
+    function renderUserSkills() {
+      const list = document.getElementById('skillsList');
+      const empty = document.getElementById('skillsEmpty');
+      if (!list || !empty) return;
+      empty.classList.toggle('is-hidden', userSkills.length > 0);
+      list.innerHTML = userSkills.map((skill) => `
+        <li data-skill-id="${escapeHtml(skill.id)}">
+          <div class="skill-head">
+            <div>
+              <div class="skill-title">${escapeHtml(skill.name)}</div>
+              <p class="skill-desc">${escapeHtml(skill.description || 'No description')}</p>
+            </div>
+            <label class="field-check" style="margin:0">
+              <input type="checkbox" data-skill-enabled ${skill.enabled ? 'checked' : ''}>
+              <span style="font-size:var(--text-xs)">On</span>
+            </label>
+          </div>
+          <div class="skill-meta">${skill.content_chars || 0} chars${skill.source_filename ? ' · ' + escapeHtml(skill.source_filename) : ''}</div>
+          <div class="skill-actions">
+            <button type="button" class="btn btn-ghost" data-skill-edit>Edit</button>
+            <button type="button" class="btn btn-ghost" data-skill-delete>Delete</button>
+          </div>
+        </li>
+      `).join('');
+    }
+
+    async function loadUserSkills() {
+      try {
+        const data = await fetch('/api/skills').then(async (response) => {
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || 'Could not load skills');
+          return body;
+        });
+        userSkills = data.skills || [];
+        renderUserSkills();
+      } catch (error) {
+        userSkills = [];
+        renderUserSkills();
+        showSkillsError(error);
+      }
+    }
+
+    async function saveSkillFromEditor() {
+      const id = document.getElementById('skillEditId').value.trim();
+      const payload = {
+        name: document.getElementById('skillEditName').value.trim(),
+        description: document.getElementById('skillEditDescription').value.trim(),
+        content: document.getElementById('skillEditContent').value,
+        enabled: document.getElementById('skillEditEnabled').checked,
+      };
+      try {
+        showSkillsError('');
+        const response = await fetch(id ? '/api/skills/' + encodeURIComponent(id) : '/api/skills', {
+          method: id ? 'PATCH' : 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Could not save skill');
+        hideSkillEditor();
+        await loadUserSkills();
+      } catch (error) {
+        showSkillsError(error);
+      }
+    }
+
+    async function importSkillFile(file) {
+      const content = await file.text();
+      const response = await fetch('/api/skills/import', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content, filename: file.name }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || 'Could not import skill');
+      await loadUserSkills();
+      openSkillEditor(body);
     }
 
     const THINKING_EFFORT_LABELS = {
@@ -2544,6 +2760,7 @@
 
     function skillLabel(name) {
       if (name === 'web_search') return 'Web search';
+      if (name === 'activate_skill' || name === 'read_skill') return 'Activate skill';
       return name || 'Skill';
     }
 
@@ -3958,6 +4175,78 @@
     document.getElementById('btnSettingsCancel').addEventListener('click', closeSettings);
     document.getElementById('btnSettingsClose').addEventListener('click', closeSettings);
     document.getElementById('btnSettingsSave').addEventListener('click', commitSettings);
+    document.getElementById('btnSkillCreate').addEventListener('click', () => {
+      openSkillEditor({
+        name: '',
+        description: '',
+        content: '# Skill\n\nDescribe what the model should do when this skill applies.\n',
+        enabled: true,
+      });
+    });
+    document.getElementById('btnSkillUpload').addEventListener('click', () => {
+      document.getElementById('skillFileInput').click();
+    });
+    document.getElementById('skillFileInput').addEventListener('change', async (event) => {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = '';
+      if (!file) return;
+      try {
+        showSkillsError('');
+        await importSkillFile(file);
+      } catch (error) {
+        showSkillsError(error);
+      }
+    });
+    document.getElementById('btnSkillSave').addEventListener('click', () => {
+      saveSkillFromEditor();
+    });
+    document.getElementById('btnSkillCancelEdit').addEventListener('click', hideSkillEditor);
+    document.getElementById('skillsList').addEventListener('click', async (event) => {
+      const row = event.target.closest('[data-skill-id]');
+      if (!row) return;
+      const id = row.getAttribute('data-skill-id');
+      const skill = userSkills.find((item) => item.id === id);
+      if (!skill) return;
+      if (event.target.closest('[data-skill-edit]')) {
+        openSkillEditor(skill);
+        return;
+      }
+      if (event.target.closest('[data-skill-delete]')) {
+        if (!window.confirm('Delete skill “' + skill.name + '”?')) return;
+        try {
+          const response = await fetch('/api/skills/' + encodeURIComponent(id), { method: 'DELETE' });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || 'Could not delete skill');
+          userSkills = body.skills || [];
+          hideSkillEditor();
+          renderUserSkills();
+        } catch (error) {
+          showSkillsError(error);
+        }
+      }
+    });
+    document.getElementById('skillsList').addEventListener('change', async (event) => {
+      const toggle = event.target.closest('[data-skill-enabled]');
+      if (!toggle) return;
+      const row = event.target.closest('[data-skill-id]');
+      if (!row) return;
+      const id = row.getAttribute('data-skill-id');
+      try {
+        const response = await fetch('/api/skills/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: !!toggle.checked }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Could not update skill');
+        const index = userSkills.findIndex((item) => item.id === id);
+        if (index >= 0) userSkills[index] = body;
+        renderUserSkills();
+      } catch (error) {
+        toggle.checked = !toggle.checked;
+        showSkillsError(error);
+      }
+    });
     document.getElementById('btnProjectCancel').addEventListener('click', closeProjectSettings);
     document.getElementById('btnProjectClose').addEventListener('click', closeProjectSettings);
     document.getElementById('btnProjectSave').addEventListener('click', commitProjectSettings);
@@ -4119,6 +4408,7 @@
 
     pollState();
     setInterval(pollState, 2000);
+    loadUserSkills();
   </script>
 </body>
 </html>

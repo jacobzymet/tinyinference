@@ -76,7 +76,13 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/copy/logs", post(copy_logs))
         .route("/api/dismiss-prompt", post(dismiss_prompt))
         .route("/api/configure-server", post(configure_server))
-        .route("/api/focus", post(focus));
+        .route("/api/focus", post(focus))
+        .route("/api/skills", get(list_skills).post(create_skill))
+        .route("/api/skills/import", post(import_skill))
+        .route(
+            "/api/skills/{id}",
+            axum::routing::patch(update_skill).delete(delete_skill),
+        );
 
     let router = Router::new()
         .route("/", get(index))
@@ -158,10 +164,11 @@ async fn chat_completions(
         .and_then(|obj| obj.remove("server_id"))
         .and_then(|v| v.as_str().map(str::to_string));
 
-    let remote = {
+    let (remote, user_skills) = {
         let app = app.lock().map_err(|_| ApiError::lock())?;
+        let user_skills = app.enabled_user_skills();
         let network = &app.config.network;
-        if network.inference_mode == InferenceMode::Remote {
+        let remote = if network.inference_mode == InferenceMode::Remote {
             let Some(url) = network.remote_chat_url() else {
                 return Err(ApiError::bad_request(
                     "Remote inference is selected but no remote URL is configured.".into(),
@@ -170,11 +177,12 @@ async fn chat_completions(
             Some((url, network.remote_token.clone()))
         } else {
             None
-        }
+        };
+        (remote, user_skills)
     };
 
     let stream = if let Some((chat_url, token)) = remote {
-        // Linked OpenAI-compatible LLM. Agent skills still run on this machine;
+        // Linked OpenAI-compatible LLM. Agent capabilities still run on this machine;
         // only model tokens go to the remote `/v1` base.
         let api_base = chat_url
             .trim_end_matches('/')
@@ -183,13 +191,18 @@ async fn chat_completions(
             .to_string();
         let key = (!token.trim().is_empty()).then_some(token.as_str());
         match serde_json::from_value::<AgentRequest>(body.clone()) {
-            Ok(request) if request.agent && request.skills.any_enabled() => {
+            Ok(request) if agent::should_run_agent(&request, &user_skills) => {
                 if request.messages.is_empty() {
                     return Err(ApiError::bad_request("messages must not be empty".into()));
                 }
-                agent::stream_agent(&api_base, key, request)
+                agent::stream_agent(&api_base, key, request, user_skills)
             }
-            _ => chat::stream_remote_completion(&chat_url, &token, body),
+            _ => {
+                if let Some(messages) = body.get_mut("messages").and_then(|v| v.as_array_mut()) {
+                    agent::inject_skill_catalog_into_messages(messages, &user_skills);
+                }
+                chat::stream_remote_completion(&chat_url, &token, body)
+            }
         }
     } else {
         let (api_base, api_key) = {
@@ -219,17 +232,21 @@ async fn chat_completions(
         // Agent mode runs a tool loop server-side; plain chat still streams through.
         // Strip tinyinference-only fields before proxying to llama-server.
         match serde_json::from_value::<AgentRequest>(body.clone()) {
-            Ok(request) if request.agent && request.skills.any_enabled() => {
+            Ok(request) if agent::should_run_agent(&request, &user_skills) => {
                 if request.messages.is_empty() {
                     return Err(ApiError::bad_request("messages must not be empty".into()));
                 }
-                agent::stream_agent(&api_base, api_key, request)
+                agent::stream_agent(&api_base, api_key, request, user_skills)
             }
             _ => {
                 let mut upstream = body;
                 if let Some(object) = upstream.as_object_mut() {
                     object.remove("agent");
                     object.remove("skills");
+                    if let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut())
+                    {
+                        agent::inject_skill_catalog_into_messages(messages, &user_skills);
+                    }
                 }
                 chat::stream_completion(&api_base, api_key, upstream)
             }
@@ -312,6 +329,78 @@ async fn delete_api_key(
     let mut app = app.lock().map_err(|_| ApiError::lock())?;
     let result = app.delete_api_key(&id).map_err(ApiError::bad_request)?;
     Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+#[derive(Debug, Serialize)]
+struct SkillsState {
+    skills: Vec<crate::skills::UserSkillPublic>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportSkillBody {
+    content: String,
+    #[serde(default)]
+    filename: Option<String>,
+}
+
+async fn list_skills(State(app): State<SharedApp>) -> Result<Json<SkillsState>, ApiError> {
+    let app = app.lock().map_err(|_| ApiError::lock())?;
+    let skills = app
+        .list_user_skills()
+        .map_err(ApiError::bad_request)?
+        .into_iter()
+        .map(|skill| skill.to_public())
+        .collect();
+    Ok(Json(SkillsState { skills }))
+}
+
+async fn create_skill(
+    State(app): State<SharedApp>,
+    Json(body): Json<crate::skills::SkillUpsert>,
+) -> Result<Json<crate::skills::UserSkillPublic>, ApiError> {
+    let app = app.lock().map_err(|_| ApiError::lock())?;
+    let skill = app
+        .create_user_skill(body)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(skill.to_public()))
+}
+
+async fn import_skill(
+    State(app): State<SharedApp>,
+    Json(body): Json<ImportSkillBody>,
+) -> Result<Json<crate::skills::UserSkillPublic>, ApiError> {
+    let app = app.lock().map_err(|_| ApiError::lock())?;
+    let skill = app
+        .import_user_skill(body.filename.as_deref(), &body.content)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(skill.to_public()))
+}
+
+async fn update_skill(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+    Json(body): Json<crate::skills::SkillUpsert>,
+) -> Result<Json<crate::skills::UserSkillPublic>, ApiError> {
+    let app = app.lock().map_err(|_| ApiError::lock())?;
+    let skill = app
+        .update_user_skill(&id, body)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(skill.to_public()))
+}
+
+async fn delete_skill(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+) -> Result<Json<SkillsState>, ApiError> {
+    let app = app.lock().map_err(|_| ApiError::lock())?;
+    app.delete_user_skill(&id).map_err(ApiError::bad_request)?;
+    let skills = app
+        .list_user_skills()
+        .map_err(ApiError::bad_request)?
+        .into_iter()
+        .map(|skill| skill.to_public())
+        .collect();
+    Ok(Json(SkillsState { skills }))
 }
 
 async fn state(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {

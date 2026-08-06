@@ -758,6 +758,55 @@ impl App {
         self.listen_addr
     }
 
+    pub fn skill_store(&self) -> crate::skills::SkillStore {
+        crate::skills::SkillStore::new(&self.config_path)
+    }
+
+    pub fn list_user_skills(&self) -> Result<Vec<crate::skills::UserSkill>, String> {
+        self.skill_store()
+            .list()
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn enabled_user_skills(&self) -> Vec<crate::skills::UserSkill> {
+        self.skill_store().enabled_skills().unwrap_or_default()
+    }
+
+    pub fn create_user_skill(
+        &self,
+        upsert: crate::skills::SkillUpsert,
+    ) -> Result<crate::skills::UserSkill, String> {
+        self.skill_store()
+            .create(upsert)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn import_user_skill(
+        &self,
+        filename: Option<&str>,
+        content: &str,
+    ) -> Result<crate::skills::UserSkill, String> {
+        self.skill_store()
+            .import_markdown(filename, content)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn update_user_skill(
+        &self,
+        id: &str,
+        upsert: crate::skills::SkillUpsert,
+    ) -> Result<crate::skills::UserSkill, String> {
+        self.skill_store()
+            .update(id, upsert)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn delete_user_skill(&self, id: &str) -> Result<(), String> {
+        self.skill_store()
+            .delete(id)
+            .map_err(|error| error.to_string())
+    }
+
     /// True when Share is on and the desired llama bind is beyond loopback.
     pub fn listening_exposed(&self) -> bool {
         if !self.config.network.expose {
