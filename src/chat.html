@@ -334,6 +334,9 @@
       background: color-mix(in oklch, var(--color-accent) 14%, var(--color-paper-2));
       color: var(--color-ink);
     }
+    .convo-item.is-streaming .convo-title {
+      color: var(--color-accent);
+    }
     .convo-title {
       flex: 1 1 auto;
       min-width: 0;
@@ -614,7 +617,13 @@
       border-bottom-color: color-mix(in oklch, var(--color-accent) 35%, var(--color-rule));
     }
 
-    .chat-viewport { flex: 1 1 auto; overflow-y: auto; }
+    .chat-viewport {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+    .chat-viewport:focus { outline: none; }
 
     /* ---------- empty state ---------- */
     .empty-state {
@@ -707,15 +716,122 @@
       padding: 0.1rem 0.32rem;
       border-radius: 4px;
     }
-    .msg-bubble pre.md-code {
-      background: var(--color-graphite);
+    .msg-bubble .md-code-block {
+      margin: 0 0 0.75rem;
       border: 1px solid var(--color-rule-2);
       border-radius: var(--radius-input);
-      padding: 0.6rem 0.75rem;
-      overflow-x: auto;
-      margin: 0 0 0.6rem;
+      background: var(--color-graphite);
+      overflow: hidden;
     }
-    .msg-bubble pre.md-code code { background: none; padding: 0; font-size: var(--text-xs); }
+    .msg-bubble .md-code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.35rem 0.55rem 0.35rem 0.75rem;
+      border-bottom: 1px solid var(--color-rule-2);
+      background: color-mix(in oklch, var(--color-paper-2) 55%, var(--color-graphite));
+    }
+    .msg-bubble .md-code-lang {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+      text-transform: lowercase;
+      letter-spacing: 0.02em;
+      min-height: 1.1rem;
+    }
+    .msg-bubble .md-code-copy {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--color-muted);
+      border-radius: 6px;
+      width: 1.7rem;
+      height: 1.7rem;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+    .msg-bubble .md-code-copy svg {
+      width: 0.95rem;
+      height: 0.95rem;
+      display: block;
+    }
+    .msg-bubble .md-code-copy:hover {
+      color: var(--color-ink);
+      background: color-mix(in oklch, var(--color-accent) 12%, transparent);
+    }
+    .msg-bubble .md-code-copy.is-copied {
+      color: var(--color-ok, var(--color-accent));
+    }
+    .msg-bubble pre.md-code {
+      margin: 0;
+      padding: 0.7rem 0.85rem;
+      overflow-x: auto;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }
+    .msg-bubble pre.md-code code {
+      background: none;
+      padding: 0;
+      font-size: var(--text-xs);
+      line-height: 1.5;
+      color: var(--color-ink-2);
+      tab-size: 2;
+    }
+    /* highlight.js token colors — tuned to chat light/dark tokens */
+    .msg-bubble .hljs-comment,
+    .msg-bubble .hljs-quote { color: var(--color-muted); font-style: italic; }
+    .msg-bubble .hljs-keyword,
+    .msg-bubble .hljs-selector-tag,
+    .msg-bubble .hljs-literal,
+    .msg-bubble .hljs-name,
+    .msg-bubble .hljs-section,
+    .msg-bubble .hljs-link { color: oklch(72% 0.14 250); }
+    .msg-bubble .hljs-string,
+    .msg-bubble .hljs-doctag,
+    .msg-bubble .hljs-title,
+    .msg-bubble .hljs-title.function_ { color: oklch(74% 0.12 155); }
+    .msg-bubble .hljs-number,
+    .msg-bubble .hljs-bullet,
+    .msg-bubble .hljs-symbol,
+    .msg-bubble .hljs-meta,
+    .msg-bubble .hljs-attr { color: oklch(76% 0.12 70); }
+    .msg-bubble .hljs-variable,
+    .msg-bubble .hljs-template-variable,
+    .msg-bubble .hljs-attribute,
+    .msg-bubble .hljs-tag,
+    .msg-bubble .hljs-built_in,
+    .msg-bubble .hljs-type,
+    .msg-bubble .hljs-params { color: oklch(76% 0.1 210); }
+    .msg-bubble .hljs-title.class_,
+    .msg-bubble .hljs-class .hljs-title { color: oklch(78% 0.1 95); }
+    .msg-bubble .hljs-regexp,
+    .msg-bubble .hljs-selector-id,
+    .msg-bubble .hljs-selector-class { color: oklch(72% 0.12 25); }
+    .msg-bubble .hljs-addition { color: oklch(74% 0.12 155); }
+    .msg-bubble .hljs-deletion { color: oklch(68% 0.14 25); }
+    html[data-theme="light"] .msg-bubble .hljs-keyword,
+    html[data-theme="light"] .msg-bubble .hljs-selector-tag,
+    html[data-theme="light"] .msg-bubble .hljs-literal,
+    html[data-theme="light"] .msg-bubble .hljs-name,
+    html[data-theme="light"] .msg-bubble .hljs-link { color: oklch(42% 0.14 250); }
+    html[data-theme="light"] .msg-bubble .hljs-string,
+    html[data-theme="light"] .msg-bubble .hljs-doctag,
+    html[data-theme="light"] .msg-bubble .hljs-title,
+    html[data-theme="light"] .msg-bubble .hljs-title.function_ { color: oklch(38% 0.12 155); }
+    html[data-theme="light"] .msg-bubble .hljs-number,
+    html[data-theme="light"] .msg-bubble .hljs-meta,
+    html[data-theme="light"] .msg-bubble .hljs-attr { color: oklch(42% 0.12 70); }
+    html[data-theme="light"] .msg-bubble .hljs-variable,
+    html[data-theme="light"] .msg-bubble .hljs-template-variable,
+    html[data-theme="light"] .msg-bubble .hljs-attribute,
+    html[data-theme="light"] .msg-bubble .hljs-built_in,
+    html[data-theme="light"] .msg-bubble .hljs-type,
+    html[data-theme="light"] .msg-bubble .hljs-params { color: oklch(40% 0.1 210); }
     .msg-error { display: block; margin-top: 0.4rem; color: var(--color-danger); font-size: var(--text-sm); }
     .msg-actions {
       display: flex;
@@ -1997,7 +2113,7 @@
         </div>
       </div>
 
-      <div class="chat-viewport" id="chatViewport">
+      <div class="chat-viewport" id="chatViewport" tabindex="0">
         <div class="empty-state" id="emptyState">
           <div class="empty-state-inner" id="emptyStateInner">
             <canvas class="orb-mark" id="orbMark" role="img" aria-label="tinyinference"></canvas>
@@ -2369,6 +2485,7 @@
   </div>
 
   <script src="/orb.js"></script>
+  <script src="/highlight.min.js"></script>
   <script>
     /* ================================================================
      * Chat
@@ -2687,8 +2804,20 @@
     let editingProjectId = null;
     let openConvoMenu = null;
     let serverReady = false;
-    let sending = false;
-    let controller = null;
+    /**
+     * In-flight assistant turns keyed by conversation id.
+     * Multiple chats can stream at once; the composer Stop/Send chrome follows
+     * whichever conversation is currently active.
+     * @type {Map<string, {
+     *   controller: AbortController,
+     *   useAgent: boolean,
+     *   partial: string,
+     *   agentSteps: Array<{name:string,detail:string,result:string,live:boolean}>,
+     *   errorMessage: string|null,
+     *   dom: null|{row:HTMLElement,statusEl:HTMLElement,thinkingLabel:HTMLElement,traceEl:HTMLElement,answerEl:HTMLElement,thinkingOrb:any},
+     * }>}
+     */
+    const activeStreams = new Map();
 
     function loadSettings() {
       try {
@@ -2979,12 +3108,33 @@
       if (clearAll) clearAll.disabled = chatCount === 0 && projectCount === 0;
     }
 
+    function isConvoBusy(convoId) {
+      return !!convoId && activeStreams.has(convoId);
+    }
+
+    function activeStream() {
+      return activeId ? activeStreams.get(activeId) || null : null;
+    }
+
+    function abortStream(convoId) {
+      const stream = activeStreams.get(convoId);
+      if (!stream) return;
+      try { stream.controller.abort(); } catch { /* ignore */ }
+    }
+
+    function abortAllStreams() {
+      for (const id of [...activeStreams.keys()]) abortStream(id);
+    }
+
     function abortActiveSend() {
-      if (controller) {
-        try { controller.abort(); } catch { /* ignore */ }
-        controller = null;
-      }
-      sending = false;
+      abortAllStreams();
+    }
+
+    function syncComposerStreamUi() {
+      const busy = isConvoBusy(activeId);
+      btnSend.classList.toggle('is-hidden', busy);
+      btnStop.classList.toggle('is-hidden', !busy);
+      updateSendEnabled();
     }
 
     function clearAllChats() {
@@ -3512,9 +3662,10 @@
       const item = document.createElement('div');
       item.className = 'convo-item' + (convo.id === activeId ? ' is-active' : '');
       if (nested) item.classList.add('is-nested');
+      if (isConvoBusy(convo.id)) item.classList.add('is-streaming');
       const title = document.createElement('span');
       title.className = 'convo-title';
-      title.textContent = convo.title || 'New chat';
+      title.textContent = (isConvoBusy(convo.id) ? '◉ ' : '') + (convo.title || 'New chat');
       const move = document.createElement('button');
       move.type = 'button';
       move.className = 'convo-move';
@@ -3833,6 +3984,16 @@
       return html;
     }
 
+    const CODE_COPY_ICON =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<rect x="9" y="9" width="13" height="13" rx="2"></rect>' +
+        '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>' +
+      '</svg>';
+    const CODE_CHECK_ICON =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M20 6 9 17l-5-5"></path>' +
+      '</svg>';
+
     function renderMarkdown(text) {
       const parts = text.split('```');
       let html = '';
@@ -3844,17 +4005,62 @@
           if (newline !== -1) {
             const maybeLang = part.slice(0, newline).trim();
             if (/^[\w+-]{0,24}$/.test(maybeLang)) {
-              lang = maybeLang;
+              lang = maybeLang.toLowerCase();
               code = part.slice(newline + 1);
             }
           }
           code = code.replace(/\n$/, '');
-          html += '<pre class="md-code"><code' + (lang ? ' data-lang="' + escapeHtml(lang) + '"' : '') + '>' + escapeHtml(code) + '</code></pre>';
+          const langClass = lang ? (' language-' + escapeHtml(lang)) : '';
+          const langLabel = lang || 'code';
+          html +=
+            '<div class="md-code-block">' +
+              '<div class="md-code-header">' +
+                '<span class="md-code-lang">' + escapeHtml(langLabel) + '</span>' +
+                '<button type="button" class="md-code-copy" aria-label="Copy code" title="Copy">' +
+                  CODE_COPY_ICON +
+                '</button>' +
+              '</div>' +
+              '<pre class="md-code"><code class="md-code-source' + langClass + '"' +
+                (lang ? ' data-lang="' + escapeHtml(lang) + '"' : '') +
+              '>' + escapeHtml(code) + '</code></pre>' +
+            '</div>';
         } else {
           html += renderBlock(part);
         }
       });
       return html;
+    }
+
+    /** Syntax-highlight fenced blocks (skip while streaming — incomplete fences flicker). */
+    function enhanceCodeBlocks(root) {
+      if (!root || !window.hljs) return;
+      root.querySelectorAll('code.md-code-source').forEach((el) => {
+        if (el.dataset.highlighted === 'yes') return;
+        try {
+          window.hljs.highlightElement(el);
+        } catch {
+          // Unknown language aliases — leave plain text.
+        }
+      });
+    }
+
+    function copyCodeBlock(btn) {
+      const block = btn.closest('.md-code-block');
+      const code = block && block.querySelector('code.md-code-source');
+      if (!code || !navigator.clipboard) return;
+      const payload = code.textContent || '';
+      navigator.clipboard.writeText(payload).then(() => {
+        btn.classList.add('is-copied');
+        btn.innerHTML = CODE_CHECK_ICON;
+        btn.setAttribute('aria-label', 'Copied');
+        btn.title = 'Copied';
+        setTimeout(() => {
+          btn.classList.remove('is-copied');
+          btn.innerHTML = CODE_COPY_ICON;
+          btn.setAttribute('aria-label', 'Copy code');
+          btn.title = 'Copy';
+        }, 1400);
+      }).catch(() => {});
     }
 
     function autoResize(el) {
@@ -3864,7 +4070,9 @@
 
     /** When true, streaming/paint keeps the viewport pinned to the latest message. */
     let stickToBottom = true;
-    const STICK_BOTTOM_PX = 96;
+    /** Remember pin state per conversation across switches. */
+    const stickByConvo = new Map();
+    const STICK_BOTTOM_PX = 48;
 
     function isNearBottom() {
       const gap = chatViewport.scrollHeight - chatViewport.scrollTop - chatViewport.clientHeight;
@@ -3877,13 +4085,22 @@
       if (force) stickToBottom = true;
     }
 
+    function unpinFromBottom() {
+      stickToBottom = false;
+    }
+
     chatViewport.addEventListener('scroll', () => {
       stickToBottom = isNearBottom();
     }, { passive: true });
     // Unpin immediately on intentional upward scroll (don't wait for layout).
     chatViewport.addEventListener('wheel', (event) => {
-      if (event.deltaY < 0) stickToBottom = false;
+      if (event.deltaY < 0) unpinFromBottom();
     }, { passive: true });
+    chatViewport.addEventListener('keydown', (event) => {
+      if (event.key === 'PageUp' || event.key === 'Home' || event.key === 'ArrowUp') {
+        unpinFromBottom();
+      }
+    });
     let touchStickY = null;
     chatViewport.addEventListener('touchstart', (event) => {
       touchStickY = event.touches[0] ? event.touches[0].clientY : null;
@@ -3891,7 +4108,7 @@
     chatViewport.addEventListener('touchmove', (event) => {
       if (touchStickY == null || !event.touches[0]) return;
       // Finger moving down → content scrolls up → user is reading earlier messages.
-      if (event.touches[0].clientY - touchStickY > 8) stickToBottom = false;
+      if (event.touches[0].clientY - touchStickY > 8) unpinFromBottom();
     }, { passive: true });
 
     function greetingForNow() {
@@ -3955,7 +4172,7 @@
     }
 
     function beginMessageEdit(row) {
-      if (sending || row.classList.contains('is-editing')) return;
+      if (isConvoBusy(activeId) || row.classList.contains('is-editing')) return;
       if (editingRow && editingRow !== row) cancelMessageEdit();
 
       const raw = row.dataset.raw || '';
@@ -3989,7 +4206,7 @@
 
       const commit = () => {
         const next = input.value.trim();
-        if (!next || sending) return;
+        if (!next || isConvoBusy(activeId)) return;
         submitEditedMessage(row, next);
       };
       btnCancel.addEventListener('click', cancelMessageEdit);
@@ -4019,7 +4236,7 @@
 
     async function submitEditedMessage(row, rawText) {
       const index = Number(row.dataset.msgIndex);
-      if (!Number.isInteger(index) || index < 0 || sending || !serverReady) return;
+      if (!Number.isInteger(index) || index < 0 || isConvoBusy(activeId) || !serverReady) return;
 
       const convo = conversations.find((item) => item.id === activeId);
       if (!convo || index >= convo.messages.length) return;
@@ -4102,6 +4319,7 @@
       row.dataset.raw = content;
       if (role === 'assistant') {
         bubble.innerHTML = renderAssistantHtml(content, { streaming: false });
+        enhanceCodeBlocks(bubble);
       } else {
         bubble.innerHTML = formatUserHtml(content);
       }
@@ -4112,10 +4330,14 @@
     function renderThread(convo) {
       cancelMessageEdit();
       chatThread.innerHTML = '';
+      // Drop any DOM handles — rows were destroyed; streams recreate on paint/select.
+      for (const stream of activeStreams.values()) {
+        stream.dom = null;
+      }
       convo.messages.forEach((message, index) => {
         chatThread.appendChild(buildBubble(message.role, message.content, index));
       });
-      scrollToBottom({ force: true });
+      scrollToBottom({ force: stickToBottom });
     }
 
     function renderSidebar() {
@@ -4187,12 +4409,21 @@
     function selectConversation(id) {
       const convo = conversations.find((item) => item.id === id);
       if (!convo) return;
+      if (activeId) stickByConvo.set(activeId, stickToBottom);
       activeId = id;
       activeProjectId = convo.projectId || null;
+      stickToBottom = stickByConvo.has(id) ? stickByConvo.get(id) : true;
       showChatView();
       renderSidebar();
       showThread(convo);
       renderThread(convo);
+      const stream = activeStreams.get(id);
+      if (stream) {
+        // Reattach live streaming UI for this conversation.
+        stream.dom = null;
+        paintStreamIntoView(convo, stream, stream.partial || '', true);
+      }
+      syncComposerStreamUi();
       chatShell.classList.remove('sidebar-open');
       composerInput.focus();
     }
@@ -4200,20 +4431,29 @@
     /** Return to the draft state — no conversation object until a message is sent. */
     function startDraft() {
       cancelMessageEdit();
+      if (activeId) stickByConvo.set(activeId, stickToBottom);
       activeId = null;
+      stickToBottom = true;
       showChatView();
       renderSidebar();
       showEmptyState();
+      syncComposerStreamUi();
       chatShell.classList.remove('sidebar-open');
       composerInput.focus();
     }
 
     function deleteConversation(id) {
       if (!confirm('Delete this conversation?')) return;
+      abortStream(id);
+      activeStreams.delete(id);
+      stickByConvo.delete(id);
       conversations = conversations.filter((item) => item.id !== id);
       saveConversations();
       if (activeId === id) startDraft();
-      else renderSidebar();
+      else {
+        renderSidebar();
+        syncComposerStreamUi();
+      }
     }
 
     function parseSseEvent(raw) {
@@ -4330,7 +4570,7 @@
     }
 
     function updateSendEnabled() {
-      btnSend.disabled = !serverReady || sending || composerInput.value.trim() === '';
+      btnSend.disabled = !serverReady || isConvoBusy(activeId) || composerInput.value.trim() === '';
     }
 
     function isRemoteChatSelection(value) {
@@ -4425,7 +4665,7 @@
           html += '<optgroup label="Remote · ' + remoteHost.replace(/</g, '&lt;').replace(/"/g, '&quot;') + '">';
           html += remoteOptions.map((o) =>
             '<option value="' + o.value.replace(/"/g, '&quot;') + '">'
-            + o.label.replace(/</g, '&lt;') + ' · Remote</option>'
+            + o.label.replace(/</g, '&lt;') + '</option>'
           ).join('');
           html += '</optgroup>';
         }
@@ -4533,7 +4773,7 @@
 
     async function sendMessage() {
       const typed = composerInput.value.trim();
-      if (!typed || sending || !serverReady) return;
+      if (!typed || !serverReady || isConvoBusy(activeId)) return;
       cancelMessageEdit();
       showChatView();
 
@@ -4576,27 +4816,28 @@
       closeMentionMenu();
       scrollToBottom({ force: true });
 
-      await runAssistantTurn(convo, { useAgent, text });
+      // Fire-and-forget so switching chats does not await this turn.
+      void runAssistantTurn(convo, { useAgent, text });
     }
 
-    /** Stream an assistant reply for the current conversation tail. */
-    async function runAssistantTurn(convo, { useAgent, text }) {
-      if (sending || !serverReady) return;
+    function ensureStreamDom(convo, stream) {
+      if (activeId !== convo.id) return null;
+      if (stream.dom && stream.dom.row.isConnected) return stream.dom;
 
       const assistantRow = document.createElement('div');
       assistantRow.className = 'msg msg-role-assistant';
+      assistantRow.dataset.streamId = convo.id;
       assistantRow.dataset.msgIndex = String(convo.messages.length);
       const bubble = document.createElement('div');
       bubble.className = 'msg-bubble';
 
-      // Persistent status row — never wiped via innerHTML, so the orb keeps spinning.
       const statusEl = document.createElement('div');
       statusEl.className = 'thinking';
       const orbCanvas = document.createElement('canvas');
       orbCanvas.className = 'orb-sm';
       const thinkingLabel = document.createElement('span');
       thinkingLabel.className = 'thinking-label';
-      thinkingLabel.textContent = useAgent ? 'Agent working' : 'Working';
+      thinkingLabel.textContent = stream.useAgent ? 'Agent working' : 'Working';
       statusEl.appendChild(orbCanvas);
       statusEl.appendChild(thinkingLabel);
 
@@ -4612,98 +4853,131 @@
       attachMessageActions(assistantRow);
       chatThread.appendChild(assistantRow);
       const thinkingOrb = mountOrb(orbCanvas, 20);
-      scrollToBottom({ force: true });
+      stream.dom = { row: assistantRow, statusEl, thinkingLabel, traceEl, answerEl, thinkingOrb };
+      return stream.dom;
+    }
 
-      sending = true;
-      controller = new AbortController();
-      btnSend.classList.add('is-hidden');
-      btnStop.classList.remove('is-hidden');
-      updateSendEnabled();
+    function paintStreamIntoView(convo, stream, replyText, streaming) {
+      stream.partial = replyText;
+      const { cleaned, memory } = applyMemoryUpdateProtocol(replyText, { streaming });
+      if (memory != null && convo.projectId) {
+        persistProjectMemory(convo.projectId, memory);
+      }
+      if (activeId !== convo.id) {
+        // Background stream — keep state only; sidebar shows the live marker.
+        return;
+      }
+      const dom = ensureStreamDom(convo, stream);
+      if (!dom) return;
+      const { row, statusEl, thinkingLabel, traceEl, answerEl, thinkingOrb } = dom;
+      const renderAgentTrace = () => stream.agentSteps.map((step) => agentStepHtml(step)).join('');
+      if (stream.agentSteps.length > 0) {
+        traceEl.innerHTML = renderAgentTrace();
+        traceEl.classList.remove('is-hidden');
+      }
+      if (cleaned) {
+        answerEl.innerHTML = renderAssistantHtml(cleaned, { streaming });
+        if (!streaming) enhanceCodeBlocks(answerEl);
+        scrollThinkStreams(answerEl);
+      } else if (!streaming) {
+        answerEl.innerHTML = '';
+      }
+      const thinkingOpen = streaming && isThinkingOpen(cleaned);
+      const toolLive = stream.agentSteps.some((step) => step.live);
+      if (stream.useAgent) {
+        statusEl.classList.remove('is-hidden');
+        if (thinkingOpen && !toolLive) thinkingLabel.textContent = 'Thinking';
+      } else if (thinkingOpen) {
+        statusEl.classList.remove('is-hidden');
+        thinkingLabel.textContent = 'Thinking';
+      } else if (cleaned) {
+        statusEl.classList.add('is-hidden');
+        thinkingOrb.stop();
+      }
+      row.dataset.raw = cleaned;
+      // Never force — respect user scroll-away while tokens arrive.
+      scrollToBottom();
+    }
 
-      let errorMessage = null;
-      let agentSteps = []; // { name, detail, result, live }
-      const renderAgentTrace = () => agentSteps.map((step) => agentStepHtml(step)).join('');
-      const paintBubble = (replyText, streaming) => {
-        const { cleaned, memory } = applyMemoryUpdateProtocol(replyText, { streaming });
-        if (memory != null && convo.projectId) {
-          persistProjectMemory(convo.projectId, memory);
-        }
-        if (agentSteps.length > 0) {
-          traceEl.innerHTML = renderAgentTrace();
-          traceEl.classList.remove('is-hidden');
-        }
-        if (cleaned) {
-          answerEl.innerHTML = renderAssistantHtml(cleaned, { streaming });
-          scrollThinkStreams(answerEl);
-        } else if (!streaming) {
-          answerEl.innerHTML = '';
-        }
-        const thinkingOpen = streaming && isThinkingOpen(cleaned);
-        const toolLive = agentSteps.some((step) => step.live);
-        // Keep the Thinking pill up while reasoning streams; hide once the answer starts.
-        if (useAgent) {
-          statusEl.classList.remove('is-hidden');
-          if (thinkingOpen && !toolLive) thinkingLabel.textContent = 'Thinking';
-        } else if (thinkingOpen) {
-          statusEl.classList.remove('is-hidden');
-          thinkingLabel.textContent = 'Thinking';
-        } else if (cleaned) {
-          statusEl.classList.add('is-hidden');
-          thinkingOrb.stop();
-        }
-        assistantRow.dataset.raw = cleaned;
-        scrollToBottom();
+    /** Stream an assistant reply; safe to leave the conversation while it runs. */
+    async function runAssistantTurn(convo, { useAgent, text }) {
+      if (!serverReady || activeStreams.has(convo.id)) return;
+
+      const controller = new AbortController();
+      const stream = {
+        controller,
+        useAgent,
+        partial: '',
+        agentSteps: [],
+        errorMessage: null,
+        dom: null,
       };
+      activeStreams.set(convo.id, stream);
+      renderSidebar();
+      syncComposerStreamUi();
+      if (activeId === convo.id) {
+        ensureStreamDom(convo, stream);
+        scrollToBottom({ force: true });
+      }
+
       const typer = createStreamTyper((replyText, streaming) => {
-        if (isThinkingOpen(replyText)) {
-          thinkingLabel.textContent = 'Thinking';
-        } else if (useAgent) {
-          thinkingLabel.textContent = 'Writing answer';
-        } else {
-          thinkingLabel.textContent = 'Working…';
+        if (activeId === convo.id && stream.dom) {
+          if (isThinkingOpen(replyText)) {
+            stream.dom.thinkingLabel.textContent = 'Thinking';
+          } else if (useAgent) {
+            stream.dom.thinkingLabel.textContent = 'Writing answer';
+          } else {
+            stream.dom.thinkingLabel.textContent = 'Working…';
+          }
         }
-        paintBubble(replyText, streaming);
+        paintStreamIntoView(convo, stream, replyText, streaming);
       });
       const onAgentEvent = (payload) => {
         if (payload.phase === 'content_clear') {
           typer.clear();
-          answerEl.innerHTML = '';
-          assistantRow.dataset.raw = '';
+          stream.partial = '';
+          if (stream.dom) {
+            stream.dom.answerEl.innerHTML = '';
+            stream.dom.row.dataset.raw = '';
+          }
         } else if (payload.phase === 'tool_call') {
           typer.clear();
-          answerEl.innerHTML = '';
-          assistantRow.dataset.raw = '';
+          stream.partial = '';
+          if (stream.dom) {
+            stream.dom.answerEl.innerHTML = '';
+            stream.dom.row.dataset.raw = '';
+          }
           const detail = payload.arguments && payload.arguments.query
             ? String(payload.arguments.query)
             : '';
-          agentSteps.forEach((step) => { step.live = false; });
-          agentSteps.push({
+          stream.agentSteps.forEach((step) => { step.live = false; });
+          stream.agentSteps.push({
             name: payload.name || 'skill',
             detail,
             result: '',
             live: true,
           });
-          thinkingLabel.textContent = skillLabel(payload.name) + '…';
+          if (stream.dom) stream.dom.thinkingLabel.textContent = skillLabel(payload.name) + '…';
         } else if (payload.phase === 'tool_result') {
-          const last = agentSteps[agentSteps.length - 1];
+          const last = stream.agentSteps[stream.agentSteps.length - 1];
           if (last && last.name === (payload.name || last.name)) {
             last.live = false;
             last.result = payload.preview
               ? String(payload.preview).replace(/\s+/g, ' ').trim().slice(0, 180)
               : 'Done';
           } else {
-            agentSteps.push({
+            stream.agentSteps.push({
               name: payload.name || 'skill',
               detail: '',
               result: payload.preview ? String(payload.preview).slice(0, 180) : 'Done',
               live: false,
             });
           }
-          thinkingLabel.textContent = 'Reading results';
+          if (stream.dom) stream.dom.thinkingLabel.textContent = 'Reading results';
         } else if (payload.phase === 'status' && payload.message) {
-          thinkingLabel.textContent = String(payload.message);
+          if (stream.dom) stream.dom.thinkingLabel.textContent = String(payload.message);
         }
-        paintBubble(typer.shown, true);
+        paintStreamIntoView(convo, stream, typer.shown, true);
       };
 
       const apiMessages = convo.messages.map((message) => {
@@ -4715,7 +4989,6 @@
           content: parseAgentMention(message.content).text,
         };
       });
-      // Ensure the latest user turn uses the cleaned text for this request.
       if (apiMessages.length > 0) {
         const last = apiMessages[apiMessages.length - 1];
         if (last.role === 'user') last.content = text;
@@ -4773,9 +5046,9 @@
             if (!parsed || parsed.data === '' || parsed.data === '[DONE]') continue;
             if (parsed.event === 'error') {
               try {
-                errorMessage = JSON.parse(parsed.data).error || parsed.data;
+                stream.errorMessage = JSON.parse(parsed.data).error || parsed.data;
               } catch {
-                errorMessage = parsed.data;
+                stream.errorMessage = parsed.data;
               }
               continue;
             }
@@ -4807,67 +5080,109 @@
         }
       } catch (error) {
         if (error.name !== 'AbortError') {
-          errorMessage = error.message || 'The request failed.';
+          stream.errorMessage = error.message || 'The request failed.';
         }
       }
 
-      // Snap any remaining buffered characters — never delay finish for the effect.
       typer.flush();
+      if (!conversations.some((item) => item.id === convo.id)) {
+        if (stream.dom?.thinkingOrb) stream.dom.thinkingOrb.stop();
+        activeStreams.delete(convo.id);
+        renderSidebar();
+        syncComposerStreamUi();
+        return;
+      }
       const extracted = applyMemoryUpdateProtocol(typer.target, { streaming: false });
       if (extracted.memory != null && convo.projectId) {
         persistProjectMemory(convo.projectId, extracted.memory);
       }
       let assistantText = extracted.cleaned;
-      if (!assistantText && extracted.memory != null && !errorMessage) {
+      if (!assistantText && extracted.memory != null && !stream.errorMessage) {
         assistantText = 'Updated project memory.';
       }
 
-      thinkingOrb.stop();
-      agentSteps.forEach((step) => { step.live = false; });
-      if (errorMessage && !assistantText) {
-        if (agentSteps.length > 0) {
-          traceEl.innerHTML = renderAgentTrace();
-          traceEl.classList.remove('is-hidden');
+      stream.agentSteps.forEach((step) => { step.live = false; });
+      const viewing = activeId === convo.id;
+      let dom = viewing ? ensureStreamDom(convo, stream) : stream.dom;
+
+      if (viewing && dom) {
+        if (stream.errorMessage && !assistantText) {
+          if (stream.agentSteps.length > 0) {
+            dom.traceEl.innerHTML = stream.agentSteps.map((step) => agentStepHtml(step)).join('');
+            dom.traceEl.classList.remove('is-hidden');
+          }
+          dom.answerEl.innerHTML = '<span class="msg-error">' + escapeHtml(stream.errorMessage) + '</span>';
+        } else if (stream.errorMessage) {
+          paintStreamIntoView(convo, stream, assistantText, false);
+          dom = stream.dom;
+          if (dom) {
+            dom.answerEl.insertAdjacentHTML(
+              'beforeend',
+              '<span class="msg-error">' + escapeHtml(stream.errorMessage) + '</span>'
+            );
+          }
+        } else if (!assistantText) {
+          if (stream.agentSteps.length > 0) {
+            dom.traceEl.innerHTML = stream.agentSteps.map((step) => agentStepHtml(step)).join('');
+            dom.traceEl.classList.remove('is-hidden');
+          }
+          dom.answerEl.innerHTML = '<span class="msg-error">No response.</span>';
+        } else {
+          paintStreamIntoView(convo, stream, assistantText, false);
+          dom = stream.dom;
         }
-        answerEl.innerHTML = '<span class="msg-error">' + escapeHtml(errorMessage) + '</span>';
-      } else if (errorMessage) {
-        paintBubble(assistantText, false);
-        answerEl.insertAdjacentHTML('beforeend', '<span class="msg-error">' + escapeHtml(errorMessage) + '</span>');
-      } else if (!assistantText) {
-        if (agentSteps.length > 0) {
-          traceEl.innerHTML = renderAgentTrace();
-          traceEl.classList.remove('is-hidden');
+        if (dom) {
+          dom.thinkingOrb.stop();
+          dom.statusEl.classList.add('is-hidden');
+          delete dom.row.dataset.streamId;
         }
-        answerEl.innerHTML = '<span class="msg-error">No response.</span>';
-      } else {
-        paintBubble(assistantText, false);
       }
-      // Drop the live status row once the turn finishes.
-      statusEl.classList.add('is-hidden');
 
       if (assistantText) {
         convo.messages.push({ role: 'assistant', content: assistantText });
-        assistantRow.dataset.msgIndex = String(convo.messages.length - 1);
-        assistantRow.dataset.raw = assistantText;
+        if (dom && dom.row.isConnected) {
+          dom.row.dataset.msgIndex = String(convo.messages.length - 1);
+          dom.row.dataset.raw = assistantText;
+        }
         convo.updatedAt = Date.now();
         if (convo.projectId) {
           const project = getProject(convo.projectId);
           if (project) project.updatedAt = Date.now();
         }
         saveConversations();
-        renderSidebar();
+      } else if (!viewing && stream.errorMessage) {
+        // Persist a short error so returning to the chat is not blank after a failed background turn.
+        convo.messages.push({
+          role: 'assistant',
+          content: 'Error: ' + stream.errorMessage,
+        });
+        convo.updatedAt = Date.now();
+        saveConversations();
       }
 
-      sending = false;
-      controller = null;
-      btnSend.classList.remove('is-hidden');
-      btnStop.classList.add('is-hidden');
-      updateSendEnabled();
-      composerInput.focus();
+      activeStreams.delete(convo.id);
+      renderSidebar();
+      syncComposerStreamUi();
+      if (activeId === convo.id) {
+        // If we finished while away and came back to a thread without the row, re-render.
+        if (!dom || !dom.row.isConnected) {
+          renderThread(convo);
+        }
+        composerInput.focus();
+      }
     }
 
+    chatThread.addEventListener('click', (event) => {
+      const btn = event.target.closest('.md-code-copy');
+      if (!btn || !chatThread.contains(btn)) return;
+      event.preventDefault();
+      copyCodeBlock(btn);
+    });
+
     btnSend.addEventListener('click', sendMessage);
-    btnStop.addEventListener('click', () => controller?.abort());
+    btnStop.addEventListener('click', () => {
+      if (activeId) abortStream(activeId);
+    });
     btnAgent.addEventListener('click', () => {
       settings.agentMode = !settings.agentMode;
       saveSettings({ ...settings });

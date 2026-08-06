@@ -2352,8 +2352,12 @@
         ? 'restart model'
         : (next.listening_exposed ? 'sharing' : (next.expose ? 'share on' : ''));
       const linkName = next.remote_name || next.remote_label || 'linked';
+      const remoteKind = next.remote_health?.kind
+        || (next.remote_health?.ok ? 'ready' : (remoteSaved ? 'error' : ''));
       const chatPart = chatLinked
-        ? (next.remote_health?.ok ? ('chat → ' + linkName) : 'linked · check')
+        ? (next.remote_health?.ok
+          ? ('chat → ' + linkName)
+          : (remoteKind === 'waiting' ? 'linked · waiting' : (remoteKind === 'auth' ? 'linked · auth' : 'linked · check')))
         : (remoteSaved ? 'link saved' : '');
       if (sharePart && chatPart) {
         chip.textContent = sharePart + ' · ' + chatPart;
@@ -2538,7 +2542,7 @@
       const remoteList = document.getElementById('networkRemoteList');
       if (remoteEmpty) remoteEmpty.classList.toggle('is-hidden', remotes.length > 0);
       const remoteSignature = JSON.stringify(remotes.map((r) => [
-        r.id, r.name, r.base, r.active, r.token_set, r.health?.ok, r.health?.model, r.health?.error, r.health?.status,
+        r.id, r.name, r.base, r.active, r.token_set, r.health?.ok, r.health?.kind, r.health?.model, r.health?.error, r.health?.status,
       ]));
       const remoteFocus = document.activeElement && remoteList && remoteList.contains(document.activeElement)
         ? document.activeElement.getAttribute('data-remote-name')
@@ -2547,13 +2551,30 @@
         lastRemoteSignature = remoteSignature;
         remoteList.innerHTML = remotes.map((remote) => {
           const health = remote.health || {};
-          const ready = !!(health.ok && remote.token_set);
-          const status = !remote.token_set
-            ? 'Needs API key from the host'
-            : (health.ok
-              ? ('Reachable · ' + (health.model || 'model') + (health.status ? ' · ' + health.status : ''))
-              : ('Unreachable · ' + (health.error || 'check URL and key')));
-          const useLabel = remote.active ? 'In use' : (ready ? 'Use for chat' : 'Fix to use');
+          const kind = health.kind || (health.ok ? 'ready' : 'error');
+          const canUse = !!remote.token_set && (health.ok || kind === 'waiting' || kind === 'empty');
+          let status;
+          if (!remote.token_set) {
+            status = 'Needs API key from the host';
+          } else if (kind === 'ready' || health.ok) {
+            status = 'Reachable · ' + (health.model || 'model') + (health.status ? ' · ' + health.status : '');
+          } else if (kind === 'waiting') {
+            status = 'Waiting · start the model on that device (Share on)';
+          } else if (kind === 'empty') {
+            status = 'Reachable · no models running on the host yet';
+          } else if (kind === 'auth') {
+            status = 'Auth failed · check API key';
+          } else {
+            status = 'Can’t reach host · ' + (health.error || 'check URL');
+          }
+          const useLabel = remote.active
+            ? 'In use'
+            : (canUse ? 'Use for chat' : (kind === 'auth' || !remote.token_set ? 'Fix to use' : 'Check link'));
+          const useTitle = remote.active
+            ? ''
+            : (canUse
+              ? (kind === 'waiting' ? 'Link looks fine — start the model on the host when you want to chat' : '')
+              : (!remote.token_set ? 'Add the host API key first' : 'Update the URL or API key'));
           return `
             <li class="manager-card${remote.active ? ' is-active' : ''}" data-remote-id="${escapeHtml(remote.id)}">
               <div class="manager-card-head">
@@ -2563,7 +2584,7 @@
                   <span>${escapeHtml(status)}${remote.active ? ' · active for chat' : ''}</span>
                 </div>
                 <div class="manager-card-actions">
-                  <button type="button" class="btn btn-primary" data-remote-activate="${escapeHtml(remote.id)}" ${remote.active || !ready ? 'disabled' : ''} title="${ready || remote.active ? '' : 'Add a working API key first'}">${useLabel}</button>
+                  <button type="button" class="btn btn-primary" data-remote-activate="${escapeHtml(remote.id)}" ${remote.active || !canUse ? 'disabled' : ''} title="${escapeHtml(useTitle)}">${useLabel}</button>
                   <button type="button" class="btn btn-ghost" data-remote-edit="${escapeHtml(remote.id)}">Edit</button>
                   <button type="button" class="btn btn-ghost" data-remote-delete="${escapeHtml(remote.id)}">Remove</button>
                 </div>
@@ -2891,12 +2912,21 @@
       }
       if (detail) {
         const host = net.remote_label || net.remote_base || 'remote';
+        const kind = net.remote_kind || (net.remote_ok ? 'ready' : 'error');
         if (via && net.remote_ok) {
           detail.textContent = host + ' · reachable · Chat uses this device’s models';
+        } else if (via && kind === 'waiting') {
+          detail.textContent = host + ' · waiting — start the model on that device (Share on)';
+        } else if (via && kind === 'empty') {
+          detail.textContent = host + ' · reachable — no models running on the host yet';
+        } else if (via && kind === 'auth') {
+          detail.textContent = host + ' · auth failed — check the API key on Devices';
         } else if (via) {
-          detail.textContent = host + ' · unreachable — fix on Devices (URL / API key / host model)';
+          detail.textContent = host + ' · can’t reach host — check URL on Devices';
         } else if (net.remote_ok || models.length) {
           detail.textContent = host + ' · reachable · switch to Linked LLM to use these in Chat';
+        } else if (kind === 'waiting') {
+          detail.textContent = host + ' · waiting for host model · open Devices to manage';
         } else {
           detail.textContent = host + ' · saved · open Devices to manage';
         }
@@ -2940,11 +2970,22 @@
           useLinked.disabled = false;
           useLinked.textContent = 'Choose which link…';
         } else if (!net.remote_ok && !models.length) {
+          const kind = net.remote_kind || 'error';
           useLinked.disabled = false;
-          useLinked.textContent = 'Fix link on Devices';
+          if (kind === 'waiting' || kind === 'empty') {
+            useLinked.textContent = 'Use for chat';
+            useLinked.title = 'Link looks fine — start the model on the host when you want to chat';
+          } else if (kind === 'auth') {
+            useLinked.textContent = 'Fix API key on Devices';
+            useLinked.title = 'The host rejected this API key';
+          } else {
+            useLinked.textContent = 'Check link on Devices';
+            useLinked.title = 'Could not reach the host URL';
+          }
         } else {
           useLinked.disabled = false;
           useLinked.textContent = 'Use for chat';
+          useLinked.title = '';
         }
       }
       if (useLocal) {
@@ -2974,12 +3015,19 @@
       section.classList.remove('is-hidden');
       const host = net.remote_name || net.remote_label || 'linked device';
       if (hint) {
+        const kind = net.remote_kind || (net.remote_ok ? 'ready' : 'error');
         if (via && models.length) {
           hint.textContent = 'From “' + host + '”. Not stored on this PC — open Chat and choose one in the model selector.';
+        } else if (via && kind === 'waiting') {
+          hint.textContent = 'Chat is linked to “' + host + '”. Start the model on that device (Share on) — the link itself looks fine.';
+        } else if (via && kind === 'auth') {
+          hint.textContent = 'Chat is linked to “' + host + '”, but the API key was rejected. Update it on Devices.';
         } else if (via) {
-          hint.textContent = 'Chat is linked to “' + host + '”, but no remote models responded yet. Check Share, API key, and that models are running on the host.';
+          hint.textContent = 'Chat is linked to “' + host + '”, but no remote models responded yet. Check Share and that a model is running on the host.';
         } else if (models.length) {
           hint.textContent = 'From “' + host + '”. Switch chat to Linked LLM (or Use linked for chat), then open Chat to use these in the model selector.';
+        } else if (kind === 'waiting') {
+          hint.textContent = 'A linked device is saved. Start the model on the host, then Use linked for chat.';
         } else {
           hint.textContent = 'A linked device is saved. Use linked for chat to connect, then remote models appear here and in Chat.';
         }
@@ -3032,12 +3080,23 @@
         : (net.expose ? 'share on' : '');
       if (via) {
         const label = net.remote_name || net.remote_model || net.remote_label || 'linked';
-        const chatBit = net.remote_ok ? ('chat → ' + label) : 'linked · unreachable';
+        const kind = net.remote_kind || (net.remote_ok ? 'ready' : 'error');
+        let chatBit;
+        if (net.remote_ok) chatBit = 'chat → ' + label;
+        else if (kind === 'waiting') chatBit = 'linked · waiting';
+        else if (kind === 'auth') chatBit = 'linked · auth';
+        else chatBit = 'linked · check';
         badge.textContent = shareBit ? (shareBit + ' · ' + chatBit) : chatBit;
-        badge.className = 'status-chip linked-chip ' + (net.remote_ok ? 'status-ready' : 'status-failed');
-        badge.title = shareBit
-          ? 'This PC is sharing, and Chat is routed to a linked LLM'
-          : 'Chat is routed to a linked LLM';
+        badge.className = 'status-chip linked-chip ' + (
+          net.remote_ok ? 'status-ready' : (kind === 'waiting' ? 'status-starting' : 'status-failed')
+        );
+        badge.title = net.remote_ok
+          ? (shareBit
+            ? 'This PC is sharing, and Chat is routed to a linked LLM'
+            : 'Chat is routed to a linked LLM')
+          : (kind === 'waiting'
+            ? 'Chat is linked, but the host model is not up yet'
+            : (kind === 'auth' ? 'Chat is linked, but the API key was rejected' : 'Chat is linked; check the host URL'));
       } else if (saved) {
         const count = net.remote_count || 1;
         const linkBit = count > 1 ? (count + ' links') : 'link saved';
@@ -4606,7 +4665,11 @@
     document.getElementById('btnDashUseLinked').addEventListener('click', () => {
       const net = state?.network || networkState || {};
       const count = net.remote_count || 0;
-      if (!net.active_remote_id || count > 1 || !net.remote_ok) {
+      const kind = net.remote_kind || (net.remote_ok ? 'ready' : 'error');
+      const canActivate = !!net.active_remote_id
+        && count <= 1
+        && (net.remote_ok || kind === 'waiting' || kind === 'empty');
+      if (!canActivate) {
         showStage('network');
         refreshNetwork();
         return;

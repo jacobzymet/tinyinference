@@ -1606,9 +1606,26 @@ fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer>
     })
 }
 
+/// Why a linked remote is / isn’t usable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteHealthKind {
+    /// `/models` succeeded with at least one model.
+    Ready,
+    /// TCP/TLS never came up — usually the host hasn’t started Share/model yet.
+    Waiting,
+    /// Connected but rejected the API key.
+    Auth,
+    /// HTTP 200 but empty model list.
+    Empty,
+    /// Bad URL, DNS, cert, or other configuration/transport failure.
+    Error,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteHealth {
     pub ok: bool,
+    pub kind: RemoteHealthKind,
     pub model: Option<String>,
     pub status: Option<String>,
     pub error: Option<String>,
@@ -1697,17 +1714,85 @@ fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
     match fetch_remote_models(base, token) {
         Ok(models) => RemoteHealth {
             ok: true,
+            kind: RemoteHealthKind::Ready,
             model: models.first().cloned(),
             status: Some("ready".into()),
             error: None,
         },
-        Err(error) => RemoteHealth {
-            ok: false,
-            model: None,
-            status: None,
-            error: Some(error),
-        },
+        Err(error) => {
+            let kind = classify_remote_error(&error);
+            RemoteHealth {
+                ok: false,
+                kind,
+                model: None,
+                status: Some(kind.as_status().into()),
+                error: Some(error),
+            }
+        }
     }
+}
+
+impl RemoteHealthKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Waiting => "waiting",
+            Self::Auth => "auth",
+            Self::Empty => "empty",
+            Self::Error => "error",
+        }
+    }
+
+    fn as_status(self) -> &'static str {
+        self.as_str()
+    }
+
+    /// Link credentials/URL look usable enough to activate for chat.
+    pub fn can_activate(self) -> bool {
+        matches!(self, Self::Ready | Self::Waiting | Self::Empty)
+    }
+}
+
+/// Map transport / HTTP failures to a user-facing health kind.
+pub fn classify_remote_error(error: &str) -> RemoteHealthKind {
+    let e = error.to_ascii_lowercase();
+    if e.contains("no remote url") {
+        return RemoteHealthKind::Error;
+    }
+    if e.contains("401")
+        || e.contains("403")
+        || e.contains("unauthorized")
+        || e.contains("forbidden")
+    {
+        return RemoteHealthKind::Auth;
+    }
+    if e.contains("returned no models") || e.contains("no models") {
+        return RemoteHealthKind::Empty;
+    }
+    // DNS / hostname mistakes are config, not “start the model”.
+    if e.contains("name or service not known")
+        || e.contains("nodename nor servname")
+        || e.contains("no such host")
+        || e.contains("getaddrinfo")
+        || e.contains("dns error")
+    {
+        return RemoteHealthKind::Error;
+    }
+    // Nothing accepting on the share port — host model/Share not up yet.
+    if e.contains("timeout")
+        || e.contains("timed out")
+        || e.contains("connection refused")
+        || e.contains("actively refused")
+        || e.contains("failed to connect")
+        || e.contains("connection reset")
+        || e.contains("network unreachable")
+        || e.contains("network is unreachable")
+        || e.contains("host is down")
+        || e.contains("no route to host")
+    {
+        return RemoteHealthKind::Waiting;
+    }
+    RemoteHealthKind::Error
 }
 
 fn fetch_remote_models(base: &str, token: &str) -> Result<Vec<String>, String> {
@@ -1936,5 +2021,33 @@ mod tests {
         let second_id = cfg.api_keys[1].id.clone();
         assert!(cfg.delete_api_key(&first_id).is_ok());
         assert!(cfg.delete_api_key(&second_id).is_err());
+    }
+
+    #[test]
+    fn classify_remote_error_waiting_vs_auth() {
+        assert_eq!(
+            classify_remote_error("timeout: global"),
+            RemoteHealthKind::Waiting
+        );
+        assert_eq!(
+            classify_remote_error(
+                "Connection failed: tcp connect error: No connection could be made because the target machine actively refused it."
+            ),
+            RemoteHealthKind::Waiting
+        );
+        assert_eq!(
+            classify_remote_error("Remote responded with 401"),
+            RemoteHealthKind::Auth
+        );
+        assert_eq!(
+            classify_remote_error("Remote /models returned no models"),
+            RemoteHealthKind::Empty
+        );
+        assert_eq!(
+            classify_remote_error("failed to lookup address information: Name or service not known"),
+            RemoteHealthKind::Error
+        );
+        assert!(RemoteHealthKind::Waiting.can_activate());
+        assert!(!RemoteHealthKind::Auth.can_activate());
     }
 }

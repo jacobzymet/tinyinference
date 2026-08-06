@@ -98,6 +98,7 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/", get(index))
         .route("/chat", get(chat_page))
         .route("/orb.js", get(orb_script))
+        .route("/highlight.min.js", get(highlight_script))
         .route("/ti.png", get(app_icon_png))
         .route("/ti-transparent-bg-white.png", get(ui_mark_white))
         .route("/ti-transparent-bg-black.png", get(ui_mark_black))
@@ -147,6 +148,13 @@ async fn orb_script() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         ORB_JS,
+    )
+}
+
+async fn highlight_script() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        HIGHLIGHT_JS,
     )
 }
 
@@ -926,6 +934,9 @@ struct NetworkSummary {
     /// Chat is currently routed to the active linked LLM.
     via_remote: bool,
     remote_ok: bool,
+    /// `ready` | `waiting` | `auth` | `empty` | `error` — see [`RemoteHealthKind`].
+    remote_kind: Option<&'static str>,
+    remote_error: Option<String>,
     remote_model: Option<String>,
     remote_status: Option<String>,
     /// All models found on the linked host (primary + sibling ports).
@@ -1128,6 +1139,12 @@ impl NetworkSummary {
             via_remote,
             // Stay false until a probe succeeds — do not optimistically mark remotes ready.
             remote_ok: health.as_ref().is_some_and(|h| h.ok) || !remote_models.is_empty(),
+            remote_kind: if !remote_models.is_empty() {
+                Some("ready")
+            } else {
+                health.as_ref().map(|h| h.kind.as_str())
+            },
+            remote_error: health.as_ref().and_then(|h| h.error.clone()),
             remote_model,
             remote_status: health.as_ref().and_then(|h| h.status.clone()).or_else(|| {
                 (!remote_models.is_empty()).then(|| "ready".to_string())
@@ -1765,6 +1782,7 @@ impl IntoResponse for ApiError {
 const INDEX_HTML: &str = include_str!("index.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 const ORB_JS: &str = include_str!("orb.js");
+const HIGHLIGHT_JS: &str = include_str!("vendor/highlight.min.js");
 const APP_ICON_PNG: &[u8] = include_bytes!("../assets/ti.png");
 const UI_MARK_WHITE_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-white.png");
 const UI_MARK_BLACK_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-black.png");
