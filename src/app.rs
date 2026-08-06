@@ -1911,8 +1911,16 @@ impl App {
 
     pub fn thinking_supported(&self) -> bool {
         if self.config.network.inference_mode == crate::network::InferenceMode::Remote {
-            // Remote peers aren't probed via local /props yet — hide until we can.
-            return false;
+            // Host GET /props → chat_template (see RemoteModelOption.thinking_supported).
+            let catalog = {
+                let cached = self.remote_model_catalog_cached();
+                if cached.is_empty() {
+                    self.remote_model_catalog()
+                } else {
+                    cached
+                }
+            };
+            return catalog.iter().any(|m| m.thinking_supported);
         }
         if self.active_server_id != PRIMARY_SERVER_ID
             && let Some(extra) = self

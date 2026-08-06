@@ -1640,6 +1640,8 @@ pub struct RemoteModelOption {
     pub port: u16,
     pub ready: bool,
     pub label: String,
+    /// From the host's `GET /props` chat template (llama.cpp thinking detection).
+    pub thinking_supported: bool,
 }
 
 #[derive(Debug, Default)]
@@ -1799,6 +1801,94 @@ fn fetch_remote_models(base: &str, token: &str) -> Result<Vec<String>, String> {
     fetch_remote_models_with_timeout(base, token, Duration::from_secs(2))
 }
 
+/// Map model id → thinking support via llama-server `GET /props` (+ optional `?model=`).
+fn fetch_remote_thinking_support(
+    openai_base: &str,
+    token: &str,
+    models: &[String],
+    timeout: Duration,
+) -> std::collections::HashMap<String, bool> {
+    let mut out = std::collections::HashMap::new();
+    if models.is_empty() {
+        return out;
+    }
+    let Some(root) = props_root_from_openai_base(openai_base) else {
+        return out;
+    };
+
+    // Single-model servers: one /props covers it.
+    if models.len() == 1 {
+        if let Some(body) = fetch_remote_props_body(&root, token, None, timeout) {
+            out.insert(
+                models[0].clone(),
+                crate::server::thinking_support_from_props(&body),
+            );
+        }
+        return out;
+    }
+
+    // Router / multi-model: prefer per-model props; fall back to bare /props.
+    let shared = fetch_remote_props_body(&root, token, None, timeout)
+        .map(|body| crate::server::thinking_support_from_props(&body));
+    for model in models {
+        let supported = fetch_remote_props_body(&root, token, Some(model), timeout)
+            .map(|body| crate::server::thinking_support_from_props(&body))
+            .or(shared)
+            .unwrap_or(false);
+        out.insert(model.clone(), supported);
+    }
+    out
+}
+
+fn props_root_from_openai_base(base: &str) -> Option<String> {
+    let base = normalize_openai_base(base)?;
+    Some(
+        base.trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .trim_end_matches('/')
+            .to_string(),
+    )
+}
+
+fn fetch_remote_props_body(
+    root: &str,
+    token: &str,
+    model: Option<&str>,
+    timeout: Duration,
+) -> Option<String> {
+    let url = match model {
+        Some(model) if !model.is_empty() => {
+            format!("{root}/props?model={}", urlencoding_path(model))
+        }
+        _ => format!("{root}/props"),
+    };
+    let agent = crate::chat::llm_http_agent(timeout);
+    let mut request = agent.get(&url);
+    if !token.trim().is_empty() {
+        request = request.header("Authorization", &format!("Bearer {}", token.trim()));
+    }
+    let mut response = request.call().ok()?;
+    if response.status() != 200 {
+        return None;
+    }
+    response.body_mut().read_to_string().ok()
+}
+
+fn urlencoding_path(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for b in value.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char);
+            }
+            b'/' => out.push_str("%2F"),
+            b':' => out.push_str("%3A"),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 fn fetch_remote_models_with_timeout(
     base: &str,
     token: &str,
@@ -1878,11 +1968,13 @@ pub fn probe_remote_catalog(base: &str, token: &str, extra_ports: &[u16]) -> Vec
         let Ok(models) = fetch_remote_models_with_timeout(&candidate, token, timeout) else {
             continue;
         };
+        let thinking = fetch_remote_thinking_support(&candidate, token, &models, timeout);
         for model in models {
             let id = format!("remote|{candidate}|{model}");
             if !seen.insert(id.clone()) {
                 continue;
             }
+            let thinking_supported = thinking.get(&model).copied().unwrap_or(false);
             out.push(RemoteModelOption {
                 id,
                 model: model.clone(),
@@ -1890,6 +1982,7 @@ pub fn probe_remote_catalog(base: &str, token: &str, extra_ports: &[u16]) -> Vec
                 port,
                 ready: true,
                 label: model,
+                thinking_supported,
             });
         }
     }

@@ -108,6 +108,7 @@ pub fn run(url: &str, app: Arc<Mutex<App>>) -> Result<()> {
 
     let webview = WebViewBuilder::new()
         .with_url(url)
+        .with_clipboard(true)
         .with_navigation_handler(move |target| {
             if is_control_panel(&target, &nav_base) {
                 return true;

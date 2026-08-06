@@ -479,8 +479,10 @@ pub fn endpoint_healthy(config: &Config) -> bool {
 
 /// Whether the loaded model/template supports thinking, from llama-server `GET /props`.
 ///
-/// Evidence is capability flags and the chat template itself (`<think>` tags,
-/// `enable_thinking`, `reasoning_effort`, …) — not a hardcoded model-name list.
+/// llama.cpp does **not** publish a dedicated `supports_thinking` flag on `/props`.
+/// The official WebUI detects support from `chat_template` (see
+/// `tools/ui/.../chat-template-thinking-detector.ts`). We mirror that, and also
+/// honor `chat_template_caps` booleans when present.
 pub fn fetch_thinking_support(config: &Config) -> Option<bool> {
     let (status, body) = http_get(config, "/props", Duration::from_secs(2))?;
     if status != 200 {
@@ -489,17 +491,18 @@ pub fn fetch_thinking_support(config: &Config) -> Option<bool> {
     Some(thinking_support_from_props(&body))
 }
 
-fn thinking_support_from_props(body: &str) -> bool {
+/// Parse a llama-server `/props` JSON body for thinking/reasoning support.
+pub fn thinking_support_from_props(body: &str) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
         return false;
     };
     if let Some(caps) = value.get("chat_template_caps").and_then(|v| v.as_object()) {
+        // Real caps today mostly expose `supports_preserve_reasoning`. Keep a
+        // few aliases in case newer llama.cpp builds add them.
         const FLAGS: &[&str] = &[
             "supports_thinking",
-            "enable_thinking",
             "supports_enable_thinking",
             "supports_reasoning_effort",
-            "reasoning_budget",
             "supports_preserve_reasoning",
         ];
         if FLAGS
@@ -517,22 +520,79 @@ fn thinking_support_from_props(body: &str) -> bool {
         .is_some_and(template_suggests_thinking)
 }
 
-fn template_suggests_thinking(template: &str) -> bool {
+/// Heuristic aligned with llama.cpp's `detectThinkingSupport` WebUI helper.
+pub fn template_suggests_thinking(template: &str) -> bool {
+    if template.is_empty() {
+        return false;
+    }
+
+    // 1) Jinja kwargs that clients can set via chat_template_kwargs.
+    const KWARGS: &[&str] = &["enable_thinking", "reasoning_effort", "thinking_budget"];
+    for kwarg in KWARGS {
+        if jinja_mentions_ident(template, kwarg) {
+            return true;
+        }
+    }
+
+    // 2) Template-native on/off conditionals.
     let lower = template.to_ascii_lowercase();
-    lower.contains("<think>")
-        || lower.contains("</think>")
-        || lower.contains("<thinking>")
-        || lower.contains("</thinking>")
-        || lower.contains("enable_thinking")
-        || lower.contains("reasoning_effort")
-        || lower.contains("thinking_budget")
-        || lower.contains("reasoning_content")
-        || lower.contains("redacted_thinking")
+    if lower.contains("{% if")
+        && (lower.contains("enable_thinking")
+            || lower.contains("enable thinking")
+            || lower.contains("ns.enable_thinking")
+            || (lower.contains("thinking") && (lower.contains(" is not") || lower.contains("==") || lower.contains("!=")))
+            || (lower.contains("reasoning") && (lower.contains(" is not") || lower.contains("==") || lower.contains("!="))))
+    {
+        return true;
+    }
+
+    // 3) Paired / channel thinking markers used by real templates.
+    const PAIRS: &[(&str, Option<&str>)] = &[
+        ("<think>", Some("</think>")),
+        ("<thinking>", Some("</thinking>")),
+        ("<|think|>", Some("</|think|>")),
+        ("<seed:think>", Some("</seed:think>")),
+        ("<|channel|>thought", Some("<|channel|>")),
+        ("<|channel|>analysis", Some("<|channel|>")),
+        ("<|channel>thought", Some("<|channel|>")),
+        ("reasoning_content", None),
+        ("redacted_thinking", None),
+    ];
+    for (start, end) in PAIRS {
+        if template.contains(start) && end.is_none_or(|e| template.contains(e)) {
+            return true;
+        }
+    }
+    false
+}
+
+fn jinja_mentions_ident(template: &str, ident: &str) -> bool {
+    // Prefer mentions inside {{ ... }} / {% ... %} (official detector).
+    let mut rest = template;
+    while let Some(open) = rest.find("{{").or_else(|| rest.find("{%")) {
+        let chunk = &rest[open..];
+        let close = if chunk.starts_with("{{") {
+            chunk.find("}}").map(|i| i + 2)
+        } else {
+            chunk.find("%}").map(|i| i + 2)
+        };
+        let Some(end) = close else { break };
+        let block = &chunk[..end];
+        if block
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .any(|tok| tok.eq_ignore_ascii_case(ident))
+        {
+            return true;
+        }
+        rest = &chunk[end..];
+    }
+    // Fallback: bare substring (older / atypical templates).
+    template.to_ascii_lowercase().contains(&ident.to_ascii_lowercase())
 }
 
 #[cfg(test)]
 mod thinking_support_tests {
-    use super::thinking_support_from_props;
+    use super::{template_suggests_thinking, thinking_support_from_props};
 
     #[test]
     fn props_detect_think_tags_and_controls_in_template() {
@@ -544,8 +604,11 @@ mod thinking_support_tests {
             r#"{"chat_template":"{% if enable_thinking %}...{% endif %}","chat_template_caps":{}}"#;
         assert!(thinking_support_from_props(controlled));
 
-        let caps = r#"{"chat_template_caps":{"supports_reasoning_effort":true}}"#;
+        let caps = r#"{"chat_template_caps":{"supports_preserve_reasoning":true}}"#;
         assert!(thinking_support_from_props(caps));
+
+        let gpt_oss = r#"{"chat_template":"<|start|>assistant<|channel|>analysis\n...\\n<|channel|>final"}"#;
+        assert!(thinking_support_from_props(gpt_oss));
 
         let plain = r#"{"chat_template":"{{ messages }}","chat_template_caps":{}}"#;
         assert!(!thinking_support_from_props(plain));
@@ -553,6 +616,9 @@ mod thinking_support_tests {
         // Mentions outside chat_template must not count.
         let noise = r#"{"model_path":"/models/foo-thinking.gguf","chat_template":"{{ messages }}"}"#;
         assert!(!thinking_support_from_props(noise));
+
+        assert!(template_suggests_thinking("{% if enable_thinking %}x{% endif %}"));
+        assert!(!template_suggests_thinking("Just a chain of thought description."));
     }
 }
 
