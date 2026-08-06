@@ -7,13 +7,14 @@
   <link rel="icon" type="image/png" href="/ti.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=DM+Sans:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Sans:wght@500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Literata:opsz,wght@7..72,400;500;600&family=Source+Code+Pro:wght@400;500;600&family=Source+Sans+3:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet">
   <style>
     /* Hallmark · genre: modern-minimal · macrostructure: Workbench · theme: Cobalt instrument
      * tone: utilitarian · nav: N3 side-rail · footer: status-bar · enrichment: none
      * designed-as-app · pre-emit critique: P5 H5 E5 S4 R5 V4
      */
     :root {
+      color-scheme: dark;
       --color-paper: oklch(14% 0.014 260);
       --color-paper-2: oklch(18% 0.015 260);
       --color-ink: oklch(94% 0.01 250);
@@ -55,6 +56,29 @@
       --radius-input: 4px;
       --radius-panel: 4px;
       --rail-width: 9.5rem;
+    }
+
+    html[data-font-scale="compact"] { font-size: 93.75%; }
+    html[data-font-scale="large"] { font-size: 106.25%; }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --color-paper: oklch(97.5% 0.006 250);
+      --color-paper-2: oklch(94.5% 0.008 250);
+      --color-ink: oklch(18% 0.02 260);
+      --color-ink-2: oklch(34% 0.016 260);
+      --color-muted: oklch(48% 0.014 257);
+      --color-rule: oklch(88% 0.01 260);
+      --color-rule-2: oklch(82% 0.012 260);
+      --color-accent: oklch(48% 0.14 250);
+      --color-accent-ink: oklch(99% 0.004 250);
+      --color-focus: oklch(48% 0.14 250);
+      --color-graphite: oklch(93% 0.008 260);
+      --color-graphite-2: oklch(90% 0.01 260);
+      --color-rail: oklch(95.5% 0.007 260);
+      --color-ok: oklch(45% 0.12 160);
+      --color-warn: oklch(55% 0.14 55);
+      --color-danger: oklch(50% 0.16 25);
     }
 
     *, *::before, *::after { box-sizing: border-box; }
@@ -135,12 +159,13 @@
     .wordmark-text {
       display: block;
       line-height: 1;
-      padding-top: 0.06em; /* Syne sits optically high; nudge to match the mark */
+      /* Syne’s optical center sits high; shift paint without breaking flex centering */
+      transform: translateY(0.04em);
     }
     .wordmark-text > span { color: var(--color-accent); }
     .wordmark-mark {
-      width: 1.05rem;
-      height: 1.05rem;
+      width: 1em;
+      height: 1em;
       border-radius: 3px;
       flex: 0 0 auto;
       display: block;
@@ -186,6 +211,16 @@
       gap: 0.35rem;
       padding-top: var(--space-xs);
       border-top: 1px solid var(--color-rule);
+    }
+    .rail-foot .segmented {
+      display: flex;
+      width: 100%;
+      margin: 0;
+    }
+    .rail-foot .segmented button {
+      flex: 1;
+      padding: 0.3rem 0.35rem;
+      font-size: var(--text-xs);
     }
     .chat-cta {
       display: inline-flex;
@@ -883,6 +918,47 @@
       padding-top: 0;
       border-top: 0;
     }
+    .network-peers-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.35rem;
+      min-height: 1.25rem;
+    }
+    #network .network-peers-head .field-label {
+      margin: 0;
+      line-height: 1.25rem;
+    }
+    .network-scan-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      height: 1.25rem;
+      line-height: 1.25rem;
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      user-select: none;
+    }
+    .network-scan-spinner {
+      width: 0.7rem;
+      height: 0.7rem;
+      flex: 0 0 auto;
+      box-sizing: border-box;
+      border: 1.5px solid color-mix(in oklch, var(--color-muted) 35%, transparent);
+      border-top-color: var(--color-ink-2);
+      border-radius: 50%;
+      animation: network-scan-spin 0.75s linear infinite;
+    }
+    @keyframes network-scan-spin {
+      to { transform: rotate(360deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .network-scan-spinner { animation: none; border-top-color: var(--color-muted); }
+    }
     .network-share-stack {
       display: grid;
       gap: var(--space-lg);
@@ -1136,6 +1212,10 @@
           <canvas class="chat-cta-orb" id="chatCtaOrb" aria-hidden="true"></canvas>
           <span>Chat</span>
         </a>
+        <div class="segmented" id="themeToggle" role="tablist" aria-label="Theme">
+          <button type="button" data-theme-choice="dark" class="is-active" role="tab" aria-selected="true">Dark</button>
+          <button type="button" data-theme-choice="light" role="tab" aria-selected="false">Light</button>
+        </div>
         <button type="button" class="btn btn-cmdk" id="btnCmdk" aria-haspopup="dialog">⌘K</button>
       </div>
     </aside>
@@ -1308,7 +1388,13 @@
 
     <section id="network" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
-        <h2>Network sharing</h2>
+        <div class="stage-head-title">
+          <h2>Network sharing</h2>
+          <span id="networkAutosaveStatus" class="autosave-status is-idle" aria-live="polite" title="Network settings write to disk as you change them">
+            <span class="autosave-icon" aria-hidden="true">✓</span>
+            <span class="autosave-label">Autosaved</span>
+          </span>
+        </div>
         <div class="mast-actions">
           <span id="networkStatusChip" class="status-chip status-stopped">local only</span>
         </div>
@@ -1364,10 +1450,12 @@
             <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
             <button type="button" id="modeRemoteBtn" data-mode="remote">Linked LLM</button>
           </div>
+          <p id="networkModeHint" class="setting-hint" style="margin-top:var(--space-sm)">Using the model running on this PC.</p>
           <div id="networkRemoteFields" class="stack-md is-hidden" style="margin-top:var(--space-md)">
             <div>
               <label class="field-label" for="networkRemoteBase">API base</label>
               <input class="field-input" id="networkRemoteBase" type="url" placeholder="http://100.x.x.x:8080/v1" autocomplete="off" spellcheck="false">
+              <p class="setting-hint">OpenAI-compatible endpoint — usually ends in <code>/v1</code>.</p>
             </div>
             <div>
               <label class="field-label" for="networkRemoteToken">API key</label>
@@ -1379,9 +1467,15 @@
             <p id="networkRemoteHealth" class="setting-hint">Not linked.</p>
           </div>
           <div class="network-subsection">
-            <div class="field-label">Nearby on LAN</div>
+            <div class="network-peers-head">
+              <div class="field-label">Nearby on LAN</div>
+              <span class="network-scan-live" title="Peer list refreshes about 4× per second while this tab is open">
+                <span class="network-scan-spinner" aria-hidden="true"></span>
+                Scanning
+              </span>
+            </div>
             <ul id="networkPeerList" class="network-list"></ul>
-            <p id="networkPeerEmpty" class="setting-hint">None found yet. Peers need sharing on and a running model.</p>
+            <p id="networkPeerEmpty" class="setting-hint">Listening for peers… None found yet. Peers need sharing on and a running model.</p>
           </div>
           <p id="networkError" class="text-error is-hidden"></p>
         </div>
@@ -1482,8 +1576,87 @@
   </div>
 
 <script src="/orb.js"></script>
-<script>
+  <script>
     let state = null;
+    let currentTheme = 'dark';
+
+    const FONT_BODY_STACKS = {
+      inter: '"Inter", system-ui, sans-serif',
+      'source-sans-3': '"Source Sans 3", system-ui, sans-serif',
+      'ibm-plex-sans': '"IBM Plex Sans", system-ui, sans-serif',
+      'atkinson-hyperlegible': '"Atkinson Hyperlegible", system-ui, sans-serif',
+      literata: '"Literata", Georgia, serif',
+    };
+    const FONT_DISPLAY_STACKS = {
+      'space-grotesk': '"Space Grotesk", system-ui, sans-serif',
+      syne: '"Syne", system-ui, sans-serif',
+      'dm-sans': '"DM Sans", system-ui, sans-serif',
+      'instrument-sans': '"Instrument Sans", system-ui, sans-serif',
+      fraunces: '"Fraunces", Georgia, serif',
+    };
+    const FONT_MONO_STACKS = {
+      'jetbrains-mono': '"JetBrains Mono", ui-monospace, monospace',
+      'ibm-plex-mono': '"IBM Plex Mono", ui-monospace, monospace',
+      'source-code-pro': '"Source Code Pro", ui-monospace, monospace',
+      'fira-code': '"Fira Code", ui-monospace, monospace',
+    };
+
+    function markSrcForTheme(theme) {
+      return '/ti-transparent-bg-' + (theme === 'light' ? 'black' : 'white') + '.png';
+    }
+
+    function applyTheme(theme) {
+      const next = theme === 'light' ? 'light' : 'dark';
+      currentTheme = next;
+      document.documentElement.dataset.theme = next;
+      document.querySelectorAll('img.wordmark-mark').forEach((img) => {
+        img.src = markSrcForTheme(next);
+      });
+      document.querySelectorAll('[data-theme-choice]').forEach((btn) => {
+        const active = btn.dataset.themeChoice === next;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    }
+
+    function applyFonts(appearance) {
+      if (!appearance) return;
+      const body = FONT_BODY_STACKS[appearance.font_body] ? appearance.font_body : 'inter';
+      const display = FONT_DISPLAY_STACKS[appearance.font_display]
+        ? appearance.font_display
+        : 'space-grotesk';
+      const mono = FONT_MONO_STACKS[appearance.font_mono]
+        ? appearance.font_mono
+        : 'jetbrains-mono';
+      const scale = ['compact', 'default', 'large'].includes(appearance.font_scale)
+        ? appearance.font_scale
+        : 'default';
+      const root = document.documentElement;
+      root.style.setProperty('--font-body', FONT_BODY_STACKS[body]);
+      root.style.setProperty('--font-display', FONT_DISPLAY_STACKS[display]);
+      root.style.setProperty('--font-mono', FONT_MONO_STACKS[mono]);
+      root.style.setProperty('--font-logo', '"Syne", ' + FONT_DISPLAY_STACKS[display]);
+      if (scale === 'default') delete root.dataset.fontScale;
+      else root.dataset.fontScale = scale;
+    }
+
+    function applyAppearance(data) {
+      if (!data) return;
+      if (data.theme) applyTheme(data.theme);
+      applyFonts(data);
+    }
+
+    async function setTheme(theme) {
+      applyTheme(theme);
+      try {
+        applyState(await api('/api/ui/theme', {
+          method: 'POST',
+          body: JSON.stringify({ theme: currentTheme }),
+        }));
+      } catch (_) {
+        // keep local theme; next poll will reconcile
+      }
+    }
     let networkState = null;
     let revealedTokens = {}; // id -> full secret (session only)
     let lastShareSignature = '';
@@ -1786,6 +1959,12 @@
       document.getElementById('modeLocalBtn').classList.toggle('is-active', mode === 'local');
       document.getElementById('modeRemoteBtn').classList.toggle('is-active', mode === 'remote');
       document.getElementById('networkRemoteFields').classList.toggle('is-hidden', mode !== 'remote');
+      const modeHint = document.getElementById('networkModeHint');
+      if (modeHint) {
+        modeHint.textContent = mode === 'remote'
+          ? 'Linked LLM talks to an OpenAI-compatible API endpoint (base URL ending in /v1, plus Bearer key).'
+          : 'Using the model running on this PC.';
+      }
       const baseInput = document.getElementById('networkRemoteBase');
       if (document.activeElement !== baseInput) baseInput.value = next.remote_base || '';
       const tokenInput = document.getElementById('networkRemoteToken');
@@ -1799,7 +1978,7 @@
       if (mode !== 'remote') {
         health.textContent = 'Using this PC’s model.';
       } else if (!next.remote_base) {
-        health.textContent = 'Enter a remote URL to link.';
+        health.textContent = 'Not linked.';
       } else if (next.remote_health?.ok) {
         health.textContent = 'Linked · ' + (next.remote_health.model || 'model') +
           ' · ' + (next.remote_health.status || 'ok');
@@ -1836,29 +2015,45 @@
 
     async function postNetwork(body) {
       clearNetworkError();
-      const result = await api('/api/network', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
-      if (result.state) applyState(result.state);
-      applyNetworkState(
-        result.network,
-        result.access_token || null,
-        result.revealed_api_key_id || null
-      );
-      return result;
+      setAutosaveState('saving');
+      const token = ++autosaveToken;
+      try {
+        const result = await api('/api/network', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        if (result.state) applyState(result.state);
+        applyNetworkState(
+          result.network,
+          result.access_token || null,
+          result.revealed_api_key_id || null
+        );
+        if (token === autosaveToken) setAutosaveState('saved');
+        return result;
+      } catch (error) {
+        if (token === autosaveToken) setAutosaveState('error');
+        throw error;
+      }
     }
 
     async function mutateApiKey(path, options) {
       clearNetworkError();
-      const result = await api(path, options);
-      if (result.state) applyState(result.state);
-      applyNetworkState(
-        result.network,
-        result.access_token || null,
-        result.revealed_api_key_id || null
-      );
-      return result;
+      setAutosaveState('saving');
+      const token = ++autosaveToken;
+      try {
+        const result = await api(path, options);
+        if (result.state) applyState(result.state);
+        applyNetworkState(
+          result.network,
+          result.access_token || null,
+          result.revealed_api_key_id || null
+        );
+        if (token === autosaveToken) setAutosaveState('saved');
+        return result;
+      } catch (error) {
+        if (token === autosaveToken) setAutosaveState('error');
+        throw error;
+      }
     }
 
     async function copyText(value) {
@@ -1921,6 +2116,7 @@
 
     function applyState(next) {
       state = next;
+      applyAppearance(next);
       const badge = document.getElementById('statusBadge');
       badge.className = statusClass(next.status);
       badge.textContent = next.status_label;
@@ -2389,26 +2585,30 @@
     }
 
     function setAutosaveState(state) {
-      const el = document.getElementById('autosaveStatus');
-      if (!el) return;
-      const label = el.querySelector('.autosave-label');
-      const icon = el.querySelector('.autosave-icon');
-      el.classList.remove('is-idle', 'is-saving', 'is-saved', 'is-error');
-      el.classList.add('is-' + state);
+      const els = document.querySelectorAll('.autosave-status');
+      if (!els.length) return;
       clearTimeout(autosaveIdleTimer);
-      if (state === 'saving') {
-        icon.textContent = '·';
-        label.textContent = 'Saving…';
-      } else if (state === 'saved') {
-        icon.textContent = '✓';
-        label.textContent = 'Saved';
+      els.forEach((el) => {
+        const label = el.querySelector('.autosave-label');
+        const icon = el.querySelector('.autosave-icon');
+        el.classList.remove('is-idle', 'is-saving', 'is-saved', 'is-error');
+        el.classList.add('is-' + state);
+        if (state === 'saving') {
+          icon.textContent = '·';
+          label.textContent = 'Saving…';
+        } else if (state === 'saved') {
+          icon.textContent = '✓';
+          label.textContent = 'Saved';
+        } else if (state === 'error') {
+          icon.textContent = '!';
+          label.textContent = 'Save failed';
+        } else {
+          icon.textContent = '✓';
+          label.textContent = 'Autosaved';
+        }
+      });
+      if (state === 'saved') {
         autosaveIdleTimer = setTimeout(() => setAutosaveState('idle'), 1400);
-      } else if (state === 'error') {
-        icon.textContent = '!';
-        label.textContent = 'Save failed';
-      } else {
-        icon.textContent = '✓';
-        label.textContent = 'Autosaved';
       }
     }
 
@@ -2712,6 +2912,9 @@
     document.getElementById('wordmark').addEventListener('click', (event) => {
       event.preventDefault();
       showStage('dashboard');
+    });
+    document.querySelectorAll('#themeToggle [data-theme-choice]').forEach((btn) => {
+      btn.addEventListener('click', () => setTheme(btn.dataset.themeChoice));
     });
     document.querySelectorAll('.top-nav button').forEach((btn) => {
       btn.addEventListener('click', () => showStage(btn.dataset.stage));

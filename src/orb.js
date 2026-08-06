@@ -53,12 +53,16 @@ function orbRadiusScale(size, pow) {
 
 /** z-sort far→near, then fill matte dots. Ink is mirrored for the dark substrate. */
 function orbPaint(ctx, dots, rMin) {
+  const light =
+    typeof document !== 'undefined' &&
+    document.documentElement &&
+    document.documentElement.dataset.theme === 'light';
   dots.sort((a, b) => a.z - b.z);
   for (const d of dots) {
     const alpha = d.a === undefined ? 1 : d.a;
     if (alpha < 0.02) continue;
     const w = Math.min(1, Math.max(0, d.white));
-    const g = (1 - w) * 255;
+    const g = (light ? w : 1 - w) * 255;
     const r = Math.round(g * ORB_TINT[0]);
     const gr = Math.round(g * ORB_TINT[1]);
     const b = Math.round(g * ORB_TINT[2]);

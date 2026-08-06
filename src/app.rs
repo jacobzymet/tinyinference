@@ -21,7 +21,7 @@ use crate::{
     },
     server::{
         CommandSpec, PendingProbe, PendingThinkingProbe, ProbeResult, ServerEvent, ServerMetrics,
-        ServerProcess, SlotsSnapshot, model_name_suggests_thinking, parse_log_throughput,
+        ServerProcess, SlotsSnapshot, parse_log_throughput,
         probe_async, thinking_support_async,
     },
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
@@ -678,6 +678,7 @@ impl App {
         };
         let before_migrate = config.clone();
         config.migrate_network_expose_to_llama();
+        config.ui.normalize_fonts();
         if config != before_migrate {
             let _ = config.save(&config_path);
         }
@@ -1235,9 +1236,8 @@ impl App {
                 port: config.effective_port(),
                 ready: self.status == ServerStatus::Ready && self.endpoint_online,
                 pid: self.process.as_ref().map(ServerProcess::id),
-                thinking_supported: self.thinking_supported.unwrap_or_else(|| {
-                    model_name_suggests_thinking(&config.model_label())
-                }),
+                // Fail closed until /props probe finishes — don't flash the Think control.
+                thinking_supported: self.thinking_supported.unwrap_or(false),
                 active: self.active_server_id == PRIMARY_SERVER_ID,
             });
         }
@@ -1271,9 +1271,7 @@ impl App {
                 ready: self.process.is_some()
                     && self.status == ServerStatus::Ready
                     && self.endpoint_online,
-                thinking_supported: self.thinking_supported.unwrap_or_else(|| {
-                    model_name_suggests_thinking(&config.model_label())
-                }),
+                thinking_supported: self.thinking_supported.unwrap_or(false),
             });
         }
         self.extra_servers.iter().find(|s| s.id == id).map(|s| ServerLookup {
@@ -1660,9 +1658,8 @@ impl App {
             .and_then(PendingThinkingProbe::take)
         {
             self.pending_thinking_probe = None;
-            self.thinking_supported = Some(result.unwrap_or_else(|| {
-                model_name_suggests_thinking(&self.displayed_config().model_label())
-            }));
+            // /props unavailable → treat as unsupported (no model-name allowlist).
+            self.thinking_supported = Some(result.unwrap_or(false));
         } else if self.status == ServerStatus::Ready {
             self.ensure_thinking_probe();
         }
@@ -1670,16 +1667,7 @@ impl App {
 
     pub fn thinking_supported(&self) -> bool {
         if self.config.network.inference_mode == crate::network::InferenceMode::Remote {
-            let remote = self.config.network.remote_base.trim();
-            if remote.is_empty() {
-                return false;
-            }
-            if let Some(health) = self.remote_health_cached() {
-                if let Some(model) = health.model.as_deref() {
-                    return model_name_suggests_thinking(model);
-                }
-            }
-            // Until the peer is probed, don't show the control.
+            // Remote peers aren't probed via local /props yet — hide until we can.
             return false;
         }
         if self.active_server_id != PRIMARY_SERVER_ID
@@ -1690,9 +1678,8 @@ impl App {
         {
             return extra.thinking_supported_flag();
         }
-        self.thinking_supported.unwrap_or_else(|| {
-            model_name_suggests_thinking(&self.displayed_config().model_label())
-        })
+        // Unknown / still probing → hide the control.
+        self.thinking_supported.unwrap_or(false)
     }
 
     fn clear_live_throughput(&mut self) {
@@ -2162,6 +2149,91 @@ impl App {
                 self.status = ServerStatus::Failed;
                 self.status_detail = error.to_string();
             }
+        }
+    }
+
+    pub fn set_ui_theme(&mut self, theme: crate::config::UiTheme) {
+        if self.config.ui.theme == theme {
+            return;
+        }
+        self.config.ui.theme = theme;
+        self.persist_config();
+        self.push_log(format!("ui theme set to {}", theme.as_str()));
+    }
+
+    pub fn set_ui_appearance(
+        &mut self,
+        theme: Option<crate::config::UiTheme>,
+        font_body: Option<String>,
+        font_display: Option<String>,
+        font_mono: Option<String>,
+        font_scale: Option<crate::config::UiFontScale>,
+    ) -> Result<(), String> {
+        let mut changed = false;
+        if let Some(theme) = theme {
+            if self.config.ui.theme != theme {
+                self.config.ui.theme = theme;
+                changed = true;
+            }
+        }
+        if let Some(font_body) = font_body {
+            let id = font_body.trim().to_ascii_lowercase();
+            if !crate::config::UI_FONT_BODY_IDS.contains(&id.as_str()) {
+                return Err(format!(
+                    "font_body must be one of: {}",
+                    crate::config::UI_FONT_BODY_IDS.join(", ")
+                ));
+            }
+            if self.config.ui.font_body != id {
+                self.config.ui.font_body = id;
+                changed = true;
+            }
+        }
+        if let Some(font_display) = font_display {
+            let id = font_display.trim().to_ascii_lowercase();
+            if !crate::config::UI_FONT_DISPLAY_IDS.contains(&id.as_str()) {
+                return Err(format!(
+                    "font_display must be one of: {}",
+                    crate::config::UI_FONT_DISPLAY_IDS.join(", ")
+                ));
+            }
+            if self.config.ui.font_display != id {
+                self.config.ui.font_display = id;
+                changed = true;
+            }
+        }
+        if let Some(font_mono) = font_mono {
+            let id = font_mono.trim().to_ascii_lowercase();
+            if !crate::config::UI_FONT_MONO_IDS.contains(&id.as_str()) {
+                return Err(format!(
+                    "font_mono must be one of: {}",
+                    crate::config::UI_FONT_MONO_IDS.join(", ")
+                ));
+            }
+            if self.config.ui.font_mono != id {
+                self.config.ui.font_mono = id;
+                changed = true;
+            }
+        }
+        if let Some(font_scale) = font_scale {
+            if self.config.ui.font_scale != font_scale {
+                self.config.ui.font_scale = font_scale;
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist_config();
+            self.push_log("ui appearance updated".into());
+        }
+        Ok(())
+    }
+
+    pub fn reset_ui_appearance(&mut self) {
+        let before = self.config.ui.clone();
+        self.config.ui.reset_appearance();
+        if self.config.ui != before {
+            self.persist_config();
+            self.push_log("ui appearance reset to defaults".into());
         }
     }
 

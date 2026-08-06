@@ -8,6 +8,8 @@ A primary feature/appeal of tinyinference is the seamless ability to make large,
 
 **This feature uses mmap**, and [you can read more about how it works and its integration into tinyinference here.](https://jacobzymet.com/notes/running-oversized-gguf-language-models-on-low-ram-hardware-using-system-memory-mapping)
 
+An additional benefit of tinyinference is that all you need to get going is a single binary. You don't need to "install" tinyinference. You download one portable binary and replace it as updates come. Of course, you still need llama.cpp, but that's besides the point.
+
 ## Requirements
 
 - [Rust](https://www.rust-lang.org/tools/install)
@@ -25,6 +27,22 @@ A primary feature/appeal of tinyinference is the seamless ability to make large,
 tinyinference's Configure tab.
 
 ## Run
+
+Download a release binary from [GitHub Releases](https://github.com/jacobzymet/tinyinference/releases) and run it directly.
+
+On Windows:
+
+```powershell
+.\tinyinference.exe
+```
+
+On macOS or Linux:
+
+```sh
+./tinyinference
+```
+
+### From source
 
 Clone the repository, then start the development build:
 

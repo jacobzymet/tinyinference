@@ -50,6 +50,9 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
     let api = Router::new()
         .route("/api/chat/completions", post(chat_completions))
         .route("/api/state", get(state))
+        .route("/api/ui/theme", post(set_ui_theme))
+        .route("/api/ui/appearance", post(set_ui_appearance))
+        .route("/api/ui/appearance/reset", post(reset_ui_appearance))
         .route("/api/network", get(network_state).post(update_network))
         .route("/api/network/keys", post(create_api_key))
         .route("/api/network/keys/{id}", axum::routing::delete(delete_api_key).patch(rename_api_key))
@@ -89,7 +92,8 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/chat", get(chat_page))
         .route("/orb.js", get(orb_script))
         .route("/ti.png", get(app_icon_png))
-        .route("/ti-transparent-bg-white.png", get(ui_mark))
+        .route("/ti-transparent-bg-white.png", get(ui_mark_white))
+        .route("/ti-transparent-bg-black.png", get(ui_mark_black))
         .route("/favicon.ico", get(app_icon_png))
         .merge(api)
         .with_state(app);
@@ -148,11 +152,63 @@ async fn app_icon_png() -> impl IntoResponse {
 }
 
 /// Dark-UI wordmark mark (white glyphs on transparent).
-async fn ui_mark() -> impl IntoResponse {
+async fn ui_mark_white() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "image/png")],
-        UI_MARK_PNG,
+        UI_MARK_WHITE_PNG,
     )
+}
+
+/// Light-UI wordmark mark (black glyphs on transparent).
+async fn ui_mark_black() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/png")],
+        UI_MARK_BLACK_PNG,
+    )
+}
+
+async fn set_ui_theme(
+    State(app): State<SharedApp>,
+    Json(body): Json<ThemeRequest>,
+) -> Result<Json<AppState>, ApiError> {
+    let theme = crate::config::UiTheme::parse(&body.theme).ok_or_else(|| {
+        ApiError::bad_request("theme must be \"dark\" or \"light\"".into())
+    })?;
+    with_app(app, |app| app.set_ui_theme(theme))
+}
+
+async fn set_ui_appearance(
+    State(app): State<SharedApp>,
+    Json(body): Json<AppearanceRequest>,
+) -> Result<Json<AppState>, ApiError> {
+    let theme = match body.theme.as_deref() {
+        None => None,
+        Some(value) => Some(crate::config::UiTheme::parse(value).ok_or_else(|| {
+            ApiError::bad_request("theme must be \"dark\" or \"light\"".into())
+        })?),
+    };
+    let font_scale = match body.font_scale.as_deref() {
+        None => None,
+        Some(value) => Some(crate::config::UiFontScale::parse(value).ok_or_else(|| {
+            ApiError::bad_request("font_scale must be compact, default, or large".into())
+        })?),
+    };
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.set_ui_appearance(
+        theme,
+        body.font_body,
+        body.font_display,
+        body.font_mono,
+        font_scale,
+    )
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
+}
+
+async fn reset_ui_appearance(
+    State(app): State<SharedApp>,
+) -> Result<Json<AppState>, ApiError> {
+    with_app(app, |app| app.reset_ui_appearance())
 }
 
 async fn chat_completions(
@@ -670,11 +726,35 @@ struct CopyResponse {
     state: AppState,
 }
 
+#[derive(Debug, Deserialize)]
+struct ThemeRequest {
+    theme: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppearanceRequest {
+    #[serde(default)]
+    theme: Option<String>,
+    #[serde(default)]
+    font_body: Option<String>,
+    #[serde(default)]
+    font_display: Option<String>,
+    #[serde(default)]
+    font_mono: Option<String>,
+    #[serde(default)]
+    font_scale: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct AppState {
     status: ServerStatus,
     status_label: &'static str,
     status_detail: String,
+    theme: &'static str,
+    font_body: String,
+    font_display: String,
+    font_mono: String,
+    font_scale: &'static str,
     running: bool,
     endpoint_online: bool,
     thinking_supported: bool,
@@ -1154,6 +1234,11 @@ impl AppState {
             } else {
                 app.status_detail.clone()
             },
+            theme: app.config.ui.theme.as_str(),
+            font_body: app.config.ui.font_body.clone(),
+            font_display: app.config.ui.font_display.clone(),
+            font_mono: app.config.ui.font_mono.clone(),
+            font_scale: app.config.ui.font_scale.as_str(),
             running: server_running,
             endpoint_online,
             thinking_supported: app.thinking_supported(),
@@ -1480,4 +1565,5 @@ const INDEX_HTML: &str = include_str!("index.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 const ORB_JS: &str = include_str!("orb.js");
 const APP_ICON_PNG: &[u8] = include_bytes!("../assets/ti.png");
-const UI_MARK_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-white.png");
+const UI_MARK_WHITE_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-white.png");
+const UI_MARK_BLACK_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-black.png");

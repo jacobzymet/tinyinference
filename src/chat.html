@@ -7,9 +7,10 @@
   <link rel="icon" type="image/png" href="/ti.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=DM+Sans:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Sans:wght@500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Literata:opsz,wght@7..72,400;500;600&family=Source+Code+Pro:wght@400;500;600&family=Source+Sans+3:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet">
   <style>
     :root {
+      color-scheme: dark;
       --color-paper: oklch(16% 0.015 260);
       --color-paper-2: oklch(20% 0.016 260);
       --color-ink: oklch(94% 0.01 250);
@@ -56,6 +57,28 @@
       --thread-max: 46rem;
     }
 
+    html[data-font-scale="compact"] { font-size: 93.75%; }
+    html[data-font-scale="large"] { font-size: 106.25%; }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+      --color-paper: oklch(97.5% 0.006 250);
+      --color-paper-2: oklch(94.5% 0.008 250);
+      --color-ink: oklch(18% 0.02 260);
+      --color-ink-2: oklch(34% 0.016 260);
+      --color-muted: oklch(48% 0.014 257);
+      --color-rule: oklch(88% 0.01 260);
+      --color-rule-2: oklch(82% 0.012 260);
+      --color-accent: oklch(48% 0.14 250);
+      --color-accent-ink: oklch(99% 0.004 250);
+      --color-focus: oklch(48% 0.14 250);
+      --color-graphite: oklch(93% 0.008 260);
+      --color-graphite-2: oklch(90% 0.01 260);
+      --color-ok: oklch(45% 0.12 160);
+      --color-warn: oklch(55% 0.14 55);
+      --color-danger: oklch(50% 0.16 25);
+    }
+
     *, *::before, *::after { box-sizing: border-box; }
     html, body { overflow-x: clip; }
     body {
@@ -97,12 +120,13 @@
     .wordmark-text {
       display: block;
       line-height: 1;
-      padding-top: 0.06em; /* Syne sits optically high; nudge to match the mark */
+      /* Syne’s optical center sits high; shift paint without breaking flex centering */
+      transform: translateY(0.04em);
     }
     .wordmark-text > span { color: var(--color-accent); }
     .wordmark-mark {
-      width: 1.15rem;
-      height: 1.15rem;
+      width: 1em;
+      height: 1em;
       border-radius: 3px;
       flex: 0 0 auto;
       display: block;
@@ -431,7 +455,8 @@
     }
     .chat-topbar {
       flex: 0 0 auto;
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
       align-items: center;
       gap: 0.5rem;
       min-height: 2.75rem;
@@ -440,13 +465,24 @@
       transition: border-color var(--dur-short) var(--ease-out);
     }
     .chat-topbar.has-thread { border-bottom-color: var(--color-rule); }
+    .chat-topbar-leading {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
+      justify-self: start;
+    }
+    .chat-topbar-trailing {
+      min-width: 0;
+      justify-self: end;
+    }
     .btn-toggle-sidebar { display: none; }
     .chat-topbar-context {
       display: flex;
       align-items: center;
       gap: 0.45rem;
       min-width: 0;
-      flex: 1 1 auto;
+      flex: 0 1 auto;
     }
     .chat-topbar-context.is-hidden { display: none !important; }
     .topbar-project-pill {
@@ -481,13 +517,15 @@
       flex: 0 0 auto;
     }
     .chat-model-select-wrap {
-      flex: 0 1 16rem;
+      grid-column: 2;
+      justify-self: center;
       min-width: 0;
-      margin-left: auto;
+      max-width: min(16rem, 100%);
     }
     .chat-model-select {
-      width: 100%;
-      max-width: 16rem;
+      width: max-content;
+      max-width: min(16rem, 70vw);
+      min-width: 8rem;
       appearance: none;
       border: 1px solid var(--color-rule);
       background: var(--color-paper-2);
@@ -524,6 +562,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      text-align: left;
     }
     .chat-shell.is-in-project .chat-topbar.has-thread {
       border-bottom-color: color-mix(in oklch, var(--color-accent) 35%, var(--color-rule));
@@ -790,7 +829,11 @@
       box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-accent) 22%, transparent);
       animation: think-pulse 1.4s var(--ease-in-out) infinite;
     }
-    .think-preview, .think-body {
+    .think-live {
+      margin: 0.15rem 0 0.85rem;
+      min-width: 0;
+    }
+    .think-stream, .think-body {
       margin-top: 0.45rem;
       padding: 0;
       font-family: var(--font-body);
@@ -800,11 +843,18 @@
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
-    .think-preview {
-      max-height: 4.4em;
-      overflow: hidden;
-      mask-image: linear-gradient(to bottom, black 35%, transparent 100%);
+    /* Fixed-height ticker: new tokens push older text up through the window. */
+    .think-stream {
+      height: 7.2rem;
+      margin-top: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      color: color-mix(in oklch, var(--color-ink-2) 82%, var(--color-muted));
+      mask-image: linear-gradient(to bottom, transparent 0%, black 22%, black 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 22%, black 100%);
+      scrollbar-width: none;
     }
+    .think-stream::-webkit-scrollbar { display: none; }
     .think-body {
       max-height: 14rem;
       overflow: auto;
@@ -1047,6 +1097,27 @@
       color: var(--color-ink-2);
     }
     .field-check input { margin-top: 0.2rem; accent-color: var(--color-accent); }
+    .segmented {
+      display: inline-flex;
+      width: max-content;
+      max-width: 100%;
+      border: 1px solid var(--color-rule);
+      border-radius: var(--radius-input);
+      overflow: hidden;
+    }
+    .segmented button {
+      border: 0;
+      background: transparent;
+      color: var(--color-muted);
+      padding: 0.4rem 0.85rem;
+      cursor: pointer;
+      font: inherit;
+      font-size: var(--text-sm);
+    }
+    .segmented button.is-active {
+      background: color-mix(in oklch, var(--color-accent) 16%, var(--color-paper));
+      color: var(--color-ink);
+    }
     .skills-toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -1787,13 +1858,16 @@
         <canvas id="starfieldCanvas"></canvas>
       </div>
       <header class="chat-topbar" id="chatTopbar">
-        <button type="button" class="btn btn-ghost btn-icon btn-toggle-sidebar" id="btnToggleSidebar" aria-label="Toggle sidebar">☰</button>
-        <div class="chat-topbar-context is-hidden" id="topbarProject"></div>
-        <div class="chat-topbar-title" id="convoTitle"></div>
+        <div class="chat-topbar-leading">
+          <button type="button" class="btn btn-ghost btn-icon btn-toggle-sidebar" id="btnToggleSidebar" aria-label="Toggle sidebar">☰</button>
+          <div class="chat-topbar-context is-hidden" id="topbarProject"></div>
+          <div class="chat-topbar-title" id="convoTitle"></div>
+        </div>
         <label class="chat-model-select-wrap" id="chatModelSelectWrap">
           <span class="visually-hidden">Model</span>
           <select id="chatModelSelect" class="chat-model-select" aria-label="Model"></select>
         </label>
+        <div class="chat-topbar-trailing" aria-hidden="true"></div>
       </header>
 
       <div class="projects-view is-hidden" id="projectsView">
@@ -1879,9 +1953,11 @@
       <aside class="settings-nav" aria-label="Settings sections">
         <p class="settings-nav-group">Settings</p>
         <button type="button" class="settings-nav-btn is-active" data-settings-pane="personalization">Personalization</button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="appearance">Appearance</button>
         <button type="button" class="settings-nav-btn" data-settings-pane="thinking">Thinking</button>
         <button type="button" class="settings-nav-btn" data-settings-pane="agent-capabilities">Agent Capabilities</button>
         <button type="button" class="settings-nav-btn" data-settings-pane="skills">Skills</button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="connectors">Connectors</button>
         <button type="button" class="settings-nav-btn" data-settings-pane="composer">Composer</button>
       </aside>
       <div class="settings-main">
@@ -1907,6 +1983,72 @@
                 <label class="field-label" for="settingInstructions">Custom instructions</label>
                 <textarea class="field-textarea" id="settingInstructions" placeholder="How should the assistant behave?"></textarea>
               </div>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-settings-pane="appearance">
+            <h2 class="settings-pane-title">Appearance</h2>
+            <p class="settings-pane-lede">Shared with the control panel. Dark theme and the built-in type stack are the defaults.</p>
+            <div class="settings-section">
+              <h3 class="settings-section-title">Theme</h3>
+              <div class="segmented" id="themeToggle" role="tablist" aria-label="Theme">
+                <button type="button" data-theme-choice="dark" class="is-active" role="tab" aria-selected="true">Dark</button>
+                <button type="button" data-theme-choice="light" role="tab" aria-selected="false">Light</button>
+              </div>
+            </div>
+            <div class="settings-section">
+              <h3 class="settings-section-title">Fonts</h3>
+              <div class="settings-row">
+                <label class="field-label" for="settingFontBody">UI text</label>
+                <div>
+                  <select class="field-select" id="settingFontBody">
+                    <option value="inter">Inter</option>
+                    <option value="source-sans-3">Source Sans 3</option>
+                    <option value="ibm-plex-sans">IBM Plex Sans</option>
+                    <option value="atkinson-hyperlegible">Atkinson Hyperlegible</option>
+                    <option value="literata">Literata</option>
+                  </select>
+                  <p class="field-hint">Body copy, composer, and most controls.</p>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="field-label" for="settingFontDisplay">Headings</label>
+                <div>
+                  <select class="field-select" id="settingFontDisplay">
+                    <option value="space-grotesk">Space Grotesk</option>
+                    <option value="syne">Syne</option>
+                    <option value="dm-sans">DM Sans</option>
+                    <option value="instrument-sans">Instrument Sans</option>
+                    <option value="fraunces">Fraunces</option>
+                  </select>
+                  <p class="field-hint">Titles and section labels. Wordmark stays Syne.</p>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="field-label" for="settingFontMono">Monospace</label>
+                <div>
+                  <select class="field-select" id="settingFontMono">
+                    <option value="jetbrains-mono">JetBrains Mono</option>
+                    <option value="ibm-plex-mono">IBM Plex Mono</option>
+                    <option value="source-code-pro">Source Code Pro</option>
+                    <option value="fira-code">Fira Code</option>
+                  </select>
+                  <p class="field-hint">Code, chips, and status labels.</p>
+                </div>
+              </div>
+              <div class="settings-row">
+                <label class="field-label">Text size</label>
+                <div class="segmented" id="fontScaleToggle" role="tablist" aria-label="Text size">
+                  <button type="button" data-font-scale="compact" role="tab" aria-selected="false">Compact</button>
+                  <button type="button" data-font-scale="default" class="is-active" role="tab" aria-selected="true">Default</button>
+                  <button type="button" data-font-scale="large" role="tab" aria-selected="false">Large</button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-section">
+              <h3 class="settings-section-title">Reset</h3>
+              <button type="button" class="btn btn-ghost" id="btnAppearanceReset">Reset to defaults</button>
+              <p class="field-hint" style="margin-top:0.5rem">Restores theme, fonts, and text size for chat and the control panel.</p>
             </div>
           </section>
 
@@ -1936,7 +2078,7 @@
                     <option value="hidden">Hide completely</option>
                     <option value="visible">Always show</option>
                   </select>
-                  <p class="field-hint">Collapsed mode streams a short truncated preview while the model thinks, then folds it up.</p>
+                  <p class="field-hint">Collapsed mode shows a fixed-height ticker of live thinking under the status pill, then folds it up when done.</p>
                 </div>
               </div>
             </div>
@@ -1946,16 +2088,29 @@
             <h2 class="settings-pane-title">Agent Capabilities</h2>
             <p class="settings-pane-lede">Tools the model can call in agent mode. Toggle Agent in the composer, or ping <code>@agent</code> once.</p>
             <div class="settings-section">
-              <h3 class="settings-section-title">Available capabilities</h3>
+              <h3 class="settings-section-title">Web search</h3>
               <label class="field-check">
                 <input type="checkbox" id="settingSkillWebSearch" checked>
                 <span>
-                  <strong style="color:var(--color-ink);font-weight:600">Web search</strong>
+                  <strong style="color:var(--color-ink);font-weight:600">Enable web search</strong>
                   <span style="display:block;color:var(--color-muted);font-size:var(--text-xs);margin-top:0.2rem">
-                    DuckDuckGo search. The model emits a structured tool call; tinyinference runs it and returns results.
+                    DuckDuckGo search, then fetch page text from top results so the model can dig past headlines.
                   </span>
                 </span>
               </label>
+              <div class="settings-row" id="webSearchDepthRow">
+                <label class="field-label" for="settingWebSearchDepth">Page depth</label>
+                <div>
+                  <select class="field-select" id="settingWebSearchDepth">
+                    <option value="auto">Auto (default) — 3 pages</option>
+                    <option value="off">Snippets only — no page fetch</option>
+                    <option value="light">Light — 2 pages</option>
+                    <option value="standard">Standard — 4 pages</option>
+                    <option value="deep">Deep — 6 pages</option>
+                  </select>
+                  <p class="field-hint">How many result pages to open and how much text to extract after the search listing.</p>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -1997,6 +2152,11 @@
                 <p id="skillsError" class="is-hidden" style="margin:0;font-size:var(--text-xs);color:var(--color-danger)"></p>
               </div>
             </div>
+          </section>
+
+          <section class="settings-pane" data-settings-pane="connectors">
+            <h2 class="settings-pane-title">Connectors</h2>
+            <p class="settings-pane-lede">Coming soon.</p>
           </section>
 
           <section class="settings-pane" data-settings-pane="composer">
@@ -2065,6 +2225,7 @@
       high: -1,
       max: -1,
     };
+    const WEB_SEARCH_DEPTHS = ['auto', 'off', 'light', 'standard', 'deep'];
     const DEFAULT_SETTINGS = {
       name: '',
       about: '',
@@ -2073,6 +2234,7 @@
       thinkingEffort: 'auto', // auto | off | low | medium | high | max
       enterSends: true,
       skillWebSearch: true,
+      webSearchDepth: 'auto', // auto | off | light | standard | deep
       agentMode: false,
     };
 
@@ -2104,6 +2266,128 @@
     const btnSend = document.getElementById('btnSend');
     const btnStop = document.getElementById('btnStop');
     const btnAgent = document.getElementById('btnAgent');
+
+    let currentTheme = 'dark';
+    let currentFonts = {
+      font_body: 'inter',
+      font_display: 'space-grotesk',
+      font_mono: 'jetbrains-mono',
+      font_scale: 'default',
+    };
+    let repaintStarfield = null;
+
+    const FONT_BODY_STACKS = {
+      inter: '"Inter", system-ui, sans-serif',
+      'source-sans-3': '"Source Sans 3", system-ui, sans-serif',
+      'ibm-plex-sans': '"IBM Plex Sans", system-ui, sans-serif',
+      'atkinson-hyperlegible': '"Atkinson Hyperlegible", system-ui, sans-serif',
+      literata: '"Literata", Georgia, serif',
+    };
+    const FONT_DISPLAY_STACKS = {
+      'space-grotesk': '"Space Grotesk", system-ui, sans-serif',
+      syne: '"Syne", system-ui, sans-serif',
+      'dm-sans': '"DM Sans", system-ui, sans-serif',
+      'instrument-sans': '"Instrument Sans", system-ui, sans-serif',
+      fraunces: '"Fraunces", Georgia, serif',
+    };
+    const FONT_MONO_STACKS = {
+      'jetbrains-mono': '"JetBrains Mono", ui-monospace, monospace',
+      'ibm-plex-mono': '"IBM Plex Mono", ui-monospace, monospace',
+      'source-code-pro': '"Source Code Pro", ui-monospace, monospace',
+      'fira-code': '"Fira Code", ui-monospace, monospace',
+    };
+
+    function markSrcForTheme(theme) {
+      return '/ti-transparent-bg-' + (theme === 'light' ? 'black' : 'white') + '.png';
+    }
+
+    function applyTheme(theme) {
+      const next = theme === 'light' ? 'light' : 'dark';
+      const changed = currentTheme !== next;
+      currentTheme = next;
+      document.documentElement.dataset.theme = next;
+      document.querySelectorAll('img.wordmark-mark').forEach((img) => {
+        img.src = markSrcForTheme(next);
+      });
+      document.querySelectorAll('[data-theme-choice]').forEach((btn) => {
+        const active = btn.dataset.themeChoice === next;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (changed && typeof repaintStarfield === 'function') repaintStarfield();
+    }
+
+    function applyFonts(appearance) {
+      const body = FONT_BODY_STACKS[appearance.font_body] ? appearance.font_body : 'inter';
+      const display = FONT_DISPLAY_STACKS[appearance.font_display]
+        ? appearance.font_display
+        : 'space-grotesk';
+      const mono = FONT_MONO_STACKS[appearance.font_mono]
+        ? appearance.font_mono
+        : 'jetbrains-mono';
+      const scale = ['compact', 'default', 'large'].includes(appearance.font_scale)
+        ? appearance.font_scale
+        : 'default';
+      currentFonts = { font_body: body, font_display: display, font_mono: mono, font_scale: scale };
+      const root = document.documentElement;
+      root.style.setProperty('--font-body', FONT_BODY_STACKS[body]);
+      root.style.setProperty('--font-display', FONT_DISPLAY_STACKS[display]);
+      root.style.setProperty('--font-mono', FONT_MONO_STACKS[mono]);
+      root.style.setProperty('--font-logo', '"Syne", ' + FONT_DISPLAY_STACKS[display]);
+      if (scale === 'default') delete root.dataset.fontScale;
+      else root.dataset.fontScale = scale;
+      const bodySelect = document.getElementById('settingFontBody');
+      const displaySelect = document.getElementById('settingFontDisplay');
+      const monoSelect = document.getElementById('settingFontMono');
+      if (bodySelect) bodySelect.value = body;
+      if (displaySelect) displaySelect.value = display;
+      if (monoSelect) monoSelect.value = mono;
+      document.querySelectorAll('[data-font-scale]').forEach((btn) => {
+        const active = btn.dataset.fontScale === scale;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    }
+
+    function applyAppearance(data) {
+      if (!data) return;
+      if (data.theme) applyTheme(data.theme);
+      applyFonts({
+        font_body: data.font_body || currentFonts.font_body,
+        font_display: data.font_display || currentFonts.font_display,
+        font_mono: data.font_mono || currentFonts.font_mono,
+        font_scale: data.font_scale || currentFonts.font_scale,
+      });
+    }
+
+    async function patchAppearance(patch) {
+      applyAppearance({ ...currentFonts, theme: currentTheme, ...patch });
+      try {
+        const response = await fetch('/api/ui/appearance', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!response.ok) return;
+        applyAppearance(await response.json());
+      } catch {
+        // keep local appearance; next poll will reconcile
+      }
+    }
+
+    async function setTheme(theme) {
+      await patchAppearance({ theme });
+    }
+
+    async function resetAppearance() {
+      try {
+        const response = await fetch('/api/ui/appearance/reset', { method: 'POST' });
+        if (!response.ok) return;
+        applyAppearance(await response.json());
+      } catch {
+        // ignore
+      }
+    }
 
     const MENTION_OPTIONS = [
       {
@@ -2233,6 +2517,9 @@
             : DEFAULT_SETTINGS.thinkingEffort,
           enterSends: parsed.enterSends !== false,
           skillWebSearch: parsed.skillWebSearch !== false,
+          webSearchDepth: WEB_SEARCH_DEPTHS.includes(parsed.webSearchDepth)
+            ? parsed.webSearchDepth
+            : DEFAULT_SETTINGS.webSearchDepth,
           agentMode: parsed.agentMode === true,
         };
       } catch {
@@ -2492,10 +2779,20 @@
       document.getElementById('settingThinkingEffort').value = settings.thinkingEffort;
       document.getElementById('settingEnterSends').checked = settings.enterSends;
       document.getElementById('settingSkillWebSearch').checked = settings.skillWebSearch;
+      document.getElementById('settingWebSearchDepth').value = settings.webSearchDepth || 'auto';
+      syncWebSearchDepthControls();
       showSettingsPane('personalization');
       settingsModal.classList.remove('is-hidden');
       document.getElementById('settingName').focus();
       loadUserSkills();
+    }
+
+    function syncWebSearchDepthControls() {
+      const enabled = document.getElementById('settingSkillWebSearch').checked;
+      const depth = document.getElementById('settingWebSearchDepth');
+      const row = document.getElementById('webSearchDepthRow');
+      if (depth) depth.disabled = !enabled;
+      if (row) row.style.opacity = enabled ? '' : '0.55';
     }
 
     function closeSettings() {
@@ -2649,12 +2946,25 @@
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
+    let thinkingSupported = false;
+
     function syncComposerThinkVisibility(supported) {
+      thinkingSupported = !!supported;
       const wrap = document.getElementById('composerThinkWrap');
       if (!wrap) return;
-      const show = !!supported;
-      wrap.classList.toggle('is-hidden', !show);
-      if (!show) setThinkMenuOpen(false);
+      wrap.classList.toggle('is-hidden', !thinkingSupported);
+      if (!thinkingSupported) setThinkMenuOpen(false);
+      const effort = document.getElementById('settingThinkingEffort');
+      const effortRow = effort && effort.closest('.settings-row');
+      if (effort) {
+        effort.disabled = !thinkingSupported;
+        if (effortRow) {
+          effortRow.style.opacity = thinkingSupported ? '' : '0.55';
+          effortRow.title = thinkingSupported
+            ? ''
+            : 'Current model does not expose controllable thinking.';
+        }
+      }
     }
 
     /** Fields llama-server understands for reasoning / thinking models. */
@@ -2696,6 +3006,9 @@
         thinkingEffort: document.getElementById('settingThinkingEffort').value,
         enterSends: document.getElementById('settingEnterSends').checked,
         skillWebSearch: document.getElementById('settingSkillWebSearch').checked,
+        webSearchDepth: WEB_SEARCH_DEPTHS.includes(document.getElementById('settingWebSearchDepth').value)
+          ? document.getElementById('settingWebSearchDepth').value
+          : 'auto',
         agentMode: settings.agentMode,
       });
       syncThinkingEffortControls(settings.thinkingEffort);
@@ -2732,23 +3045,23 @@
       return segments;
     }
 
-    function truncateThinkPreview(text, max = 160) {
-      const flat = text.replace(/\s+/g, ' ').trim();
-      if (!flat) return '…';
-      if (flat.length <= max) return flat;
-      return '…' + flat.slice(-max);
-    }
-
     function renderThinkBlock(content, { open, streaming }) {
       const mode = settings.thinking;
       if (mode === 'hidden') return '';
+      // Live turn: fixed-height window under the Thinking pill; text scrolls through it.
+      if (streaming && open && mode !== 'visible') {
+        return (
+          '<div class="think-live" aria-label="Thinking progress">' +
+            '<div class="think-stream">' + escapeHtml(content) + '</div>' +
+          '</div>'
+        );
+      }
       const detailsOpen = mode === 'visible' || (mode === 'collapsed' && streaming && open);
       const summary = streaming && open
         ? '<span class="thinking-label">Thinking</span>'
         : 'Thought process';
-      const body = streaming && open && mode === 'collapsed'
-        ? '<div class="think-preview">' + escapeHtml(truncateThinkPreview(content)) + '</div>'
-        : '<div class="think-body">' + escapeHtml(content.trim()) + '</div>';
+      const bodyClass = streaming && open ? 'think-stream' : 'think-body';
+      const body = '<div class="' + bodyClass + '">' + escapeHtml(content.trim()) + '</div>';
       return (
         '<details class="think-block' + (streaming && open ? ' is-streaming' : '') + '"' +
         (detailsOpen ? ' open' : '') + '>' +
@@ -2756,6 +3069,18 @@
         body +
         '</details>'
       );
+    }
+
+    function scrollThinkStreams(root) {
+      if (!root) return;
+      root.querySelectorAll('.think-stream').forEach((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
+
+    function isThinkingOpen(text) {
+      if (!text) return false;
+      return parseThinkSegments(text).some((segment) => segment.type === 'think' && segment.open);
     }
 
     function skillLabel(name) {
@@ -3648,6 +3973,7 @@
       let target = '';
       let shown = '';
       let raf = 0;
+      let inReasoning = false;
       const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
       function pending() {
@@ -3681,22 +4007,44 @@
         if (pending() > 0) raf = requestAnimationFrame(tick);
       }
 
+      function schedule() {
+        if (reduceMotion) {
+          shown = target;
+          onPaint(shown, true);
+          return;
+        }
+        if (!raf) raf = requestAnimationFrame(tick);
+      }
+
+      function closeReasoning() {
+        if (!inReasoning) return;
+        target += '</think>';
+        inReasoning = false;
+      }
+
       return {
         get target() { return target; },
         get shown() { return shown; },
+        /** OpenAI / llama.cpp reasoning channel (separate from answer content). */
+        pushReasoning(delta) {
+          if (!delta) return;
+          if (!inReasoning) {
+            target += '<think>';
+            inReasoning = true;
+          }
+          target += delta;
+          schedule();
+        },
         push(delta) {
           if (!delta) return;
+          closeReasoning();
           target += delta;
-          if (reduceMotion) {
-            shown = target;
-            onPaint(shown, true);
-            return;
-          }
-          if (!raf) raf = requestAnimationFrame(tick);
+          schedule();
         },
         clear() {
           target = '';
           shown = '';
+          inReasoning = false;
           if (raf) {
             cancelAnimationFrame(raf);
             raf = 0;
@@ -3704,6 +4052,7 @@
         },
         /** Instantly catch up — call when the SSE stream closes or aborts. */
         flush() {
+          closeReasoning();
           if (raf) {
             cancelAnimationFrame(raf);
             raf = 0;
@@ -3730,8 +4079,7 @@
       }
       chatModelSelectWrap.classList.remove('is-hidden');
       const options = servers.map((s) => {
-        const label = s.model + ' · :' + s.port;
-        return { id: s.id, label, thinking: !!s.thinking_supported, ready: !!s.ready };
+        return { id: s.id, label: s.model, thinking: !!s.thinking_supported, ready: !!s.ready };
       });
       if (!options.some((o) => o.id === selectedServerId)) {
         const preferred = options.find((o) => o.id === data.active_server_id) || options[0];
@@ -3760,6 +4108,7 @@
 
     function updateServerChip(data) {
       latestState = data;
+      applyAppearance(data);
       syncModelSelector(data);
       const network = data.network || {};
       const viaRemote = !!network.via_remote;
@@ -3926,13 +4275,19 @@
         }
         if (cleaned) {
           answerEl.innerHTML = renderAssistantHtml(cleaned, { streaming });
+          scrollThinkStreams(answerEl);
         } else if (!streaming) {
           answerEl.innerHTML = '';
         }
-        // Agent mode: keep the live orb visible for the whole run.
-        // Normal chat: hide it once tokens start arriving.
+        const thinkingOpen = streaming && isThinkingOpen(cleaned);
+        const toolLive = agentSteps.some((step) => step.live);
+        // Keep the Thinking pill up while reasoning streams; hide once the answer starts.
         if (useAgent) {
           statusEl.classList.remove('is-hidden');
+          if (thinkingOpen && !toolLive) thinkingLabel.textContent = 'Thinking';
+        } else if (thinkingOpen) {
+          statusEl.classList.remove('is-hidden');
+          thinkingLabel.textContent = 'Thinking';
         } else if (cleaned) {
           statusEl.classList.add('is-hidden');
           thinkingOrb.stop();
@@ -3941,10 +4296,12 @@
         scrollToBottom();
       };
       const typer = createStreamTyper((replyText, streaming) => {
-        if (!useAgent) {
-          thinkingLabel.textContent = 'Working…';
-        } else {
+        if (isThinkingOpen(replyText)) {
+          thinkingLabel.textContent = 'Thinking';
+        } else if (useAgent) {
           thinkingLabel.textContent = 'Writing answer';
+        } else {
+          thinkingLabel.textContent = 'Working…';
         }
         paintBubble(replyText, streaming);
       });
@@ -4014,8 +4371,11 @@
         agent: useAgent,
         skills: {
           web_search: !!settings.skillWebSearch,
+          web_search_depth: WEB_SEARCH_DEPTHS.includes(settings.webSearchDepth)
+            ? settings.webSearchDepth
+            : 'auto',
         },
-        ...reasoningRequestFields(settings.thinkingEffort),
+        ...(thinkingSupported ? reasoningRequestFields(settings.thinkingEffort) : {}),
       };
       if (selectedServerId && !(latestState?.network?.via_remote)) {
         requestBody.server_id = selectedServerId;
@@ -4069,7 +4429,14 @@
               continue;
             }
             const choice = json.choices && json.choices[0];
-            const delta = (choice && choice.delta && choice.delta.content) || '';
+            const deltaObj = (choice && choice.delta) || {};
+            const reasoning =
+              deltaObj.reasoning_content ||
+              deltaObj.reasoning ||
+              (choice && choice.message && (choice.message.reasoning_content || choice.message.reasoning)) ||
+              '';
+            if (reasoning) typer.pushReasoning(String(reasoning));
+            const delta = deltaObj.content || '';
             if (delta) typer.push(delta);
           }
         }
@@ -4175,6 +4542,7 @@
     document.getElementById('btnSettingsCancel').addEventListener('click', closeSettings);
     document.getElementById('btnSettingsClose').addEventListener('click', closeSettings);
     document.getElementById('btnSettingsSave').addEventListener('click', commitSettings);
+    document.getElementById('settingSkillWebSearch').addEventListener('change', syncWebSearchDepthControls);
     document.getElementById('btnSkillCreate').addEventListener('click', () => {
       openSkillEditor({
         name: '',
@@ -4256,6 +4624,25 @@
     document.querySelectorAll('.settings-nav-btn').forEach((btn) => {
       btn.addEventListener('click', () => showSettingsPane(btn.dataset.settingsPane));
     });
+    document.querySelectorAll('#themeToggle [data-theme-choice]').forEach((btn) => {
+      btn.addEventListener('click', () => setTheme(btn.dataset.themeChoice));
+    });
+    document.querySelectorAll('#fontScaleToggle [data-font-scale]').forEach((btn) => {
+      btn.addEventListener('click', () => patchAppearance({ font_scale: btn.dataset.fontScale }));
+    });
+    ['settingFontBody', 'settingFontDisplay', 'settingFontMono'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', () => {
+        const key = id === 'settingFontBody'
+          ? 'font_body'
+          : id === 'settingFontDisplay'
+            ? 'font_display'
+            : 'font_mono';
+        patchAppearance({ [key]: el.value });
+      });
+    });
+    document.getElementById('btnAppearanceReset').addEventListener('click', resetAppearance);
     settingsModal.addEventListener('click', (event) => {
       if (event.target === settingsModal) closeSettings();
     });
@@ -4367,19 +4754,25 @@
         ctx.clearRect(0, 0, width, height);
 
         // Dense field of tiny dim dots; seeded so resize doesn't reshuffle wildly.
+        // Light mode keeps the field but uses dark ink so it reads on pale paper.
+        const light = document.documentElement.dataset.theme === 'light';
+        const ink = light ? '18, 22, 32' : '245, 248, 255';
         const count = Math.round((width * height) / 2200);
         for (let i = 0; i < count; i++) {
           const x = rand(i * 1289 + 17) * width;
           const y = rand(i * 2657 + 91) * height;
           const size = rand(i * 409 + 3) < 0.82 ? 0.55 : 0.95;
-          const alpha = 0.1 + rand(i * 733 + 11) * 0.28;
+          const alpha = light
+            ? 0.18 + rand(i * 733 + 11) * 0.34
+            : 0.1 + rand(i * 733 + 11) * 0.28;
           ctx.beginPath();
-          ctx.fillStyle = 'rgba(245, 248, 255, ' + alpha.toFixed(3) + ')';
+          ctx.fillStyle = 'rgba(' + ink + ', ' + alpha.toFixed(3) + ')';
           ctx.arc(x, y, size, 0, Math.PI * 2);
           ctx.fill();
         }
       }
 
+      repaintStarfield = paint;
       paint();
       if (typeof ResizeObserver !== 'undefined') {
         const observer = new ResizeObserver(paint);
@@ -4394,17 +4787,8 @@
     mountOrb(document.getElementById('orbMark'), 64);
     mountStarfield(document.getElementById('starfieldCanvas'));
 
-    const mostRecent = byRecency()[0];
-    if (mostRecent && mostRecent.messages.length > 0) {
-      activeId = mostRecent.id;
-      activeProjectId = mostRecent.projectId || null;
-      showChatView();
-      renderSidebar();
-      showThread(mostRecent);
-      renderThread(mostRecent);
-    } else {
-      startDraft();
-    }
+    // Fresh visit always opens a blank chat; history stays in the sidebar.
+    startDraft();
 
     pollState();
     setInterval(pollState, 2000);

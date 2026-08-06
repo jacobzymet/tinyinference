@@ -7,8 +7,7 @@ use crate::{
     config::Config,
     server::{
         PendingProbe, PendingThinkingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
-        SlotsSnapshot, model_name_suggests_thinking, parse_log_throughput, probe_async,
-        thinking_support_async,
+        SlotsSnapshot, parse_log_throughput, probe_async, thinking_support_async,
     },
     system::{ProcessMonitor, ProcessUsage},
 };
@@ -123,8 +122,8 @@ impl ManagedServer {
     }
 
     pub fn thinking_supported_flag(&self) -> bool {
-        self.thinking_supported
-            .unwrap_or_else(|| model_name_suggests_thinking(&self.running_config.model_label()))
+        // Fail closed while the /props probe is still in flight.
+        self.thinking_supported.unwrap_or(false)
     }
 
     pub fn tick(&mut self) -> Vec<String> {
@@ -259,9 +258,7 @@ impl ManagedServer {
             .and_then(PendingThinkingProbe::take)
         {
             self.pending_thinking_probe = None;
-            self.thinking_supported = Some(result.unwrap_or_else(|| {
-                model_name_suggests_thinking(&self.running_config.model_label())
-            }));
+            self.thinking_supported = Some(result.unwrap_or(false));
         } else if self.status == ServerStatus::Ready {
             self.ensure_thinking_probe();
         }

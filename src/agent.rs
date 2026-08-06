@@ -29,8 +29,10 @@ use crate::{
 };
 
 const MAX_AGENT_ROUNDS: usize = 6;
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(20);
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(25);
+const PAGE_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_SEARCH_RESULTS: usize = 6;
+const MAX_PAGE_BYTES: u64 = 1_500_000;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentRequest {
@@ -48,10 +50,49 @@ pub struct AgentRequest {
     pub reasoning_effort: Option<String>,
 }
 
+/// How many result pages to open after DuckDuckGo returns links.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WebSearchDepth {
+    /// Snippets / titles only — no page fetches.
+    Off,
+    /// Balanced default: a few pages with mid-size extracts.
+    #[default]
+    Auto,
+    Light,
+    Standard,
+    Deep,
+}
+
+impl WebSearchDepth {
+    /// `(pages_to_fetch, max_chars_per_page)`, or `None` when scraping is off.
+    fn scrape_plan(self) -> Option<(usize, usize)> {
+        match self {
+            Self::Off => None,
+            Self::Auto => Some((3, 2800)),
+            Self::Light => Some((2, 1600)),
+            Self::Standard => Some((4, 3200)),
+            Self::Deep => Some((6, 4800)),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::Light => "light",
+            Self::Standard => "standard",
+            Self::Deep => "deep",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AgentSkills {
     #[serde(default)]
     pub web_search: bool,
+    #[serde(default)]
+    pub web_search_depth: WebSearchDepth,
 }
 
 impl AgentSkills {
@@ -127,7 +168,7 @@ fn run_agent_loop(
                 "arguments": call.arguments,
             }))));
 
-            let result = execute_tool(&call, user_skills)?;
+            let result = execute_tool(&call, &request.skills, user_skills)?;
             let preview = result.chars().take(240).collect::<String>();
             let _ = tx.blocking_send(Ok(sse_agent(json!({
                 "phase": "tool_result",
@@ -212,10 +253,17 @@ fn agent_system_block(skills: &AgentSkills, user_skills: &[UserSkill]) -> String
         "If you can answer without a capability, reply normally with no tool_call.".into(),
     ];
     if skills.web_search {
-        lines.push(
-            "Available capability: web_search — search the public web via DuckDuckGo. Arguments: {\"query\":\"search terms\"}."
-                .into(),
-        );
+        let depth = skills.web_search_depth;
+        let depth_note = match depth.scrape_plan() {
+            None => "Returns titles, URLs, and snippets only (page fetch depth is off).".to_string(),
+            Some((pages, chars)) => format!(
+                "Also opens up to {pages} result pages and extracts ~{chars} characters of text each (depth: {}).",
+                depth.label()
+            ),
+        };
+        lines.push(format!(
+            "Available capability: web_search — search the public web via DuckDuckGo, then dig into sources. {depth_note} Arguments: {{\"query\":\"search terms\"}}."
+        ));
     }
     if !user_skills.is_empty() {
         lines.push(
@@ -392,7 +440,11 @@ fn extract_tool_call(text: &str) -> Option<ToolCall> {
     Some(ToolCall { name, arguments })
 }
 
-fn execute_tool(call: &ToolCall, user_skills: &[UserSkill]) -> Result<String, String> {
+fn execute_tool(
+    call: &ToolCall,
+    skills: &AgentSkills,
+    user_skills: &[UserSkill],
+) -> Result<String, String> {
     match call.name.as_str() {
         "web_search" => {
             let query = call
@@ -402,7 +454,7 @@ fn execute_tool(call: &ToolCall, user_skills: &[UserSkill]) -> Result<String, St
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| "web_search requires a non-empty \"query\" string.".to_string())?;
-            duckduckgo_search(query)
+            duckduckgo_search(query, skills.web_search_depth)
         }
         "activate_skill" | "read_skill" => {
             let key = call
@@ -433,15 +485,19 @@ struct SearchHit {
     snippet: String,
 }
 
-fn duckduckgo_search(query: &str) -> Result<String, String> {
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(SEARCH_TIMEOUT))
+fn search_http_agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
         .user_agent(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
              (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         )
         .build()
-        .new_agent();
+        .new_agent()
+}
+
+fn duckduckgo_search(query: &str, depth: WebSearchDepth) -> Result<String, String> {
+    let agent = search_http_agent(SEARCH_TIMEOUT);
 
     // HTML endpoint — no API key. Prefer POST; some regions treat GET more harshly.
     let mut response = agent
@@ -476,7 +532,7 @@ fn duckduckgo_search(query: &str) -> Result<String, String> {
     let hits = parse_ddg_html(&html);
     if hits.is_empty() {
         // Fallback: Instant Answer API (sparser, but keyless and structured).
-        return duckduckgo_instant_answer(query);
+        return duckduckgo_instant_answer(query, depth);
     }
 
     let mut out = format!("Web search results for {query:?} (DuckDuckGo):\n");
@@ -489,15 +545,12 @@ fn duckduckgo_search(query: &str) -> Result<String, String> {
             hit.snippet
         ));
     }
+    append_scraped_pages(&mut out, &hits, depth);
     Ok(out)
 }
 
-fn duckduckgo_instant_answer(query: &str) -> Result<String, String> {
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(SEARCH_TIMEOUT))
-        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .new_agent();
+fn duckduckgo_instant_answer(query: &str, depth: WebSearchDepth) -> Result<String, String> {
+    let agent = search_http_agent(SEARCH_TIMEOUT);
 
     let mut response = agent
         .get("https://api.duckduckgo.com/")
@@ -514,6 +567,7 @@ fn duckduckgo_instant_answer(query: &str) -> Result<String, String> {
         .map_err(|error| format!("Invalid Instant Answer JSON: {error}"))?;
 
     let mut lines = vec![format!("Web search results for {query:?} (DuckDuckGo Instant Answer):")];
+    let mut hits = Vec::new();
     if let Some(text) = body.get("AbstractText").and_then(|v| v.as_str()) {
         if !text.is_empty() {
             let url = body
@@ -523,6 +577,11 @@ fn duckduckgo_instant_answer(query: &str) -> Result<String, String> {
             lines.push(format!("\nSummary: {text}"));
             if !url.is_empty() {
                 lines.push(format!("Source: {url}"));
+                hits.push(SearchHit {
+                    title: "Abstract".into(),
+                    url: url.to_string(),
+                    snippet: text.to_string(),
+                });
             }
         }
     }
@@ -542,6 +601,11 @@ fn duckduckgo_instant_answer(query: &str) -> Result<String, String> {
                 lines.push(format!("\n{count}. {text}"));
                 if !url.is_empty() {
                     lines.push(format!("   URL: {url}"));
+                    hits.push(SearchHit {
+                        title: format!("Related {count}"),
+                        url: url.to_string(),
+                        snippet: text.to_string(),
+                    });
                 }
             } else if let Some(nested) = topic.get("Topics").and_then(|v| v.as_array()) {
                 for item in nested {
@@ -557,6 +621,11 @@ fn duckduckgo_instant_answer(query: &str) -> Result<String, String> {
                         lines.push(format!("\n{count}. {text}"));
                         if !url.is_empty() {
                             lines.push(format!("   URL: {url}"));
+                            hits.push(SearchHit {
+                                title: format!("Related {count}"),
+                                url: url.to_string(),
+                                snippet: text.to_string(),
+                            });
                         }
                     }
                 }
@@ -567,7 +636,210 @@ fn duckduckgo_instant_answer(query: &str) -> Result<String, String> {
     if lines.len() == 1 {
         lines.push("\nNo results found.".into());
     }
-    Ok(lines.join("\n"))
+    let mut out = lines.join("\n");
+    append_scraped_pages(&mut out, &hits, depth);
+    Ok(out)
+}
+
+fn append_scraped_pages(out: &mut String, hits: &[SearchHit], depth: WebSearchDepth) {
+    let Some((page_count, max_chars)) = depth.scrape_plan() else {
+        return;
+    };
+    let targets: Vec<&SearchHit> = hits
+        .iter()
+        .filter(|hit| scrapeable_url(&hit.url))
+        .take(page_count)
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+
+    out.push_str(&format!(
+        "\n--- Fetched page text (depth: {}, up to {} pages) ---\n",
+        depth.label(),
+        page_count
+    ));
+
+    let agent = search_http_agent(PAGE_TIMEOUT);
+    for (index, hit) in targets.iter().enumerate() {
+        match fetch_page_text(&agent, &hit.url, max_chars) {
+            Ok(text) if !text.trim().is_empty() => {
+                out.push_str(&format!(
+                    "\n[{}] {} ({})\n{}\n",
+                    index + 1,
+                    hit.title,
+                    hit.url,
+                    text
+                ));
+            }
+            Ok(_) => {
+                out.push_str(&format!(
+                    "\n[{}] {} ({})\n(no extractable text)\n",
+                    index + 1,
+                    hit.title,
+                    hit.url
+                ));
+            }
+            Err(error) => {
+                out.push_str(&format!(
+                    "\n[{}] {} ({})\n(fetch failed: {error})\n",
+                    index + 1,
+                    hit.title,
+                    hit.url
+                ));
+            }
+        }
+    }
+}
+
+fn scrapeable_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return false;
+    }
+    let path = lower.split('?').next().unwrap_or(&lower);
+    const SKIP_EXT: &[&str] = &[
+        ".pdf", ".zip", ".gz", ".tgz", ".rar", ".7z", ".exe", ".dmg", ".apk", ".mp3", ".mp4",
+        ".mov", ".avi", ".mkv", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".css",
+        ".js", ".mjs", ".json", ".xml", ".rss", ".atom", ".woff", ".woff2", ".ttf",
+    ];
+    !SKIP_EXT.iter().any(|ext| path.ends_with(ext))
+}
+
+fn fetch_page_text(agent: &ureq::Agent, url: &str, max_chars: usize) -> Result<String, String> {
+    let mut response = agent
+        .get(url)
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+        )
+        .call()
+        .map_err(|error| format!("{error}"))?;
+
+    let status = response.status();
+    if status != 200 && status != 203 && status != 206 {
+        return Err(format!("HTTP {status}"));
+    }
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !content_type.is_empty()
+        && !(content_type.contains("text/html")
+            || content_type.contains("application/xhtml")
+            || content_type.contains("text/plain")
+            || content_type.contains("text/xml")
+            || content_type.contains("application/xml"))
+    {
+        return Err(format!("unsupported content-type ({content_type})"));
+    }
+
+    let html = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_PAGE_BYTES)
+        .read_to_string()
+        .map_err(|error| format!("read failed: {error}"))?;
+
+    Ok(html_to_readable_text(&html, max_chars))
+}
+
+fn html_to_readable_text(html: &str, max_chars: usize) -> String {
+    let mut cleaned = remove_tag_blocks(html, "script");
+    cleaned = remove_tag_blocks(&cleaned, "style");
+    cleaned = remove_tag_blocks(&cleaned, "noscript");
+    cleaned = remove_tag_blocks(&cleaned, "svg");
+    cleaned = remove_tag_blocks(&cleaned, "template");
+
+    for marker in [
+        "</p>", "</div>", "</section>", "</article>", "</li>", "</tr>", "</h1>", "</h2>", "</h3>",
+        "</h4>", "</h5>", "</h6>", "</blockquote>", "<br>", "<br/>", "<br />", "<hr>", "<hr/>",
+        "<hr />",
+    ] {
+        cleaned = cleaned.replace(marker, "\n");
+        cleaned = cleaned.replace(&marker.to_ascii_uppercase(), "\n");
+    }
+
+    let text = strip_tags(&cleaned);
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        let collapsed = collapse_ws(line);
+        if collapsed.is_empty() {
+            if lines.last().is_some_and(|prev: &String| !prev.is_empty()) {
+                lines.push(String::new());
+            }
+            continue;
+        }
+        // Drop ultra-common chrome crumbs.
+        let lower = collapsed.to_ascii_lowercase();
+        if lower == "skip to content"
+            || lower == "skip to main content"
+            || lower == "advertisement"
+            || lower.starts_with("cookie") && lower.len() < 80
+        {
+            continue;
+        }
+        lines.push(collapsed);
+    }
+
+    while lines.first().is_some_and(|l| l.is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+
+    let joined = lines.join("\n");
+    truncate_chars(&joined, max_chars)
+}
+
+fn remove_tag_blocks(html: &str, tag: &str) -> String {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let mut rest = html;
+    let mut out = String::with_capacity(html.len());
+    while let Some(start) = find_ignore_ascii_case(rest, &open) {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start..];
+        match find_ignore_ascii_case(after_open, &close) {
+            Some(rel) => rest = &after_open[rel + close.len()..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let n = needle.as_bytes();
+    let h = haystack.as_bytes();
+    if h.len() < n.len() {
+        return None;
+    }
+    'outer: for i in 0..=(h.len() - n.len()) {
+        for (a, b) in h[i..i + n.len()].iter().zip(n.iter()) {
+            if a.to_ascii_lowercase() != b.to_ascii_lowercase() {
+                continue 'outer;
+            }
+        }
+        return Some(i);
+    }
+    None
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn parse_ddg_html(html: &str) -> Vec<SearchHit> {
@@ -734,5 +1006,30 @@ mod tests {
     fn decodes_ddg_redirect() {
         let href = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpath&rut=x";
         assert_eq!(decode_ddg_href(href), "https://example.com/path");
+    }
+
+    #[test]
+    fn extracts_readable_text_from_html() {
+        let html = r#"<html><head><style>.x{color:red}</style><script>evil()</script></head>
+        <body><nav>Skip to content</nav><article><h1>Hello</h1><p>World <b>there</b>.</p></article></body></html>"#;
+        let text = html_to_readable_text(html, 500);
+        assert!(text.contains("Hello"));
+        assert!(text.contains("World there."));
+        assert!(!text.contains("evil"));
+        assert!(!text.contains("color:red"));
+    }
+
+    #[test]
+    fn scrape_plan_auto_fetches_pages() {
+        assert!(WebSearchDepth::Off.scrape_plan().is_none());
+        assert_eq!(WebSearchDepth::Auto.scrape_plan(), Some((3, 2800)));
+        assert_eq!(WebSearchDepth::Deep.scrape_plan(), Some((6, 4800)));
+    }
+
+    #[test]
+    fn skips_binary_result_urls() {
+        assert!(scrapeable_url("https://example.com/story"));
+        assert!(!scrapeable_url("https://example.com/file.pdf"));
+        assert!(!scrapeable_url("ftp://example.com/a"));
     }
 }

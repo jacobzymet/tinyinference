@@ -477,105 +477,82 @@ pub fn endpoint_healthy(config: &Config) -> bool {
     http_get(config, "/health", Duration::from_millis(500)).is_some_and(|(status, _)| status == 200)
 }
 
-/// Whether the loaded model/template looks like it supports controllable thinking.
+/// Whether the loaded model/template supports thinking, from llama-server `GET /props`.
 ///
-/// Uses llama-server `GET /props` (chat template / caps) with a model-name fallback.
+/// Evidence is capability flags and the chat template itself (`<think>` tags,
+/// `enable_thinking`, `reasoning_effort`, …) — not a hardcoded model-name list.
 pub fn fetch_thinking_support(config: &Config) -> Option<bool> {
     let (status, body) = http_get(config, "/props", Duration::from_secs(2))?;
     if status != 200 {
         return None;
     }
-    let path = extract_props_model_path(&body).unwrap_or_default();
-    Some(
-        thinking_support_from_props(&body)
-            || model_name_suggests_thinking(&config.model_label())
-            || model_name_suggests_thinking(&path),
-    )
-}
-
-pub fn model_name_suggests_thinking(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    if name.is_empty() {
-        return false;
-    }
-    [
-        "gpt-oss",
-        "qwen3",
-        "qwen2.5-thinking",
-        "qwq",
-        "deepseek-r1",
-        "deepseek-reasoner",
-        "reasoning",
-        "reasoner",
-        "thinking",
-        "hunyuan-t1",
-        "seed-oss",
-        "seed_oss",
-    ]
-    .iter()
-    .any(|needle| name.contains(needle))
-        || name.contains("/r1")
-        || name.contains("-r1-")
-        || name.contains("_r1_")
-}
-
-fn extract_props_model_path(body: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(body).ok()?;
-    value
-        .get("model_path")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+    Some(thinking_support_from_props(&body))
 }
 
 fn thinking_support_from_props(body: &str) -> bool {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(caps) = value.get("chat_template_caps").and_then(|v| v.as_object()) {
-            const FLAGS: &[&str] = &[
-                "supports_thinking",
-                "enable_thinking",
-                "supports_enable_thinking",
-                "supports_reasoning_effort",
-                "reasoning_budget",
-                "supports_preserve_reasoning",
-            ];
-            if FLAGS
-                .iter()
-                .any(|key| caps.get(*key).and_then(|v| v.as_bool()) == Some(true))
-            {
-                return true;
-            }
-        }
-        if let Some(template) = value.get("chat_template").and_then(|v| v.as_str()) {
-            if template_suggests_thinking(template) {
-                return true;
-            }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    if let Some(caps) = value.get("chat_template_caps").and_then(|v| v.as_object()) {
+        const FLAGS: &[&str] = &[
+            "supports_thinking",
+            "enable_thinking",
+            "supports_enable_thinking",
+            "supports_reasoning_effort",
+            "reasoning_budget",
+            "supports_preserve_reasoning",
+        ];
+        if FLAGS
+            .iter()
+            .any(|key| caps.get(*key).and_then(|v| v.as_bool()) == Some(true))
+        {
+            return true;
         }
     }
-    // Truncated or non-JSON body — still scan the raw payload.
-    template_suggests_thinking(body)
+    // Inspect only the chat template string — not the whole /props JSON dump
+    // (which can mention thinking elsewhere without the template using it).
+    value
+        .get("chat_template")
+        .and_then(|v| v.as_str())
+        .is_some_and(template_suggests_thinking)
 }
 
-fn template_suggests_thinking(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("enable_thinking")
-        || lower.contains("reasoning_effort")
-        || lower.contains("<think>")
+fn template_suggests_thinking(template: &str) -> bool {
+    let lower = template.to_ascii_lowercase();
+    lower.contains("<think>")
         || lower.contains("</think>")
+        || lower.contains("<thinking>")
+        || lower.contains("</thinking>")
+        || lower.contains("enable_thinking")
+        || lower.contains("reasoning_effort")
+        || lower.contains("thinking_budget")
         || lower.contains("reasoning_content")
         || lower.contains("redacted_thinking")
 }
 
 #[cfg(test)]
 mod thinking_support_tests {
-    use super::model_name_suggests_thinking;
+    use super::thinking_support_from_props;
 
     #[test]
-    fn recognises_common_reasoning_models() {
-        assert!(model_name_suggests_thinking("ggml-org/gpt-oss-120b-GGUF"));
-        assert!(model_name_suggests_thinking("Qwen/Qwen3-8B"));
-        assert!(model_name_suggests_thinking("deepseek-ai/DeepSeek-R1-Distill"));
-        assert!(!model_name_suggests_thinking("meta-llama/Llama-3.1-8B-Instruct"));
-        assert!(!model_name_suggests_thinking(""));
+    fn props_detect_think_tags_and_controls_in_template() {
+        let with_tags =
+            r#"{"chat_template":"User: {{message}}\nAssistant: <think>maybe</think>"}"#;
+        assert!(thinking_support_from_props(with_tags));
+
+        let controlled =
+            r#"{"chat_template":"{% if enable_thinking %}...{% endif %}","chat_template_caps":{}}"#;
+        assert!(thinking_support_from_props(controlled));
+
+        let caps = r#"{"chat_template_caps":{"supports_reasoning_effort":true}}"#;
+        assert!(thinking_support_from_props(caps));
+
+        let plain = r#"{"chat_template":"{{ messages }}","chat_template_caps":{}}"#;
+        assert!(!thinking_support_from_props(plain));
+
+        // Mentions outside chat_template must not count.
+        let noise = r#"{"model_path":"/models/foo-thinking.gguf","chat_template":"{{ messages }}"}"#;
+        assert!(!thinking_support_from_props(noise));
     }
 }
 

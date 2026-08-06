@@ -59,11 +59,118 @@ pub struct Config {
     pub tls_key_file: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UiTheme {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl UiTheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UiFontScale {
+    Compact,
+    #[default]
+    Default,
+    Large,
+}
+
+impl UiFontScale {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Default => "default",
+            Self::Large => "large",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "compact" => Some(Self::Compact),
+            "default" | "normal" | "medium" => Some(Self::Default),
+            "large" => Some(Self::Large),
+            _ => None,
+        }
+    }
+}
+
+/// Allowed UI font ids (body / display / mono). Stacks live in the frontends.
+pub const UI_FONT_BODY_IDS: &[&str] = &[
+    "inter",
+    "source-sans-3",
+    "ibm-plex-sans",
+    "atkinson-hyperlegible",
+    "literata",
+];
+pub const UI_FONT_DISPLAY_IDS: &[&str] = &[
+    "space-grotesk",
+    "syne",
+    "dm-sans",
+    "fraunces",
+    "instrument-sans",
+];
+pub const UI_FONT_MONO_IDS: &[&str] = &[
+    "jetbrains-mono",
+    "ibm-plex-mono",
+    "source-code-pro",
+    "fira-code",
+];
+
+pub const DEFAULT_UI_FONT_BODY: &str = "inter";
+pub const DEFAULT_UI_FONT_DISPLAY: &str = "space-grotesk";
+pub const DEFAULT_UI_FONT_MONO: &str = "jetbrains-mono";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct UiConfig {
     pub host: String,
     pub port: u16,
+    /// Shared by control panel and chat (`dark` default).
+    pub theme: UiTheme,
+    pub font_body: String,
+    pub font_display: String,
+    pub font_mono: String,
+    pub font_scale: UiFontScale,
+}
+
+impl UiConfig {
+    pub fn normalize_fonts(&mut self) {
+        if !UI_FONT_BODY_IDS.contains(&self.font_body.as_str()) {
+            self.font_body = DEFAULT_UI_FONT_BODY.into();
+        }
+        if !UI_FONT_DISPLAY_IDS.contains(&self.font_display.as_str()) {
+            self.font_display = DEFAULT_UI_FONT_DISPLAY.into();
+        }
+        if !UI_FONT_MONO_IDS.contains(&self.font_mono.as_str()) {
+            self.font_mono = DEFAULT_UI_FONT_MONO.into();
+        }
+    }
+
+    pub fn reset_appearance(&mut self) {
+        self.theme = UiTheme::Dark;
+        self.font_body = DEFAULT_UI_FONT_BODY.into();
+        self.font_display = DEFAULT_UI_FONT_DISPLAY.into();
+        self.font_mono = DEFAULT_UI_FONT_MONO.into();
+        self.font_scale = UiFontScale::Default;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -117,6 +224,11 @@ impl Default for UiConfig {
         Self {
             host: DEFAULT_UI_HOST.into(),
             port: DEFAULT_UI_PORT,
+            theme: UiTheme::Dark,
+            font_body: DEFAULT_UI_FONT_BODY.into(),
+            font_display: DEFAULT_UI_FONT_DISPLAY.into(),
+            font_mono: DEFAULT_UI_FONT_MONO.into(),
+            font_scale: UiFontScale::Default,
         }
     }
 }
