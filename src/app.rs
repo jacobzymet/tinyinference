@@ -815,7 +815,6 @@ impl App {
     }
 
     /// True when Share is on and the public listen host is beyond loopback.
-    /// llama itself always binds loopback; the share proxy owns the public bind.
     pub fn listening_exposed(&self) -> bool {
         if !self.config.network.expose {
             return false;
@@ -861,27 +860,18 @@ impl App {
     }
 
     fn keys_or_host_diverged(&self, running: &Config) -> bool {
-        // Share proxy owns public bind / TLS / API keys. llama only needs a
-        // restart when Share is toggled, the upstream port mapping changed, or
-        // an older process is still bound off-loopback from pre-proxy builds.
-        if running.network.expose != self.config.network.expose {
-            return true;
-        }
         if !self.config.network.expose {
-            return false;
+            let still_shared = !is_loopback_host(&running.effective_host());
+            return still_shared || !running.llama_api_keys().is_empty();
         }
-        if self.config.network.resolve_listen_host().is_err() {
-            return true;
-        }
-        if !is_loopback_host(&running.effective_host()) {
-            return true;
-        }
-        // Older launches lacked an override / used the public port for llama.
-        let Some(actual) = running.llama_port_override else {
+        let Ok(desired_host) = self.config.network.resolve_listen_host() else {
             return true;
         };
-        actual != self.config.desired_llama_listen_port()
-            || running.effective_port() != self.config.effective_port()
+        let mut desired = self.config.llama_api_keys();
+        let mut actual = running.llama_api_keys();
+        desired.sort();
+        actual.sort();
+        running.effective_host() != desired_host || desired != actual
     }
 
     pub fn sync_mdns_advertise(&mut self) {
@@ -1013,52 +1003,26 @@ impl App {
         Ok(())
     }
 
-    /// Start/stop/reload the public TLS share proxy for running model ports.
+    /// Refresh Connected-now peers (TCP table + live tok/s). No dataplane proxy.
     pub fn sync_share_proxy(&mut self) {
         let expose = self.config.network.expose && self.listening_exposed();
-        let bind_hosts = if expose {
-            match self.config.network.proxy_bind_hosts() {
-                Ok(hosts) => hosts,
-                Err(error) => {
-                    self.share_proxy.shutdown_all();
-                    let line = format!("[network] share proxy: {error}");
-                    if self.logs.back() != Some(&line) {
-                        self.push_log(line);
-                    }
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        };
-        let ports: Vec<(u16, u16, String)> = if expose {
+        let ports: Vec<(u16, String)> = if expose {
             self.shareable_running_ports()
                 .into_iter()
-                .filter_map(|public_port| {
+                .map(|public_port| {
                     let model = self
                         .server_summaries()
                         .into_iter()
                         .find(|s| s.port == public_port)
                         .map(|s| s.model)
                         .unwrap_or_else(|| format!(":{public_port}"));
-                    let upstream = crate::config::share_upstream_port(public_port);
-                    Some((public_port, upstream, model))
+                    (public_port, model)
                 })
                 .collect()
         } else {
             Vec::new()
         };
-        let cert = self.config.tls_cert_file.clone();
-        let key = self.config.tls_key_file.clone();
-        let keys = self.config.share_api_keys();
-        self.share_proxy.sync(
-            expose && !bind_hosts.is_empty(),
-            &bind_hosts,
-            &ports,
-            cert.as_ref(),
-            key.as_ref(),
-            keys,
-        );
+        self.share_proxy.sync(expose, &ports);
 
         // Attach live tok/s from the primary / extra servers onto active peers.
         if let Some(port) = self.running_config.as_ref().map(|c| c.effective_port()) {
@@ -1275,14 +1239,14 @@ impl App {
         self.sync_share_proxy();
         let restart_required = self.network_restart_required();
         self.push_log(format!(
-            "network updated (expose={}, scope={}, mode={}, remotes={}, llama={}:{}, share_tls={})",
+            "network updated (expose={}, scope={}, mode={}, remotes={}, llama={}:{}, tls={})",
             self.config.network.expose,
             self.config.network.listen_scope.as_str(),
             self.config.network.inference_mode.as_str(),
             self.config.network.remotes.len(),
             self.config.effective_host(),
             self.config.effective_port(),
-            self.config.share_tls_ready()
+            self.config.uses_tls()
         ));
 
         Ok(NetworkUpdateResult {
@@ -1452,16 +1416,10 @@ impl App {
         let mut ports = Vec::new();
         if let Some(running) = &self.running_config {
             ports.push(running.effective_port());
-            if running.network.expose {
-                ports.push(running.llama_listen_port());
-            }
         }
         for server in &self.extra_servers {
             if server.is_running() {
                 ports.push(server.port());
-                if server.running_config.network.expose {
-                    ports.push(server.running_config.llama_listen_port());
-                }
             }
         }
         ports
@@ -1470,10 +1428,7 @@ impl App {
     pub fn allocate_port(&self) -> u16 {
         let used = self.used_ports();
         let mut port = self.config.server.port.max(1);
-        while used.contains(&port)
-            || (self.config.network.expose
-                && used.contains(&crate::config::share_upstream_port(port)))
-        {
+        while used.contains(&port) {
             port = port.saturating_add(1);
             if port == 0 {
                 port = 8080;
@@ -2103,14 +2058,9 @@ impl App {
         // Additional instances get the next free port; primary keeps the configured port.
         if self.process.is_some() {
             launch_config.server.port = self.allocate_port();
-        } else if self.used_ports().contains(&launch_config.effective_port())
-            || self
-                .used_ports()
-                .contains(&launch_config.desired_llama_listen_port())
-        {
+        } else if self.used_ports().contains(&launch_config.effective_port()) {
             launch_config.server.port = self.allocate_port();
         }
-        launch_config.llama_port_override = Some(launch_config.desired_llama_listen_port());
         let display = CommandSpec::from_config(&launch_config).display();
         self.push_log(format!("$ {display}"));
         match ServerProcess::start(&launch_config) {

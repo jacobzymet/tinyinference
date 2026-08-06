@@ -57,9 +57,6 @@ pub struct Config {
     /// Matching private key for [`Self::tls_cert_file`].
     #[serde(skip)]
     pub tls_key_file: Option<PathBuf>,
-    /// Actual llama bind port for a live process snapshot (not persisted).
-    #[serde(skip)]
-    pub llama_port_override: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -467,30 +464,50 @@ impl Config {
         }
     }
 
-    /// Keep managed llama-server on loopback. Public share bind is owned by the
-    /// TLS share proxy (`share_proxy`), which authenticates API keys.
+    /// Apply Network sharing listen scope to the managed llama-server bind + API keys.
     ///
-    /// Still validates listen scope when Share is on so unresolved Tailscale /
-    /// custom hosts surface as bind errors rather than a silent public llama.
+    /// Fail closed: if sharing is on but the scope cannot be resolved (e.g. Tailscale
+    /// missing), bind loopback so a previous `0.0.0.0` listen cannot linger.
     pub fn sync_llama_bind_from_network(&mut self) {
         self.network.migrate_api_keys();
-        // Always bind llama locally. When Share is on, resolve the public host
-        // only to fail closed in the UI if the scope cannot be satisfied.
-        if self.network.expose {
-            let _ = self.network.resolve_listen_host();
+        match self.network.resolve_listen_host() {
+            Ok(host) => {
+                self.server.host = host;
+                if self.network.expose {
+                    self.server.api_key = self
+                        .network
+                        .primary_api_key()
+                        .unwrap_or("")
+                        .to_string();
+                } else {
+                    self.server.api_key.clear();
+                }
+            }
+            Err(_) => {
+                self.server.host = "127.0.0.1".into();
+                if self.network.expose {
+                    self.server.api_key = self
+                        .network
+                        .primary_api_key()
+                        .unwrap_or("")
+                        .to_string();
+                } else {
+                    self.server.api_key.clear();
+                }
+            }
         }
-        self.server.host = "127.0.0.1".into();
-        // Proxy owns Bearer auth; local control-panel chat talks to loopback HTTP.
-        self.server.api_key.clear();
     }
 
-    /// Secrets passed to llama-server. Empty while Share is on — the share proxy
-    /// validates keys instead so inbound clients can be attributed.
+    /// Secrets passed to llama-server when Share is on (`--api-key`).
     pub fn llama_api_keys(&self) -> Vec<String> {
-        Vec::new()
+        if self.network.expose {
+            self.network.api_key_secrets()
+        } else {
+            Vec::new()
+        }
     }
 
-    /// Named share secrets accepted by the TLS proxy when Share is on.
+    /// Named share secrets (id, name, secret) for UI / activity attribution helpers.
     pub fn share_api_keys(&self) -> Vec<(String, String, String)> {
         if !self.network.expose {
             return Vec::new();
@@ -526,46 +543,16 @@ impl Config {
     }
 
     pub fn effective_port(&self) -> u16 {
-        // Public / configured port (share URLs, Configure UI).
-        // When Share is on, llama itself binds [`Self::llama_listen_port`] instead.
+        // Configure owns the port. `extra_args --port` is rejected / stripped.
         self.server.port
-    }
-
-    /// Port llama-server actually binds.
-    ///
-    /// While Share is on the TLS proxy owns [`Self::effective_port`] on the
-    /// public interfaces, so llama moves to a loopback upstream port.
-    pub fn llama_listen_port(&self) -> u16 {
-        if let Some(port) = self.llama_port_override {
-            return port;
-        }
-        if self.network.expose {
-            share_upstream_port(self.server.port)
-        } else {
-            self.server.port
-        }
-    }
-
-    /// Desired llama bind port for a fresh launch (ignores live overrides).
-    pub fn desired_llama_listen_port(&self) -> u16 {
-        if self.network.expose {
-            share_upstream_port(self.server.port)
-        } else {
-            self.server.port
-        }
     }
 
     pub fn connect_host(&self) -> String {
         loopback_host(&self.effective_host())
     }
 
-    /// llama-server never terminates TLS; the share proxy does when Share is on.
+    /// True when Share is on and TLS material is attached for llama-server.
     pub fn uses_tls(&self) -> bool {
-        false
-    }
-
-    /// True when Share is on and self-signed cert/key paths are attached for the proxy.
-    pub fn share_tls_ready(&self) -> bool {
         self.network.expose
             && self
                 .tls_cert_file
@@ -577,35 +564,37 @@ impl Config {
                 .is_some_and(|path| path.as_os_str().len() > 0)
     }
 
-    /// Public share URL scheme (proxy). Local llama endpoints always use HTTP.
     pub fn scheme(&self) -> &'static str {
-        if self.network.expose { "https" } else { "http" }
+        if self.uses_tls() { "https" } else { "http" }
     }
 
-    /// Browser-openable base URL for local llama-server (always loopback HTTP).
+    /// Browser-openable base URL for llama-server (never `0.0.0.0` / `::`).
     pub fn endpoint(&self) -> String {
         format!(
-            "http://{}",
-            format_authority(&self.connect_host(), self.llama_listen_port())
+            "{}://{}",
+            self.scheme(),
+            format_authority(&self.connect_host(), self.effective_port())
         )
     }
 
-    /// Human-readable llama listen description (always local when managed).
+    /// Human-readable listen description (bind address may be all-interfaces).
     pub fn listen_label(&self) -> String {
         let bind = self.effective_host();
-        let port = self.llama_listen_port();
+        let port = self.effective_port();
         let connect = self.connect_host();
+        let scheme = self.scheme();
         if bind == "0.0.0.0" || bind == "::" {
-            format!("http://{bind}:{port} (open via {connect})")
+            format!("{scheme}://{bind}:{port} (open via {connect})")
         } else {
-            format!("http://{}", format_authority(&bind, port))
+            format!("{scheme}://{}", format_authority(&bind, port))
         }
     }
 
     pub fn api_endpoint(&self) -> String {
         format!(
-            "http://{}/v1",
-            format_authority(&self.connect_host(), self.llama_listen_port())
+            "{}://{}/v1",
+            self.scheme(),
+            format_authority(&self.connect_host(), self.effective_port())
         )
     }
 
@@ -680,7 +669,7 @@ impl Config {
             if let Err(error) = self.network.resolve_listen_host() {
                 errors.push(error);
             }
-            if self.share_api_keys().is_empty() {
+            if self.llama_api_keys().is_empty() {
                 errors.push("sharing is on but no API keys are configured".into());
             }
         }
@@ -823,14 +812,6 @@ fn parse_ui_addr(host: &str, port: u16) -> Result<SocketAddr> {
         format!("ui host must be an IP address such as 127.0.0.1 or ::1 (got {host})")
     })?;
     Ok(SocketAddr::from((ip, port)))
-}
-
-/// Loopback upstream port while the share proxy owns the public port.
-pub fn share_upstream_port(public: u16) -> u16 {
-    public
-        .checked_add(10_000)
-        .filter(|port| *port >= 1024)
-        .unwrap_or_else(|| 18_000 + (public % 1_000))
 }
 
 fn strip_brackets(host: &str) -> &str {
@@ -1105,29 +1086,21 @@ mod tests {
     }
 
     #[test]
-    fn sync_llama_bind_stays_loopback_when_sharing() {
+    fn sync_llama_bind_follows_network_scope() {
         let mut config = Config::default();
         config.network.expose = true;
         config.network.listen_scope = crate::network::ListenScope::Custom;
         config.network.listen_host = "192.168.1.50".into();
         config.network.access_token = "secret-token".into();
         config.sync_llama_bind_from_network();
-        assert_eq!(config.server.host, "127.0.0.1");
-        assert!(config.server.api_key.is_empty());
-        assert!(config.llama_api_keys().is_empty());
-        assert_eq!(config.share_api_keys().len(), 1);
-        assert_eq!(config.scheme(), "https");
-        assert_eq!(config.effective_port(), 8080);
-        assert_eq!(config.llama_listen_port(), 18080);
-        assert_eq!(config.api_endpoint(), "http://127.0.0.1:18080/v1");
+        assert_eq!(config.server.host, "192.168.1.50");
+        assert_eq!(config.server.api_key, "secret-token");
+        assert_eq!(config.llama_api_keys(), vec!["secret-token".to_string()]);
         config.network.expose = false;
         config.sync_llama_bind_from_network();
         assert_eq!(config.server.host, "127.0.0.1");
         assert!(config.server.api_key.is_empty());
-        assert!(config.share_api_keys().is_empty());
-        assert_eq!(config.scheme(), "http");
-        assert_eq!(config.llama_listen_port(), 8080);
-        assert_eq!(config.api_endpoint(), "http://127.0.0.1:8080/v1");
+        assert!(config.llama_api_keys().is_empty());
     }
 
     #[test]

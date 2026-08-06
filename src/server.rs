@@ -144,7 +144,7 @@ impl CommandSpec {
         push_pair(
             &mut args,
             "--port",
-            config.llama_listen_port().to_string(),
+            config.effective_port().to_string(),
         );
         if config.uses_tls() {
             if let (Some(cert), Some(key)) = (&config.tls_cert_file, &config.tls_key_file) {
@@ -614,7 +614,7 @@ fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, Stri
         return https_get(config, path, timeout);
     }
     let host = config.connect_host();
-    let port = config.llama_listen_port();
+    let port = config.effective_port();
     let address = host
         .parse::<IpAddr>()
         .ok()
@@ -912,19 +912,18 @@ mod tests {
             "4".into(),
         ];
         let actual = args(&config);
-        // Share proxy owns the public bind/TLS/keys; llama stays on loopback HTTP.
+        // Configure/Network own bind, port, TLS, and API keys over extra_args.
         assert!(
             actual
                 .windows(2)
-                .any(|window| window[0] == "--host" && window[1] == "127.0.0.1")
+                .any(|window| window[0] == "--host" && window[1] == "100.64.1.2")
         );
         assert!(
             actual
                 .windows(2)
-                .any(|window| window[0] == "--port" && window[1] == "18080")
+                .any(|window| window[0] == "--port" && window[1] == "8080")
         );
         assert!(!actual.iter().any(|argument| argument == "0.0.0.0"));
-        assert!(!actual.iter().any(|argument| argument == "100.64.1.2"));
         assert!(!actual.iter().any(|argument| argument == "evil"));
         assert!(!actual.iter().any(|argument| argument == "9999"));
         assert!(actual.iter().any(|argument| argument == "--mmap"));
@@ -933,12 +932,12 @@ mod tests {
                 .windows(2)
                 .any(|window| window[0] == "--flash-attn" && window[1] == "on")
         );
-        assert!(!actual.iter().any(|argument| *argument == "--api-key"));
+        assert!(actual.iter().any(|argument| *argument == "--api-key"));
         assert!(actual.iter().any(|argument| *argument == "--no-webui"));
         assert!(actual.iter().any(|argument| *argument == "--no-slots"));
         assert!(!actual.iter().any(|argument| *argument == "--metrics"));
-        assert!(!actual.iter().any(|argument| *argument == "--ssl-cert-file"));
-        assert!(!actual.iter().any(|argument| *argument == "--ssl-key-file"));
+        assert!(actual.iter().any(|argument| *argument == "--ssl-cert-file"));
+        assert!(actual.iter().any(|argument| *argument == "--ssl-key-file"));
         assert!(
             actual
                 .windows(2)
