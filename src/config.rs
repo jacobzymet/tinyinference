@@ -512,6 +512,7 @@ impl Config {
     /// Always syncs the llama bind (fail closed to loopback when Share is off).
     pub fn migrate_network_expose_to_llama(&mut self) {
         self.network.migrate_api_keys();
+        self.network.migrate_remotes();
         self.keep_ui_private();
         self.sync_llama_bind_from_network();
     }
@@ -632,7 +633,7 @@ impl Config {
         }
         if has_extra_option(&self.server.extra_args, "--host") {
             errors.push(
-                "extra --host is not allowed; the listen address is set only in Network sharing"
+                "extra --host is not allowed; the listen address is set only in Devices"
                     .into(),
             );
         }
@@ -643,7 +644,7 @@ impl Config {
         }
         if has_extra_option(&self.server.extra_args, "--api-key") {
             errors.push(
-                "extra --api-key is not allowed; manage keys in Network sharing when Share is on"
+                "extra --api-key is not allowed; manage keys in Devices when Share is on"
                     .into(),
             );
         }

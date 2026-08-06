@@ -309,15 +309,34 @@
       background: var(--color-rail);
     }
     .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
       font-family: var(--font-mono);
       font-size: 0.66rem;
       letter-spacing: 0.04em;
       text-transform: uppercase;
+      line-height: 1;
       padding: 0.2rem 0.45rem;
       border: 1px solid var(--color-rule);
       border-radius: var(--radius-input);
       color: var(--color-muted);
       white-space: nowrap;
+    }
+    .status-chip-orb {
+      display: block;
+      flex-shrink: 0;
+      width: 12px;
+      height: 12px;
+      align-self: center;
+    }
+    .status-chip-orb.is-hidden {
+      display: none;
+    }
+    #statusBadgeLabel {
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
     }
     .status-ready { color: var(--color-ok); border-color: color-mix(in oklch, var(--color-ok) 40%, var(--color-rule)); }
     .status-failed, .status-stopping { color: var(--color-danger); border-color: color-mix(in oklch, var(--color-danger) 40%, var(--color-rule)); }
@@ -1033,6 +1052,147 @@
     .api-key-secret.is-revealed {
       color: var(--color-ink);
     }
+    .network-identity {
+      margin-top: var(--space-md);
+      padding-top: var(--space-md);
+      border-top: 1px solid var(--color-rule);
+    }
+    .network-share-status {
+      margin-top: var(--space-sm);
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+      font-family: var(--font-mono);
+    }
+    .network-share-status.is-live {
+      color: var(--color-ok);
+    }
+    .manager-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .manager-card {
+      border: 1px solid var(--color-rule);
+      border-radius: var(--radius-input);
+      background: var(--color-paper);
+      padding: 0.65rem 0.75rem;
+      display: grid;
+      gap: 0.55rem;
+    }
+    .manager-card.is-active {
+      border-color: color-mix(in oklch, var(--color-accent) 45%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 6%, var(--color-paper));
+    }
+    .manager-card-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    .manager-card-meta {
+      min-width: 0;
+      flex: 1 1 12rem;
+    }
+    .manager-card-meta strong,
+    .manager-name-input {
+      display: block;
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--color-ink);
+    }
+    .manager-name-input {
+      width: 100%;
+      max-width: 16rem;
+      font: inherit;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius-input);
+      padding: 0.1rem 0.3rem;
+      margin: -0.1rem -0.3rem;
+    }
+    .manager-name-input:hover,
+    .manager-name-input:focus {
+      border-color: var(--color-rule);
+      background: var(--color-paper-2);
+      outline: none;
+    }
+    .manager-card-meta span {
+      display: block;
+      margin-top: 0.15rem;
+      font-size: var(--text-xs);
+      font-family: var(--font-mono);
+      color: var(--color-muted);
+      word-break: break-all;
+    }
+    .manager-card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      flex: 0 0 auto;
+    }
+    .manager-empty {
+      margin: 0;
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+    }
+    .manager-add {
+      margin-top: var(--space-md);
+      padding-top: var(--space-md);
+      border-top: 1px solid var(--color-rule);
+      display: grid;
+      gap: var(--space-sm);
+    }
+    .manager-add-grid {
+      display: grid;
+      gap: var(--space-sm);
+    }
+    @media (min-width: 720px) {
+      .manager-add-grid {
+        grid-template-columns: 1fr 1.4fr 1fr auto;
+        align-items: end;
+      }
+      .manager-add-grid .mast-actions {
+        flex-wrap: nowrap;
+      }
+    }
+    .chat-source-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      margin-top: var(--space-md);
+    }
+    .linked-chip {
+      max-width: 14rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .source-panel .eyebrow {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--space-sm);
+    }
+    .source-panel .source-tag {
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+    }
+    .source-panel.is-active-source {
+      border-color: color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
+    }
+    .source-panel .source-detail {
+      margin: 0.35rem 0 0;
+      font-size: var(--text-xs);
+      font-family: var(--font-mono);
+      color: var(--color-muted);
+    }
     .api-key-name-input {
       width: 100%;
       max-width: 14rem;
@@ -1203,7 +1363,7 @@
         <li><button type="button" class="is-active" data-stage="dashboard" role="tab" aria-selected="true">Dash</button></li>
         <li><button type="button" data-stage="models" role="tab" aria-selected="false">Models</button></li>
         <li><button type="button" data-stage="configure" role="tab" aria-selected="false">Config</button></li>
-        <li><button type="button" data-stage="network" role="tab" aria-selected="false">Network sharing</button></li>
+        <li><button type="button" data-stage="network" role="tab" aria-selected="false">Devices</button></li>
         <li><button type="button" data-stage="logs" role="tab" aria-selected="false">Logs</button></li>
         <li><button type="button" data-stage="stats" role="tab" aria-selected="false">Stats</button></li>
       </ul>
@@ -1228,7 +1388,11 @@
           <div id="toolbarModel">—</div>
         </div>
         <div class="toolbar-actions">
-          <span id="statusBadge" class="status-chip status-stopped">stopped</span>
+          <span id="linkedBadge" class="status-chip linked-chip status-stopped is-hidden" title="Chat inference source">local</span>
+          <span id="statusBadge" class="status-chip status-stopped">
+            <canvas id="statusBadgeOrb" class="status-chip-orb is-hidden" width="12" height="12" aria-hidden="true"></canvas>
+            <span id="statusBadgeLabel">stopped</span>
+          </span>
           <button type="button" id="btnRestart" class="btn btn-ghost">Restart</button>
           <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden">Start another</button>
           <button type="button" id="btnStartStop" class="btn btn-primary">Start</button>
@@ -1238,8 +1402,24 @@
       <div class="workspace">
     <section id="dashboard" class="stage-panel reveal" data-stage-panel>
       <div class="stack">
-        <div id="runningServersBlock" class="panel stack-md is-hidden">
-          <div class="eyebrow">Running models</div>
+        <div id="linkedSourceBlock" class="panel stack-md source-panel is-hidden">
+          <div class="eyebrow">
+            <span>Linked LLM</span>
+            <span id="linkedSourceTag" class="source-tag">saved</span>
+          </div>
+          <div id="linkedSourceTitle" class="tps-value" style="font-size:1.05rem">—</div>
+          <p id="linkedSourceDetail" class="source-detail">—</p>
+          <div class="actions" style="margin-top:0.65rem">
+            <button type="button" class="btn btn-ghost" id="btnDashUseLinked">Use for chat</button>
+            <button type="button" class="btn btn-ghost" id="btnDashUseLocal">Use this PC</button>
+            <a class="btn btn-ghost" href="#network" id="btnDashNetwork" data-stage-jump="network">Devices</a>
+          </div>
+        </div>
+        <div id="runningServersBlock" class="panel stack-md source-panel is-hidden">
+          <div class="eyebrow">
+            <span>On this PC</span>
+            <span class="source-tag">local</span>
+          </div>
           <ul id="runningServersList" class="network-list"></ul>
         </div>
         <div class="instrument">
@@ -1390,8 +1570,8 @@
     <section id="network" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
         <div class="stage-head-title">
-          <h2>Network sharing</h2>
-          <span id="networkAutosaveStatus" class="autosave-status is-idle" aria-live="polite" title="Network settings write to disk as you change them">
+          <h2>Devices</h2>
+          <span id="networkAutosaveStatus" class="autosave-status is-idle" aria-live="polite" title="Device and link settings write to disk as you change them">
             <span class="autosave-icon" aria-hidden="true">✓</span>
             <span class="autosave-label">Autosaved</span>
           </span>
@@ -1402,9 +1582,14 @@
       </div>
       <div class="network-layout">
         <div class="panel network-section">
-          <h3 class="network-section-title">Share models</h3>
-          <p class="network-section-lede">Let other devices call this PC’s OpenAI-compatible API over HTTPS with an API key. Uses a self-signed certificate (clients must trust it). Control panel and chat stay local. Prefer Tailscale only. Web UI / metrics / slots stay off while sharing.</p>
-          <div class="field-switch">
+          <h3 class="network-section-title">This device</h3>
+          <p class="network-section-lede">Name this PC, choose whether its LLM API is shared, and see how others can reach it. Control panel and chat stay on this machine.</p>
+          <div class="network-identity" style="margin-top:0;padding-top:0;border-top:0">
+            <label class="field-label" for="networkDeviceName">Device name</label>
+            <input class="field-input" id="networkDeviceName" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="This PC’s name on the LAN">
+            <p class="setting-hint">Shown in LAN discovery. Leave blank to use this computer’s hostname.</p>
+          </div>
+          <div class="field-switch" style="margin-top:var(--space-md)">
             <input type="checkbox" id="networkExposeToggle">
             <label for="networkExposeToggle">Share LLM API</label>
           </div>
@@ -1424,13 +1609,17 @@
             <div id="networkBindError" class="preset-warning is-hidden" role="alert"></div>
             <p id="networkLlamaHint" class="setting-hint" style="margin-top:var(--space-sm)"></p>
           </div>
-          <div id="networkRestartBanner" class="preset-warning is-hidden" role="status">Restart the model server to apply listen or API key changes.</div>
+          <p id="networkShareStatus" class="network-share-status">Not sharing. Other devices cannot see or call this PC until Share is on and a model is running.</p>
+          <div id="networkRestartBanner" class="preset-warning is-hidden" role="status" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;justify-content:space-between">
+            <span>Restart the model to apply listen or API key changes.</span>
+            <button type="button" class="btn btn-primary" id="btnNetworkRestart">Restart model</button>
+          </div>
         </div>
 
         <div id="networkShareBlock" class="network-share-stack is-hidden">
           <div class="panel network-section">
-            <h3 class="network-section-title">API keys</h3>
-            <p class="network-section-lede">Send as <code>Authorization: Bearer …</code>. Full secrets appear once after create or regenerate.</p>
+            <h3 class="network-section-title">Access keys</h3>
+            <p class="network-section-lede">Other devices need one of these as <code>Authorization: Bearer …</code>. Full secrets appear once after create or regenerate.</p>
             <ul id="networkApiKeyList" class="network-list"></ul>
             <div class="network-token-row">
               <input class="field-input" id="networkNewKeyName" type="text" placeholder="Name (Phone, Laptop…)" autocomplete="off" spellcheck="false" maxlength="64">
@@ -1438,35 +1627,48 @@
             </div>
           </div>
           <div class="panel network-section">
-            <h3 class="network-section-title">Endpoints</h3>
-            <p class="network-section-lede">OpenAI-compatible HTTPS bases. Trust the self-signed cert in your client (or OS), then send <code>Authorization: Bearer …</code>.</p>
+            <h3 class="network-section-title">Share endpoints</h3>
+            <p class="network-section-lede">OpenAI-compatible HTTPS bases. Trust the self-signed cert in your client, then send a Bearer key.</p>
             <ul id="networkShareList" class="network-list"></ul>
           </div>
         </div>
 
         <div class="panel network-section">
-          <h3 class="network-section-title">Use a remote model</h3>
-          <p class="network-section-lede">Point this chat at an LLM hosted elsewhere.</p>
-          <div class="segmented" role="tablist" aria-label="Inference mode">
-            <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
-            <button type="button" id="modeRemoteBtn" data-mode="remote">Linked LLM</button>
+          <h3 class="network-section-title">Linked LLMs</h3>
+          <p class="network-section-lede">Manage saved links to other machines. Name them, pick which one chat uses, or stay on this PC. Linking only updates this device — hosts do not see who linked them.</p>
+          <div class="chat-source-row">
+            <div class="segmented" role="tablist" aria-label="Chat source">
+              <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
+              <button type="button" id="modeRemoteBtn" data-mode="remote">Linked LLM</button>
+            </div>
+            <p id="networkModeHint" class="setting-hint" style="margin:0">Chat uses models on this PC.</p>
           </div>
-          <p id="networkModeHint" class="setting-hint" style="margin-top:var(--space-sm)">Using the model running on this PC.</p>
-          <div id="networkRemoteFields" class="stack-md is-hidden" style="margin-top:var(--space-md)">
-            <div>
-              <label class="field-label" for="networkRemoteBase">API base</label>
-              <input class="field-input" id="networkRemoteBase" type="url" placeholder="http://100.x.x.x:8080/v1" autocomplete="off" spellcheck="false">
-              <p class="setting-hint">OpenAI-compatible endpoint — usually ends in <code>/v1</code>.</p>
+          <ul id="networkRemoteList" class="manager-list" style="margin-top:var(--space-md)" aria-live="polite"></ul>
+          <p id="networkRemoteEmpty" class="manager-empty">No linked LLMs yet. Add one below or from Nearby on LAN.</p>
+
+          <div class="manager-add">
+            <div class="field-label" id="networkRemoteFormTitle">Add linked LLM</div>
+            <div class="manager-add-grid">
+              <div>
+                <label class="field-label" for="networkRemoteName">Link name</label>
+                <input class="field-input" id="networkRemoteName" type="text" maxlength="64" placeholder="Living room PC" autocomplete="off" spellcheck="false">
+              </div>
+              <div>
+                <label class="field-label" for="networkRemoteBase">API base</label>
+                <input class="field-input" id="networkRemoteBase" type="url" placeholder="https://100.x.x.x:8080/v1" autocomplete="off" spellcheck="false">
+              </div>
+              <div>
+                <label class="field-label" for="networkRemoteToken">API key</label>
+                <input class="field-input" id="networkRemoteToken" type="password" placeholder="From the host" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="mast-actions" style="justify-content:flex-start;gap:0.35rem">
+                <button type="button" class="btn btn-primary" id="btnSaveRemoteLink">Add</button>
+                <button type="button" class="btn btn-ghost is-hidden" id="btnCancelRemoteEdit">Cancel</button>
+              </div>
             </div>
-            <div>
-              <label class="field-label" for="networkRemoteToken">API key</label>
-              <input class="field-input" id="networkRemoteToken" type="password" placeholder="From the host" autocomplete="off" spellcheck="false">
-            </div>
-            <div class="mast-actions" style="justify-content:flex-start">
-              <button type="button" class="btn btn-primary" id="btnSaveRemoteLink">Link</button>
-            </div>
-            <p id="networkRemoteHealth" class="setting-hint">Not linked.</p>
+            <p id="networkRemoteHealth" class="setting-hint">Paste the host API key, then Add. Chat switches to the link when it is saved.</p>
           </div>
+
           <div class="network-subsection">
             <div class="network-peers-head">
               <div class="field-label">Nearby on LAN</div>
@@ -1547,6 +1749,17 @@
       <div class="dialog-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelLanScope">Cancel</button>
         <button type="button" class="btn btn-primary" id="btnConfirmLanScope">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="removeRemoteModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="removeRemoteTitle">
+    <div class="dialog">
+      <h2 id="removeRemoteTitle">Remove linked LLM?</h2>
+      <p id="removeRemoteBody">This removes the saved link from this PC only. The host is unchanged.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="btnCancelRemoveRemote">Cancel</button>
+        <button type="button" class="btn btn-danger" id="btnConfirmRemoveRemote">Remove</button>
       </div>
     </div>
   </div>
@@ -1698,6 +1911,7 @@
     let lastShareSignature = '';
     let lastApiKeySignature = '';
     let lastPeerSignature = '';
+    let lastRemoteSignature = '';
     let settingsDirty = false;
     let autosaveTimer = null;
     let autosaveToken = 0;
@@ -1899,11 +2113,21 @@
         revealedTokens[next.api_keys[0].id] = revealed;
       }
       const chip = document.getElementById('networkStatusChip');
-      if (next.listening_exposed) {
-        chip.textContent = next.restart_required ? 'restart LLM' : 'LLM shared';
+      const remoteSaved = !!(next.remote_saved || (next.remote_base && next.remote_base.trim()));
+      const modeActive = next.inference_mode || 'local';
+      if (modeActive === 'remote' && remoteSaved) {
+        chip.textContent = next.remote_health?.ok ? 'chat → linked' : 'linked · check';
+        chip.className = next.remote_health?.ok
+          ? 'status-chip status-ready'
+          : 'status-chip status-starting';
+      } else if (next.listening_exposed) {
+        chip.textContent = next.restart_required ? 'restart LLM' : 'sharing';
         chip.className = next.restart_required ? 'status-chip status-starting' : 'status-chip status-ready';
       } else if (next.expose) {
         chip.textContent = next.restart_required ? 'restart LLM' : 'share on';
+        chip.className = 'status-chip status-starting';
+      } else if (remoteSaved) {
+        chip.textContent = 'link saved';
         chip.className = 'status-chip status-starting';
       } else {
         chip.textContent = 'local only';
@@ -1927,12 +2151,43 @@
         llamaHint.classList.add('is-hidden');
       }
 
+      const deviceInput = document.getElementById('networkDeviceName');
+      if (deviceInput && document.activeElement !== deviceInput) {
+        deviceInput.value = next.device_name_custom || '';
+        deviceInput.placeholder = next.device_name
+          ? ('Hostname · ' + next.device_name)
+          : 'This PC’s name on the LAN';
+      }
+      const shareStatus = document.getElementById('networkShareStatus');
+      if (shareStatus) {
+        const name = next.device_name || 'this PC';
+        if (next.listening_exposed && next.advertising) {
+          shareStatus.textContent = 'Sharing and discoverable as “' + name + '”. Nearby devices can Link using an API key from this PC. This screen does not list who linked you.';
+          shareStatus.classList.add('is-live');
+        } else if (next.listening_exposed) {
+          shareStatus.textContent = 'Sharing as “' + name + '” on ' + (next.llama_endpoint || 'the listen address') + '. Clients use Endpoints + an API key. LAN discovery is off for this listen scope (Tailscale/custom stays private).';
+          shareStatus.classList.add('is-live');
+        } else if (next.expose) {
+          shareStatus.textContent = 'Share is on as “' + name + '”, but the model is not listening yet. Start (or restart) the model so others can reach Endpoints.';
+          shareStatus.classList.remove('is-live');
+        } else {
+          shareStatus.textContent = 'Not sharing. Named “' + name + '” for when you turn Share on. Other devices cannot see or call this PC until Share is on and a model is running.';
+          shareStatus.classList.remove('is-live');
+        }
+      }
+
       const scopeSelect = document.getElementById('networkListenScope');
       if (document.activeElement !== scopeSelect) {
         scopeSelect.value = next.listen_scope || 'tailscale';
       }
       document.getElementById('networkScopeHint').textContent = next.listen_scope_hint || '';
-      document.getElementById('networkScopeDetail').textContent = '';
+      const scopeDetail = document.getElementById('networkScopeDetail');
+      if (scopeDetail) {
+        const detail = next.listen_scope_detail || '';
+        scopeDetail.textContent = detail;
+        scopeDetail.classList.toggle('is-hidden', !detail);
+        scopeDetail.setAttribute('aria-hidden', detail ? 'false' : 'true');
+      }
       const customBlock = document.getElementById('networkCustomHostBlock');
       customBlock.classList.toggle('is-hidden', (next.listen_scope || 'tailscale') !== 'custom');
       const hostSelect = document.getElementById('networkListenHost');
@@ -1998,46 +2253,105 @@
       }
 
       const mode = next.inference_mode || 'local';
+      const remotes = next.remotes || [];
       document.getElementById('modeLocalBtn').classList.toggle('is-active', mode === 'local');
       document.getElementById('modeRemoteBtn').classList.toggle('is-active', mode === 'remote');
-      document.getElementById('networkRemoteFields').classList.toggle('is-hidden', mode !== 'remote');
+      document.getElementById('modeRemoteBtn').disabled = remotes.length === 0;
       const modeHint = document.getElementById('networkModeHint');
       if (modeHint) {
-        modeHint.textContent = mode === 'remote'
-          ? 'Linked LLM talks to an OpenAI-compatible API endpoint (base URL ending in /v1, plus Bearer key).'
-          : 'Using the model running on this PC.';
+        if (mode === 'remote' && remotes.length) {
+          const active = remotes.find((r) => r.active) || remotes.find((r) => r.id === next.active_remote_id) || remotes[0];
+          modeHint.textContent = 'Chat → ' + (active?.name || 'linked LLM') + '. Local Start/Stop still only affects this PC.';
+        } else if (remotes.length) {
+          modeHint.textContent = remotes.length + ' linked · chat still on this PC.';
+        } else {
+          modeHint.textContent = 'Chat uses models on this PC.';
+        }
       }
-      const baseInput = document.getElementById('networkRemoteBase');
-      if (document.activeElement !== baseInput) baseInput.value = next.remote_base || '';
-      const tokenInput = document.getElementById('networkRemoteToken');
-      if (document.activeElement !== tokenInput && !tokenInput.value) {
-        tokenInput.placeholder = next.remote_token_set
-          ? ('saved · ' + (next.remote_token_masked || '••••'))
-          : 'API key from the host';
+
+      const remoteEmpty = document.getElementById('networkRemoteEmpty');
+      const remoteList = document.getElementById('networkRemoteList');
+      if (remoteEmpty) remoteEmpty.classList.toggle('is-hidden', remotes.length > 0);
+      const remoteSignature = JSON.stringify(remotes.map((r) => [
+        r.id, r.name, r.base, r.active, r.token_set, r.health?.ok, r.health?.model, r.health?.error, r.health?.status,
+      ]));
+      const remoteFocus = document.activeElement && remoteList && remoteList.contains(document.activeElement)
+        ? document.activeElement.getAttribute('data-remote-name')
+        : null;
+      if (remoteSignature !== lastRemoteSignature) {
+        lastRemoteSignature = remoteSignature;
+        remoteList.innerHTML = remotes.map((remote) => {
+          const health = remote.health || {};
+          const ready = !!(health.ok && remote.token_set);
+          const status = !remote.token_set
+            ? 'Needs API key from the host'
+            : (health.ok
+              ? ('Reachable · ' + (health.model || 'model') + (health.status ? ' · ' + health.status : ''))
+              : ('Unreachable · ' + (health.error || 'check URL and key')));
+          const useLabel = remote.active ? 'In use' : (ready ? 'Use for chat' : 'Fix to use');
+          return `
+            <li class="manager-card${remote.active ? ' is-active' : ''}" data-remote-id="${escapeHtml(remote.id)}">
+              <div class="manager-card-head">
+                <div class="manager-card-meta">
+                  <input class="manager-name-input" data-remote-name="${escapeHtml(remote.id)}" value="${escapeHtml(remote.name)}" maxlength="64" aria-label="Link name">
+                  <span>${escapeHtml(remote.base)}</span>
+                  <span>${escapeHtml(status)}${remote.active ? ' · active for chat' : ''}</span>
+                </div>
+                <div class="manager-card-actions">
+                  <button type="button" class="btn btn-primary" data-remote-activate="${escapeHtml(remote.id)}" ${remote.active || !ready ? 'disabled' : ''} title="${ready || remote.active ? '' : 'Add a working API key first'}">${useLabel}</button>
+                  <button type="button" class="btn btn-ghost" data-remote-edit="${escapeHtml(remote.id)}">Edit</button>
+                  <button type="button" class="btn btn-ghost" data-remote-delete="${escapeHtml(remote.id)}">Remove</button>
+                </div>
+              </div>
+            </li>`;
+        }).join('');
+        if (remoteFocus) {
+          const input = remoteList.querySelector('[data-remote-name="' + remoteFocus + '"]');
+          if (input) {
+            input.focus();
+            const len = input.value.length;
+            input.setSelectionRange(len, len);
+          }
+        }
       }
 
       const health = document.getElementById('networkRemoteHealth');
-      if (mode !== 'remote') {
-        health.textContent = 'Using this PC’s model.';
-      } else if (!next.remote_base) {
-        health.textContent = 'Not linked.';
-      } else if (next.remote_health?.ok) {
-        health.textContent = 'Linked · ' + (next.remote_health.model || 'model') +
-          ' · ' + (next.remote_health.status || 'ok');
-      } else {
-        health.textContent = 'Unreachable · ' + (next.remote_health?.error || 'check URL and token');
+      const saveBtn = document.getElementById('btnSaveRemoteLink');
+      const editing = !!(saveBtn && saveBtn.dataset.editingId);
+      if (health && !editing && document.activeElement !== document.getElementById('networkRemoteToken')) {
+        // Keep success flashes / edit prompts until the next explicit action overwrites them.
+        if (!health.dataset.sticky) {
+          health.textContent = remotes.length
+            ? (mode === 'remote'
+              ? 'Chat uses the active linked LLM. Local Start/Stop still only affects this PC.'
+              : 'Links are saved here. Use for chat on a card, or switch to Linked LLM.')
+            : 'Nearby Add fills the form — paste the host API key, then Add.';
+        }
       }
 
-      const peers = next.peers || [];
+      const normalizePeerBase = (raw) => {
+        let base = String(raw || '').trim().replace(/\/+$/, '');
+        if (!base) return '';
+        if (!base.includes('://')) base = 'http://' + base;
+        if (!base.endsWith('/v1')) base += '/v1';
+        return base.toLowerCase();
+      };
+      const linkedBases = new Set(
+        (next.remotes || []).map((r) => normalizePeerBase(r.base)).filter(Boolean)
+      );
+      const peers = (next.peers || []).filter((peer) => !linkedBases.has(normalizePeerBase(peer.base_url)));
       const peerList = document.getElementById('networkPeerList');
       const empty = document.getElementById('networkPeerEmpty');
       empty.classList.toggle('is-hidden', peers.length > 0);
       if (peers.length === 0) {
-        empty.textContent = next.mdns_error
-          || next.discovery_hint
-          || 'Listening for peers… None found yet.';
+        const rawCount = (next.peers || []).length;
+        empty.textContent = rawCount > 0
+          ? 'Nearby peers are already in Linked LLMs.'
+          : (next.mdns_error
+            || next.discovery_hint
+            || 'Listening for peers… None found yet.');
       }
-      const peerSignature = JSON.stringify(peers.map((p) => [p.name, p.base_url]));
+      const peerSignature = JSON.stringify(peers.map((p) => [p.name, p.base_url])) + '|' + [...linkedBases].join(',');
       if (peerSignature !== lastPeerSignature) {
         lastPeerSignature = peerSignature;
         peerList.innerHTML = peers.map((peer) => `
@@ -2046,7 +2360,7 @@
               <strong>${escapeHtml(peer.name)}</strong>
               <span>${escapeHtml(peer.base_url)}</span>
             </div>
-            <button type="button" class="btn btn-primary" data-link-base="${escapeHtml(peer.base_url)}">Link</button>
+            <button type="button" class="btn btn-primary" data-link-base="${escapeHtml(peer.base_url)}" data-link-name="${escapeHtml(peer.name)}">Add</button>
           </li>`).join('');
       }
     }
@@ -2103,6 +2417,22 @@
       }
     }
 
+    async function mutateRemote(path, options) {
+      clearNetworkError();
+      setAutosaveState('saving');
+      const token = ++autosaveToken;
+      try {
+        const result = await api(path, options);
+        if (result.state) applyState(result.state);
+        if (result.network) applyNetworkState(result.network);
+        if (token === autosaveToken) setAutosaveState('saved');
+        return result;
+      } catch (error) {
+        if (token === autosaveToken) setAutosaveState('error');
+        throw error;
+      }
+    }
+
     async function copyText(value) {
       if (!value) return;
       try {
@@ -2112,19 +2442,71 @@
       }
     }
 
-    async function linkDiscoveredPeer(base) {
-      document.getElementById('networkRemoteBase').value = base;
-      document.getElementById('modeRemoteBtn').click();
-      const token = document.getElementById('networkRemoteToken').value.trim();
-      try {
-        await postNetwork({
-          inference_mode: 'remote',
-          remote_base: base,
-          remote_token: token || undefined,
-        });
-      } catch (error) {
-        showNetworkError(error);
+    function clearRemoteForm() {
+      const saveBtn = document.getElementById('btnSaveRemoteLink');
+      const cancelBtn = document.getElementById('btnCancelRemoteEdit');
+      const title = document.getElementById('networkRemoteFormTitle');
+      const health = document.getElementById('networkRemoteHealth');
+      document.getElementById('networkRemoteName').value = '';
+      document.getElementById('networkRemoteBase').value = '';
+      document.getElementById('networkRemoteToken').value = '';
+      document.getElementById('networkRemoteToken').placeholder = 'From the host';
+      if (saveBtn) {
+        delete saveBtn.dataset.editingId;
+        saveBtn.textContent = 'Add';
       }
+      if (cancelBtn) cancelBtn.classList.add('is-hidden');
+      if (title) title.textContent = 'Add linked LLM';
+      if (health) {
+        delete health.dataset.sticky;
+        health.textContent = 'Nearby Add fills the form — paste the host API key, then Add.';
+      }
+    }
+
+    function beginRemoteEdit(remote) {
+      const saveBtn = document.getElementById('btnSaveRemoteLink');
+      const cancelBtn = document.getElementById('btnCancelRemoteEdit');
+      const title = document.getElementById('networkRemoteFormTitle');
+      const health = document.getElementById('networkRemoteHealth');
+      document.getElementById('networkRemoteName').value = remote.name || '';
+      document.getElementById('networkRemoteBase').value = remote.base || '';
+      document.getElementById('networkRemoteToken').value = '';
+      document.getElementById('networkRemoteToken').placeholder = remote.token_set
+        ? ('saved · ' + (remote.token_masked || '••••'))
+        : 'API key from the host';
+      if (saveBtn) {
+        saveBtn.dataset.editingId = remote.id;
+        saveBtn.textContent = 'Save';
+      }
+      if (cancelBtn) cancelBtn.classList.remove('is-hidden');
+      if (title) title.textContent = 'Edit linked LLM';
+      if (health) {
+        health.dataset.sticky = '1';
+        health.textContent = remote.token_set
+          ? 'Update name, URL, or paste a new API key. Leave the key blank to keep the saved one.'
+          : 'Paste the host API key, then Save.';
+      }
+      document.getElementById('networkRemoteToken').focus();
+    }
+
+    function prepareNearbyLink(base, name) {
+      clearNetworkError();
+      clearRemoteForm();
+      document.getElementById('networkRemoteName').value = (name || '').trim();
+      document.getElementById('networkRemoteBase').value = base || '';
+      const health = document.getElementById('networkRemoteHealth');
+      if (health) {
+        health.dataset.sticky = '1';
+        health.textContent = 'Nearby peer selected. Paste its API key from the host, then Add.';
+      }
+      const tokenInput = document.getElementById('networkRemoteToken');
+      tokenInput.focus();
+      document.getElementById('btnSaveRemoteLink').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    async function linkDiscoveredPeer(base, name) {
+      // Never create a silent broken link — collect the host key in the form first.
+      prepareNearbyLink(base, name);
     }
 
     function setTps(el, value, label) {
@@ -2144,29 +2526,137 @@
       const block = document.getElementById('runningServersBlock');
       const list = document.getElementById('runningServersList');
       const servers = next.servers || [];
+      const net = next.network || {};
+      const viaRemote = !!net.via_remote;
       if (!servers.length) {
         block.classList.add('is-hidden');
+        block.classList.remove('is-active-source');
         list.innerHTML = '';
         return;
       }
       block.classList.remove('is-hidden');
+      block.classList.toggle('is-active-source', !viaRemote);
       list.innerHTML = servers.map((server) => `
         <li class="${server.active ? 'is-active' : ''}">
           <div class="network-meta">
             <strong>${escapeHtml(server.model)}</strong>
-            <span>:${server.port} · ${escapeHtml(server.status_label)}${server.active ? ' · focused' : ''}</span>
+            <span>local · :${server.port} · ${escapeHtml(server.status_label)}${server.active ? ' · focused' : ''}${viaRemote ? ' · chat uses linked' : ''}</span>
           </div>
           <button type="button" class="btn btn-ghost" data-server-action="select" data-server-id="${escapeHtml(server.id)}" ${server.active ? 'disabled' : ''}>Focus</button>
           <button type="button" class="btn btn-ghost" data-server-action="stop" data-server-id="${escapeHtml(server.id)}">Stop</button>
         </li>`).join('');
     }
 
+    function renderLinkedSource(next) {
+      const block = document.getElementById('linkedSourceBlock');
+      if (!block) return;
+      const net = next.network || {};
+      const saved = !!(net.remote_saved || (net.remote_base && String(net.remote_base).trim()));
+      if (!saved) {
+        block.classList.add('is-hidden');
+        block.classList.remove('is-active-source');
+        return;
+      }
+      block.classList.remove('is-hidden');
+      const via = !!net.via_remote;
+      block.classList.toggle('is-active-source', via);
+      const tag = document.getElementById('linkedSourceTag');
+      const title = document.getElementById('linkedSourceTitle');
+      const detail = document.getElementById('linkedSourceDetail');
+      const useLinked = document.getElementById('btnDashUseLinked');
+      const useLocal = document.getElementById('btnDashUseLocal');
+      const count = net.remote_count || 1;
+      if (tag) tag.textContent = via ? 'active for chat' : (count > 1 ? (count + ' saved') : 'saved');
+      if (title) {
+        title.textContent = net.remote_name || net.remote_model || 'Linked LLM';
+      }
+      if (detail) {
+        const host = net.remote_name || net.remote_label || net.remote_base || 'remote';
+        const model = net.remote_model ? (' · ' + net.remote_model) : '';
+        if (via && net.remote_ok) {
+          detail.textContent = host + model + ' · reachable · chat uses this';
+        } else if (via) {
+          detail.textContent = host + ' · unreachable — fix on Devices (URL / API key / host model)';
+        } else if (net.remote_ok) {
+          detail.textContent = host + model + ' · reachable · chat still on this PC';
+        } else if (net.remote_model || net.remote_status === 'unreachable') {
+          detail.textContent = host + ' · unreachable · open Devices to fix';
+        } else {
+          detail.textContent = host + ' · saved · open Devices to manage';
+        }
+      }
+      if (useLinked) {
+        if (via) {
+          useLinked.disabled = true;
+          useLinked.textContent = 'In use for chat';
+        } else if (count > 1) {
+          useLinked.disabled = false;
+          useLinked.textContent = 'Choose in Devices';
+        } else if (!net.remote_ok) {
+          useLinked.disabled = false;
+          useLinked.textContent = 'Fix in Devices';
+        } else {
+          useLinked.disabled = false;
+          useLinked.textContent = 'Use for chat';
+        }
+      }
+      if (useLocal) {
+        useLocal.disabled = !via;
+        useLocal.textContent = 'Use this PC';
+      }
+    }
+
+    function renderLinkedBadge(next) {
+      const badge = document.getElementById('linkedBadge');
+      if (!badge) return;
+      const net = next.network || {};
+      const saved = !!(net.remote_saved || (net.remote_base && String(net.remote_base).trim()));
+      const via = !!net.via_remote;
+      if (!saved && !net.expose && !net.listening_exposed) {
+        badge.classList.add('is-hidden');
+        return;
+      }
+      badge.classList.remove('is-hidden');
+      if (via) {
+        const label = net.remote_name || net.remote_model || net.remote_label || 'linked';
+        badge.textContent = net.remote_ok ? ('chat → ' + label) : 'linked · unreachable';
+        badge.className = 'status-chip linked-chip ' + (net.remote_ok ? 'status-ready' : 'status-failed');
+        badge.title = 'Chat is routed to a linked LLM';
+      } else if (saved) {
+        const count = net.remote_count || 1;
+        badge.textContent = count > 1 ? (count + ' links') : 'link saved';
+        badge.className = 'status-chip linked-chip status-starting';
+        badge.title = 'Linked LLMs are saved; chat still uses this PC';
+      } else if (net.listening_exposed) {
+        badge.textContent = 'sharing';
+        badge.className = 'status-chip linked-chip status-ready';
+        badge.title = 'This PC’s LLM API is shared for others to link';
+      } else if (net.expose) {
+        badge.textContent = 'share on';
+        badge.className = 'status-chip linked-chip status-starting';
+        badge.title = 'Share is on; start the model to listen';
+      } else {
+        badge.classList.add('is-hidden');
+      }
+    }
+
     function applyState(next) {
       state = next;
       applyAppearance(next);
       const badge = document.getElementById('statusBadge');
+      const badgeLabel = document.getElementById('statusBadgeLabel');
       badge.className = statusClass(next.status);
-      badge.textContent = next.status_label;
+      if (badgeLabel) badgeLabel.textContent = next.status_label;
+      else badge.textContent = next.status_label;
+      const busy = next.status === 'starting' || next.status === 'downloading';
+      const badgeOrb = document.getElementById('statusBadgeOrb');
+      if (badgeOrb) {
+        badgeOrb.classList.toggle('is-hidden', !busy);
+        if (window.statusBadgeOrbCtl) {
+          if (busy) window.statusBadgeOrbCtl.play();
+          else window.statusBadgeOrbCtl.pause();
+        }
+      }
 
       let detail = next.status_detail;
       if (next.download) detail = next.download.summary;
@@ -2181,13 +2671,23 @@
       startAnother.classList.toggle('is-hidden', count < 1);
       startAnother.disabled = !next.has_active_model;
 
-      document.getElementById('modelLabel').textContent = next.model;
+      const net = next.network || {};
+      const viaRemote = !!net.via_remote;
+      document.getElementById('modelLabel').textContent = viaRemote
+        ? ((net.remote_model || 'Linked LLM') + ' · via ' + (net.remote_name || net.remote_label || 'peer'))
+        : next.model;
       const toolbarModel = document.getElementById('toolbarModel');
       if (toolbarModel) {
-        toolbarModel.textContent = count > 1
-          ? (next.model || '—') + ' · ' + count + ' running'
-          : (next.model || '—');
+        if (viaRemote) {
+          toolbarModel.textContent = (net.remote_model || 'Linked LLM') + ' · via ' + (net.remote_name || net.remote_label || 'peer');
+        } else if (count > 1) {
+          toolbarModel.textContent = (next.model || '—') + ' · ' + count + ' running locally';
+        } else {
+          toolbarModel.textContent = next.model || '—';
+        }
       }
+      renderLinkedBadge(next);
+      renderLinkedSource(next);
       renderRunningServers(next);
       document.getElementById('storageLine').textContent =
         next.mapped_size.gib != null
@@ -2744,7 +3244,7 @@
       {
         id: 'server',
         title: 'Server',
-        lede: 'llama-server binary and port. Bind address is owned by Network sharing.',
+        lede: 'llama-server binary and port. Bind address is owned by Devices sharing.',
         fields: ['executable', 'host', 'port'],
       },
       {
@@ -2912,7 +3412,7 @@
         { label: 'Go to Dashboard', hint: '1', run: () => showStage('dashboard') },
         { label: 'Go to Models', hint: '2', run: () => showStage('models') },
         { label: 'Go to Configure', hint: '3', run: () => showStage('configure') },
-        { label: 'Go to Network sharing', hint: '4', run: () => showStage('network') },
+        { label: 'Go to Devices', hint: '4', run: () => showStage('network') },
         { label: 'Go to Logs', hint: '5', run: () => showStage('logs') },
         { label: 'Go to Stats', hint: '6', run: () => showStage('stats') },
         { label: 'Add model', hint: '', run: () => { showStage('models'); addModelModal.show(); } },
@@ -3202,6 +3702,14 @@
           lanScopeModal.cancel();
           return;
         }
+        if (!document.getElementById('removeRemoteModal').classList.contains('is-hidden')) {
+          removeRemoteModal.hide();
+          return;
+        }
+        if (document.getElementById('btnSaveRemoteLink')?.dataset.editingId) {
+          clearRemoteForm();
+          return;
+        }
       }
     });
 
@@ -3212,6 +3720,16 @@
       const canvas = document.getElementById(orbId);
       if (canvas) mountOrb(canvas, 20);
     });
+
+    // Status busy spinner uses the globe ("searching") painter — distinct from
+    // the orbits mark used for Chat CTAs. Starts paused; applyState plays it
+    // while status is starting / downloading.
+    {
+      const canvas = document.getElementById('statusBadgeOrb');
+      if (canvas) {
+        window.statusBadgeOrbCtl = mountOrb(canvas, 12, { mode: 'globe', autoplay: false });
+      }
+    }
 
     const exposeModal = {
       show() { document.getElementById('exposeConfirmModal').classList.remove('is-hidden'); },
@@ -3300,7 +3818,84 @@
     document.getElementById('networkPeerList').addEventListener('click', (event) => {
       const btn = event.target.closest('[data-link-base]');
       if (!btn || !document.getElementById('networkPeerList').contains(btn)) return;
-      linkDiscoveredPeer(btn.getAttribute('data-link-base') || '');
+      linkDiscoveredPeer(
+        btn.getAttribute('data-link-base') || '',
+        btn.getAttribute('data-link-name') || ''
+      );
+    });
+    let pendingRemoveRemoteId = '';
+    const removeRemoteModal = {
+      show(id, name) {
+        pendingRemoveRemoteId = id;
+        document.getElementById('removeRemoteBody').textContent =
+          'Remove “' + (name || 'this linked LLM') + '” from this PC? The host is unchanged.'
+          + (networkState?.inference_mode === 'remote' && networkState?.active_remote_id === id
+            ? ' Chat will switch back to This PC if nothing else is linked.'
+            : '');
+        document.getElementById('removeRemoteModal').classList.remove('is-hidden');
+      },
+      hide() {
+        pendingRemoveRemoteId = '';
+        document.getElementById('removeRemoteModal').classList.add('is-hidden');
+      },
+    };
+    document.getElementById('networkRemoteList').addEventListener('click', (event) => {
+      const activate = event.target.closest('[data-remote-activate]');
+      if (activate && !activate.disabled) {
+        mutateRemote('/api/network/remotes/' + encodeURIComponent(activate.getAttribute('data-remote-activate')) + '/activate', {
+          method: 'POST',
+        }).then(() => {
+          const health = document.getElementById('networkRemoteHealth');
+          if (health) {
+            health.dataset.sticky = '1';
+            health.textContent = 'Chat now uses that linked LLM.';
+          }
+        }).catch(showNetworkError);
+        return;
+      }
+      const remove = event.target.closest('[data-remote-delete]');
+      if (remove) {
+        const id = remove.getAttribute('data-remote-delete');
+        const remote = (networkState?.remotes || []).find((r) => r.id === id);
+        removeRemoteModal.show(id, remote?.name || '');
+        return;
+      }
+      const edit = event.target.closest('[data-remote-edit]');
+      if (edit) {
+        const id = edit.getAttribute('data-remote-edit');
+        const remote = (networkState?.remotes || []).find((r) => r.id === id);
+        if (remote) beginRemoteEdit(remote);
+      }
+    });
+    document.getElementById('btnCancelRemoveRemote').addEventListener('click', () => removeRemoteModal.hide());
+    document.getElementById('removeRemoteModal').addEventListener('click', (event) => {
+      if (event.target.id === 'removeRemoteModal') removeRemoteModal.hide();
+    });
+    document.getElementById('btnConfirmRemoveRemote').addEventListener('click', () => {
+      const id = pendingRemoveRemoteId;
+      if (!id) return;
+      mutateRemote('/api/network/remotes/' + encodeURIComponent(id), {
+        method: 'DELETE',
+      }).then(() => {
+        removeRemoteModal.hide();
+        clearRemoteForm();
+        const health = document.getElementById('networkRemoteHealth');
+        if (health) {
+          health.dataset.sticky = '1';
+          health.textContent = 'Linked LLM removed from this PC.';
+        }
+      }).catch(showNetworkError);
+    });
+    document.getElementById('networkRemoteList').addEventListener('change', (event) => {
+      const input = event.target.closest('[data-remote-name]');
+      if (!input) return;
+      const id = input.getAttribute('data-remote-name');
+      const name = input.value.trim();
+      if (!name) return;
+      mutateRemote('/api/network/remotes/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      }).catch(showNetworkError);
     });
     document.getElementById('btnCreateApiKey').addEventListener('click', () => {
       const name = document.getElementById('networkNewKeyName').value.trim() || 'API key';
@@ -3355,18 +3950,136 @@
       postNetwork({ inference_mode: 'local' }).catch(showNetworkError);
     });
     document.getElementById('modeRemoteBtn').addEventListener('click', () => {
-      postNetwork({ inference_mode: 'remote' }).catch(showNetworkError);
+      const remotes = networkState?.remotes || [];
+      if (!remotes.length) {
+        showNetworkError(new Error('Add a linked LLM first — paste the host API key below.'));
+        document.getElementById('networkRemoteToken').focus();
+        return;
+      }
+      const ready = remotes.find((r) => r.id === networkState?.active_remote_id && r.token_set && r.health?.ok)
+        || remotes.find((r) => r.token_set && r.health?.ok)
+        || remotes.find((r) => r.token_set);
+      if (!ready) {
+        showNetworkError(new Error('Add a working API key on a linked LLM first.'));
+        return;
+      }
+      mutateRemote('/api/network/remotes/' + encodeURIComponent(ready.id) + '/activate', {
+        method: 'POST',
+      }).catch(showNetworkError);
+    });
+    document.getElementById('btnCancelRemoteEdit').addEventListener('click', () => {
+      clearRemoteForm();
     });
     document.getElementById('btnSaveRemoteLink').addEventListener('click', () => {
-      const remote_base = document.getElementById('networkRemoteBase').value.trim();
-      const remote_token = document.getElementById('networkRemoteToken').value.trim();
-      postNetwork({
-        inference_mode: 'remote',
-        remote_base,
-        remote_token: remote_token || undefined,
-      }).then(() => {
-        document.getElementById('networkRemoteToken').value = '';
+      const name = document.getElementById('networkRemoteName').value.trim();
+      const base = document.getElementById('networkRemoteBase').value.trim();
+      const token = document.getElementById('networkRemoteToken').value.trim();
+      const saveBtn = document.getElementById('btnSaveRemoteLink');
+      const editingId = saveBtn.dataset.editingId || '';
+      const health = document.getElementById('networkRemoteHealth');
+      if (!base) {
+        showNetworkError(new Error('Enter an API base URL.'));
+        document.getElementById('networkRemoteBase').focus();
+        return;
+      }
+      if (editingId) {
+        const existing = (networkState?.remotes || []).find((r) => r.id === editingId);
+        if (!token && !existing?.token_set) {
+          showNetworkError(new Error('Paste the host API key before saving.'));
+          document.getElementById('networkRemoteToken').focus();
+          return;
+        }
+        mutateRemote('/api/network/remotes/' + encodeURIComponent(editingId), {
+          method: 'PATCH',
+          body: JSON.stringify({
+            name: name || undefined,
+            base,
+            token: token || undefined,
+          }),
+        }).then(() => {
+          clearRemoteForm();
+          if (health) {
+            health.dataset.sticky = '1';
+            health.textContent = 'Linked LLM updated.';
+          }
+        }).catch(showNetworkError);
+        return;
+      }
+      if (!token) {
+        showNetworkError(new Error('Paste the host API key, then Add.'));
+        document.getElementById('networkRemoteToken').focus();
+        return;
+      }
+      mutateRemote('/api/network/remotes', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          base,
+          token,
+          activate: true,
+        }),
+      }).then((result) => {
+        const linked = result?.network?.remote_name || name || 'Linked LLM';
+        clearRemoteForm();
+        if (health) {
+          health.dataset.sticky = '1';
+          health.textContent = 'Saved “' + linked + '” · chat now uses this link.';
+        }
       }).catch(showNetworkError);
+    });
+    document.getElementById('btnNetworkRestart')?.addEventListener('click', () => {
+      api('/api/restart', {
+        method: 'POST',
+        body: JSON.stringify({ id: state?.active_server_id || 'main' }),
+      })
+        .then((next) => applyState(next))
+        .catch(showNetworkError);
+    });
+
+    let deviceNameTimer = 0;
+    const flushDeviceName = () => {
+      const input = document.getElementById('networkDeviceName');
+      if (!input) return;
+      const device_name = input.value.trim();
+      const current = (networkState && networkState.device_name_custom) || '';
+      if (device_name === current.trim()) return;
+      postNetwork({ device_name }).catch(showNetworkError);
+    };
+    document.getElementById('networkDeviceName').addEventListener('input', () => {
+      clearTimeout(deviceNameTimer);
+      deviceNameTimer = setTimeout(flushDeviceName, 450);
+    });
+    document.getElementById('networkDeviceName').addEventListener('change', flushDeviceName);
+    document.getElementById('networkDeviceName').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        clearTimeout(deviceNameTimer);
+        flushDeviceName();
+      }
+    });
+
+    document.getElementById('btnDashUseLinked').addEventListener('click', () => {
+      const net = state?.network || networkState || {};
+      const count = net.remote_count || 0;
+      if (!net.active_remote_id || count > 1 || !net.remote_ok) {
+        showStage('network');
+        refreshNetwork();
+        return;
+      }
+      mutateRemote('/api/network/remotes/' + encodeURIComponent(net.active_remote_id) + '/activate', {
+        method: 'POST',
+      }).catch((error) => {
+        showStage('network');
+        showNetworkError(error);
+      });
+    });
+    document.getElementById('btnDashUseLocal').addEventListener('click', () => {
+      postNetwork({ inference_mode: 'local' }).catch(showNetworkError);
+    });
+    document.getElementById('btnDashNetwork').addEventListener('click', (event) => {
+      event.preventDefault();
+      showStage('network');
+      refreshNetwork();
     });
 
     document.querySelectorAll('.reveal').forEach((el) => el.classList.add('is-in'));

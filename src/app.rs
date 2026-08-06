@@ -1002,24 +1002,27 @@ impl App {
     }
 
     pub fn remote_health(&self) -> Option<RemoteHealth> {
-        let base = self.config.network.remote_base.trim();
+        let remote = self.config.network.active_remote()?;
+        let base = remote.base.trim();
         if base.is_empty() {
             return None;
         }
-        Some(
-            self.remote_health
-                .probe(base, self.config.network.remote_token.trim()),
-        )
+        Some(self.remote_health.probe(base, remote.token.trim()))
     }
 
     /// Cached peer health only — safe for high-frequency `/api/state` polls.
     pub fn remote_health_cached(&self) -> Option<RemoteHealth> {
-        let base = self.config.network.remote_base.trim();
+        let remote = self.config.network.active_remote()?;
+        let base = remote.base.trim();
         if base.is_empty() {
             return None;
         }
-        self.remote_health
-            .peek(base, self.config.network.remote_token.trim())
+        self.remote_health.peek(base, remote.token.trim())
+    }
+
+    /// Probe (cached) health for every saved linked LLM — used by the manager UI.
+    pub fn remote_health_for(&self, base: &str, token: &str) -> RemoteHealth {
+        self.remote_health.probe(base.trim(), token.trim())
     }
 
     pub fn apply_network_update(
@@ -1071,26 +1074,62 @@ impl App {
             let Some(parsed) = InferenceMode::parse(mode) else {
                 return Err("inference_mode must be \"local\" or \"remote\"".into());
             };
+            self.config.network.migrate_remotes();
+            if parsed == InferenceMode::Remote && self.config.network.remotes.is_empty() {
+                return Err("Save a linked LLM before switching chat to Linked LLM.".into());
+            }
             self.config.network.inference_mode = parsed;
         }
 
-        if let Some(base) = update.remote_base {
-            let trimmed = base.trim().trim_end_matches('/').to_string();
-            self.config.network.remote_base = trimmed;
-            // Normalize pasted roots to …/v1 when possible.
-            if let Some(normalized) = self.config.network.normalize_remote_base() {
-                self.config.network.remote_base = normalized;
+        // Legacy single-link fields upsert into the remotes manager list.
+        if update.remote_base.is_some() || update.remote_token.is_some() {
+            self.config.network.migrate_remotes();
+            let base = update
+                .remote_base
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    self.config
+                        .network
+                        .active_remote()
+                        .map(|remote| remote.base.clone())
+                })
+                .unwrap_or_default();
+            if base.trim().is_empty() {
+                let id = self.config.network.active_remote_id.clone();
+                if !id.is_empty() {
+                    let _ = self.config.network.delete_remote(&id);
+                }
+            } else {
+                let token = update.remote_token.as_deref();
+                let id = self
+                    .config
+                    .network
+                    .active_remote()
+                    .map(|remote| remote.id.clone());
+                let name = self
+                    .config
+                    .network
+                    .active_remote()
+                    .map(|remote| remote.name.clone())
+                    .unwrap_or_default();
+                self.config.network.upsert_remote(
+                    id.as_deref(),
+                    &name,
+                    &base,
+                    token,
+                    true,
+                )?;
             }
-        }
-
-        if let Some(token) = update.remote_token {
-            self.config.network.remote_token = token;
         }
 
         if let Some(name) = update.device_name {
             self.config.network.device_name = name.trim().to_string();
         }
 
+        self.config.network.migrate_remotes();
         self.config.keep_ui_private();
         self.config.sync_llama_bind_from_network();
         self.sync_share_tls()?;
@@ -1100,10 +1139,11 @@ impl App {
         self.sync_mdns_advertise();
         let restart_required = self.network_restart_required();
         self.push_log(format!(
-            "network updated (expose={}, scope={}, mode={}, llama={}:{}, tls={})",
+            "network updated (expose={}, scope={}, mode={}, remotes={}, llama={}:{}, tls={})",
             self.config.network.expose,
             self.config.network.listen_scope.as_str(),
             self.config.network.inference_mode.as_str(),
+            self.config.network.remotes.len(),
             self.config.effective_host(),
             self.config.effective_port(),
             self.config.uses_tls()
@@ -1114,6 +1154,74 @@ impl App {
             access_token: token_revealed,
             revealed_api_key_id: revealed_id,
         })
+    }
+
+    pub fn create_linked_remote(
+        &mut self,
+        name: &str,
+        base: &str,
+        token: &str,
+        activate: bool,
+    ) -> Result<NetworkUpdateResult, String> {
+        self.config
+            .network
+            .upsert_remote(None, name, base, Some(token), activate)?;
+        self.persist_network_manager("linked LLM added")
+    }
+
+    pub fn update_linked_remote(
+        &mut self,
+        id: &str,
+        name: Option<&str>,
+        base: Option<&str>,
+        token: Option<&str>,
+    ) -> Result<NetworkUpdateResult, String> {
+        self.config.network.migrate_remotes();
+        let current = self
+            .config
+            .network
+            .remotes
+            .iter()
+            .find(|remote| remote.id == id)
+            .cloned()
+            .ok_or_else(|| "Linked LLM not found.".to_string())?;
+        self.config.network.upsert_remote(
+            Some(id),
+            name.unwrap_or(&current.name),
+            base.unwrap_or(&current.base),
+            token,
+            false,
+        )?;
+        self.persist_network_manager("linked LLM updated")
+    }
+
+    pub fn delete_linked_remote(&mut self, id: &str) -> Result<NetworkUpdateResult, String> {
+        self.config.network.delete_remote(id)?;
+        self.persist_network_manager("linked LLM removed")
+    }
+
+    pub fn activate_linked_remote(&mut self, id: &str) -> Result<NetworkUpdateResult, String> {
+        self.config.network.set_active_remote(id)?;
+        self.persist_network_manager("linked LLM activated")
+    }
+
+    fn persist_network_manager(&mut self, action: &str) -> Result<NetworkUpdateResult, String> {
+        self.config.network.migrate_remotes();
+        self.config.keep_ui_private();
+        self.config.sync_llama_bind_from_network();
+        self.sync_share_tls()?;
+        self.config
+            .save(&self.config_path)
+            .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.sync_mdns_advertise();
+        self.push_log(format!(
+            "network {action} (mode={}, remotes={})",
+            self.config.network.inference_mode.as_str(),
+            self.config.network.remotes.len()
+        ));
+        Ok(NetworkUpdateResult::from_restart(
+            self.network_restart_required(),
+        ))
     }
 
     pub fn create_api_key(&mut self, name: &str) -> Result<NetworkUpdateResult, String> {
@@ -1480,7 +1588,7 @@ impl App {
                 "Enter llama-server if it is on PATH, or enter its full executable path."
             }
             (SettingField::Host, _) => {
-                "Set by Network sharing (loopback when Share is off). Not editable here."
+                "Set by Devices (loopback when Share is off). Not editable here."
             }
             (SettingField::Port, _) => "Port llama-server listens on.",
             (SettingField::Context, _) => "Token count; 8k is accepted.",
@@ -2387,7 +2495,7 @@ impl App {
             }
             SettingField::Host => {
                 return Err(
-                    "Listen address is controlled by Network sharing — change the scope there."
+                    "Listen address is controlled in Devices — change the scope there."
                         .into(),
                 );
             }

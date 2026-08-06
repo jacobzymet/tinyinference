@@ -152,6 +152,38 @@ impl ApiKey {
     }
 }
 
+/// A saved OpenAI-compatible LLM hosted on another device.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LinkedRemote {
+    pub id: String,
+    pub name: String,
+    pub base: String,
+    #[serde(default)]
+    pub token: String,
+}
+
+impl LinkedRemote {
+    pub fn new(name: impl Into<String>, base: impl Into<String>, token: impl Into<String>) -> Self {
+        Self {
+            id: generate_remote_id(),
+            name: sanitize_key_name(name),
+            base: base.into(),
+            token: token.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkedRemotePublic {
+    pub id: String,
+    pub name: String,
+    pub base: String,
+    pub token_set: bool,
+    pub token_masked: String,
+    pub active: bool,
+    pub health: Option<RemoteHealth>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct NetworkConfig {
@@ -167,7 +199,16 @@ pub struct NetworkConfig {
     #[serde(default)]
     pub api_keys: Vec<ApiKey>,
     pub inference_mode: InferenceMode,
+    /// Named linked LLMs (multi-device manager). Preferred over legacy fields.
+    #[serde(default)]
+    pub remotes: Vec<LinkedRemote>,
+    /// Which linked LLM chat uses when [`Self::inference_mode`] is Remote.
+    #[serde(default)]
+    pub active_remote_id: String,
+    /// Legacy single remote — migrated into [`Self::remotes`] on load.
+    #[serde(default)]
     pub remote_base: String,
+    #[serde(default)]
     pub remote_token: String,
     pub device_name: String,
 }
@@ -181,6 +222,8 @@ impl Default for NetworkConfig {
             access_token: String::new(),
             api_keys: Vec::new(),
             inference_mode: InferenceMode::Local,
+            remotes: Vec::new(),
+            active_remote_id: String::new(),
             remote_base: String::new(),
             remote_token: String::new(),
             device_name: String::new(),
@@ -331,6 +374,190 @@ impl NetworkConfig {
         sanitize_instance_name(&default_hostname())
     }
 
+    /// Fold legacy `remote_base` / `remote_token` into `remotes`, and keep the
+    /// active id + mirrored legacy fields consistent.
+    pub fn migrate_remotes(&mut self) {
+        if self.remotes.is_empty() {
+            let base = self.remote_base.trim();
+            if !base.is_empty() {
+                let mut remote = LinkedRemote::new(
+                    label_from_remote_base(base),
+                    base,
+                    self.remote_token.clone(),
+                );
+                if let Some(normalized) = normalize_openai_base(&remote.base) {
+                    remote.base = normalized;
+                }
+                self.active_remote_id = remote.id.clone();
+                self.remotes.push(remote);
+            }
+        }
+
+        self.remotes.retain(|remote| !remote.base.trim().is_empty());
+        for remote in &mut self.remotes {
+            if remote.id.trim().is_empty() {
+                remote.id = generate_remote_id();
+            }
+            if remote.name.trim().is_empty() {
+                remote.name = label_from_remote_base(&remote.base);
+            } else {
+                remote.name = sanitize_key_name(&remote.name);
+            }
+            if let Some(normalized) = normalize_openai_base(&remote.base) {
+                remote.base = normalized;
+            }
+        }
+
+        if self.active_remote_id.trim().is_empty()
+            || !self
+                .remotes
+                .iter()
+                .any(|remote| remote.id == self.active_remote_id)
+        {
+            self.active_remote_id = self
+                .remotes
+                .first()
+                .map(|remote| remote.id.clone())
+                .unwrap_or_default();
+        }
+
+        self.sync_legacy_remote_fields();
+    }
+
+    fn sync_legacy_remote_fields(&mut self) {
+        if let Some(active) = self.active_remote().cloned() {
+            self.remote_base = active.base;
+            self.remote_token = active.token;
+        } else {
+            self.remote_base.clear();
+            self.remote_token.clear();
+        }
+    }
+
+    pub fn active_remote(&self) -> Option<&LinkedRemote> {
+        if self.remotes.is_empty() {
+            return None;
+        }
+        self.remotes
+            .iter()
+            .find(|remote| remote.id == self.active_remote_id)
+            .or_else(|| self.remotes.first())
+    }
+
+    pub fn active_remote_mut(&mut self) -> Option<&mut LinkedRemote> {
+        if self.remotes.is_empty() {
+            return None;
+        }
+        let id = if self
+            .remotes
+            .iter()
+            .any(|remote| remote.id == self.active_remote_id)
+        {
+            self.active_remote_id.clone()
+        } else {
+            self.remotes[0].id.clone()
+        };
+        self.active_remote_id = id.clone();
+        self.remotes.iter_mut().find(|remote| remote.id == id)
+    }
+
+    pub fn set_active_remote(&mut self, id: &str) -> Result<(), String> {
+        self.migrate_remotes();
+        if !self.remotes.iter().any(|remote| remote.id == id) {
+            return Err("Linked LLM not found.".into());
+        }
+        self.active_remote_id = id.to_string();
+        self.inference_mode = InferenceMode::Remote;
+        self.sync_legacy_remote_fields();
+        Ok(())
+    }
+
+    pub fn upsert_remote(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        base: &str,
+        token: Option<&str>,
+        activate: bool,
+    ) -> Result<LinkedRemote, String> {
+        self.migrate_remotes();
+        let Some(normalized) = normalize_openai_base(base) else {
+            return Err("Enter an API base URL (usually ending in /v1).".into());
+        };
+        let cleaned_name = {
+            let n = sanitize_key_name(name);
+            if n.is_empty() {
+                label_from_remote_base(&normalized)
+            } else {
+                n
+            }
+        };
+
+        // Create path: reuse an existing link with the same base instead of duplicating.
+        let target_id = id.map(str::to_string).or_else(|| {
+            self.remotes
+                .iter()
+                .find(|remote| normalize_openai_base(&remote.base).as_deref() == Some(normalized.as_str()))
+                .map(|remote| remote.id.clone())
+        });
+
+        if let Some(id) = target_id {
+            let remote = self
+                .remotes
+                .iter_mut()
+                .find(|remote| remote.id == id)
+                .ok_or_else(|| "Linked LLM not found.".to_string())?;
+            remote.name = cleaned_name;
+            remote.base = normalized;
+            if let Some(token) = token {
+                // Empty string clears; omit (None) keeps existing.
+                remote.token = token.to_string();
+            }
+            let updated = remote.clone();
+            if activate {
+                self.active_remote_id = updated.id.clone();
+                self.inference_mode = InferenceMode::Remote;
+            }
+            self.sync_legacy_remote_fields();
+            return Ok(updated);
+        }
+
+        if self.remotes.len() >= 32 {
+            return Err("Maximum of 32 linked LLMs reached.".into());
+        }
+        let remote = LinkedRemote::new(cleaned_name, normalized, token.unwrap_or(""));
+        let created = remote.clone();
+        self.remotes.push(remote);
+        if activate || self.remotes.len() == 1 {
+            self.active_remote_id = created.id.clone();
+            if activate {
+                self.inference_mode = InferenceMode::Remote;
+            }
+        }
+        self.sync_legacy_remote_fields();
+        Ok(created)
+    }
+
+    pub fn delete_remote(&mut self, id: &str) -> Result<(), String> {
+        self.migrate_remotes();
+        if !self.remotes.iter().any(|remote| remote.id == id) {
+            return Err("Linked LLM not found.".into());
+        }
+        self.remotes.retain(|remote| remote.id != id);
+        if self.active_remote_id == id {
+            self.active_remote_id = self
+                .remotes
+                .first()
+                .map(|remote| remote.id.clone())
+                .unwrap_or_default();
+            if self.remotes.is_empty() {
+                self.inference_mode = InferenceMode::Local;
+            }
+        }
+        self.sync_legacy_remote_fields();
+        Ok(())
+    }
+
     /// Host string llama-server should bind to (without port).
     pub fn resolve_listen_host(&self) -> Result<String, String> {
         if !self.expose {
@@ -372,27 +599,54 @@ impl NetworkConfig {
 
     /// OpenAI-compatible chat completions URL on a linked LLM (`…/v1/chat/completions`).
     pub fn remote_chat_url(&self) -> Option<String> {
-        let base = self.normalize_remote_base()?;
         if self.inference_mode != InferenceMode::Remote {
             return None;
         }
+        let base = self.active_remote()?.base.trim();
+        let base = normalize_openai_base(base)?;
         Some(format!("{base}/chat/completions"))
     }
 
-    /// Normalize a remote OpenAI base to `http://host:port/v1` (no trailing slash).
+    /// Normalize the active remote OpenAI base to `http://host:port/v1` (no trailing slash).
     pub fn normalize_remote_base(&self) -> Option<String> {
-        let mut base = self.remote_base.trim().trim_end_matches('/').to_string();
-        if base.is_empty() {
-            return None;
-        }
-        if !base.contains("://") {
-            base = format!("http://{base}");
-        }
-        // Accept pasted roots without `/v1`.
-        if !base.ends_with("/v1") {
-            base = format!("{base}/v1");
-        }
-        Some(base)
+        normalize_openai_base(
+            self.active_remote()
+                .map(|remote| remote.base.as_str())
+                .unwrap_or(self.remote_base.as_str()),
+        )
+    }
+}
+
+/// Normalize a remote OpenAI base to `http://host:port/v1` (no trailing slash).
+pub fn normalize_openai_base(raw: &str) -> Option<String> {
+    let mut base = raw.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return None;
+    }
+    if !base.contains("://") {
+        base = format!("http://{base}");
+    }
+    // Accept pasted roots without `/v1`.
+    if !base.ends_with("/v1") {
+        base = format!("{base}/v1");
+    }
+    Some(base)
+}
+
+fn label_from_remote_base(base: &str) -> String {
+    let trimmed = base
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .trim_end_matches("/v1");
+    let host = trimmed.split('/').next().unwrap_or(trimmed);
+    let short = host.split(':').next().unwrap_or(host);
+    let label = sanitize_key_name(short);
+    if label.is_empty() {
+        "Linked LLM".into()
+    } else {
+        label
     }
 }
 
@@ -437,6 +691,17 @@ fn generate_key_id() -> String {
     }
     format!(
         "key-{}",
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
+}
+
+fn generate_remote_id() -> String {
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_err() {
+        return format!("remote-{}", unix_now());
+    }
+    format!(
+        "remote-{}",
         bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
     )
 }

@@ -23,8 +23,8 @@ use crate::{
     chat,
     config::RuntimePreset,
     network::{
-        ApiKeyPublic, DiscoveredPeer, InferenceMode, ListenCandidate, RemoteHealth, ShareUrl,
-        mask_token,
+        ApiKeyPublic, DiscoveredPeer, InferenceMode, LinkedRemotePublic, ListenCandidate,
+        RemoteHealth, ShareUrl, mask_token,
     },
     server::ServerProcess,
 };
@@ -57,6 +57,12 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/network/keys", post(create_api_key))
         .route("/api/network/keys/{id}", axum::routing::delete(delete_api_key).patch(rename_api_key))
         .route("/api/network/keys/{id}/regenerate", post(regenerate_api_key))
+        .route("/api/network/remotes", post(create_linked_remote))
+        .route(
+            "/api/network/remotes/{id}",
+            axum::routing::patch(update_linked_remote).delete(delete_linked_remote),
+        )
+        .route("/api/network/remotes/{id}/activate", post(activate_linked_remote))
         .route("/api/start", post(start))
         .route("/api/stop", post(stop))
         .route("/api/restart", post(restart))
@@ -225,12 +231,17 @@ async fn chat_completions(
         let user_skills = app.enabled_user_skills();
         let network = &app.config.network;
         let remote = if network.inference_mode == InferenceMode::Remote {
+            let Some(active) = network.active_remote() else {
+                return Err(ApiError::bad_request(
+                    "Remote inference is selected but no linked LLM is configured.".into(),
+                ));
+            };
             let Some(url) = network.remote_chat_url() else {
                 return Err(ApiError::bad_request(
                     "Remote inference is selected but no remote URL is configured.".into(),
                 ));
             };
-            Some((url, network.remote_token.clone()))
+            Some((url, active.token.clone()))
         } else {
             None
         };
@@ -384,6 +395,78 @@ async fn delete_api_key(
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
     let mut app = app.lock().map_err(|_| ApiError::lock())?;
     let result = app.delete_api_key(&id).map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateLinkedRemoteBody {
+    #[serde(default)]
+    name: String,
+    base: String,
+    #[serde(default)]
+    token: String,
+    #[serde(default = "default_true")]
+    activate: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateLinkedRemoteBody {
+    name: Option<String>,
+    base: Option<String>,
+    token: Option<String>,
+}
+
+async fn create_linked_remote(
+    State(app): State<SharedApp>,
+    Json(body): Json<CreateLinkedRemoteBody>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .create_linked_remote(&body.name, &body.base, &body.token, body.activate)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+async fn update_linked_remote(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateLinkedRemoteBody>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .update_linked_remote(
+            &id,
+            body.name.as_deref(),
+            body.base.as_deref(),
+            body.token.as_deref(),
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+async fn delete_linked_remote(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .delete_linked_remote(&id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+async fn activate_linked_remote(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .activate_linked_remote(&id)
+        .map_err(ApiError::bad_request)?;
     Ok(Json(NetworkMutationResponse::from_result(&app, result)))
 }
 
@@ -792,9 +875,17 @@ struct NetworkSummary {
     expose: bool,
     listening_exposed: bool,
     restart_required: bool,
+    /// Resolved advertise / display name for this PC.
+    device_name: String,
     inference_mode: &'static str,
     remote_base: String,
     remote_label: String,
+    remote_name: String,
+    active_remote_id: String,
+    remote_count: usize,
+    /// At least one linked LLM is saved in config.
+    remote_saved: bool,
+    /// Chat is currently routed to the active linked LLM.
     via_remote: bool,
     remote_ok: bool,
     remote_model: Option<String>,
@@ -818,9 +909,17 @@ struct NetworkState {
     access_token_set: bool,
     access_token_masked: String,
     api_keys: Vec<ApiKeyPublic>,
+    /// Custom name from config (empty → use hostname). Bound to the Device name field.
+    device_name_custom: String,
+    /// Resolved advertise / display name (custom or hostname).
     device_name: String,
     inference_mode: &'static str,
+    remotes: Vec<LinkedRemotePublic>,
+    active_remote_id: String,
     remote_base: String,
+    remote_name: String,
+    /// At least one linked LLM is saved in config.
+    remote_saved: bool,
     remote_token_set: bool,
     remote_token_masked: String,
     share_urls: Vec<ShareUrl>,
@@ -864,6 +963,25 @@ impl NetworkState {
         let tailscale_available = candidates.iter().any(|c| c.kind == "tailscale");
         let listen_bind_host = network.resolve_listen_host().ok();
         let primary = network.primary_api_key().unwrap_or("");
+        let active_id = network
+            .active_remote()
+            .map(|remote| remote.id.clone())
+            .unwrap_or_default();
+        let remotes = network
+            .remotes
+            .iter()
+            .map(|remote| LinkedRemotePublic {
+                id: remote.id.clone(),
+                name: remote.name.clone(),
+                base: remote.base.clone(),
+                token_set: !remote.token.trim().is_empty(),
+                token_masked: mask_token(&remote.token),
+                active: remote.id == active_id
+                    && network.inference_mode == InferenceMode::Remote,
+                health: Some(app.remote_health_for(&remote.base, &remote.token)),
+            })
+            .collect::<Vec<_>>();
+        let active = network.active_remote();
         Self {
             expose: network.expose,
             listening_exposed: app.listening_exposed(),
@@ -880,11 +998,16 @@ impl NetworkState {
             access_token_set: !primary.is_empty(),
             access_token_masked: mask_token(primary),
             api_keys: network.public_api_keys(),
+            device_name_custom: network.device_name.clone(),
             device_name: network.resolved_device_name(),
             inference_mode: network.inference_mode.as_str(),
-            remote_base: network.remote_base.clone(),
-            remote_token_set: !network.remote_token.trim().is_empty(),
-            remote_token_masked: mask_token(&network.remote_token),
+            remotes,
+            active_remote_id: active_id,
+            remote_base: active.map(|r| r.base.clone()).unwrap_or_default(),
+            remote_name: active.map(|r| r.name.clone()).unwrap_or_default(),
+            remote_saved: !network.remotes.is_empty(),
+            remote_token_set: active.is_some_and(|r| !r.token.trim().is_empty()),
+            remote_token_masked: mask_token(active.map(|r| r.token.as_str()).unwrap_or("")),
             share_urls: app.network_share_urls(),
             peers: app.discovered_peers(),
             mdns_error: app.mdns_error(),
@@ -908,32 +1031,38 @@ impl NetworkState {
 impl NetworkSummary {
     fn from_app(app: &App) -> Self {
         let network = &app.config.network;
-        let via_remote = network.inference_mode == InferenceMode::Remote
-            && !network.remote_base.trim().is_empty();
-        let remote_label = if via_remote {
-            network
-                .remote_base
-                .trim()
-                .trim_start_matches("http://")
-                .trim_start_matches("https://")
-                .trim_end_matches('/')
-                .to_string()
-        } else {
-            String::new()
-        };
-        // Prefer a fresh/cached probe without blocking state polls on the network.
-        let health = if via_remote {
-            app.remote_health_cached()
-        } else {
-            None
-        };
+        let remote_saved = !network.remotes.is_empty();
+        let active = network.active_remote();
+        let via_remote = network.inference_mode == InferenceMode::Remote && active.is_some();
+        let remote_label = active
+            .map(|remote| {
+                remote
+                    .base
+                    .trim()
+                    .trim_start_matches("http://")
+                    .trim_start_matches("https://")
+                    .trim_end_matches('/')
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let remote_name = active
+            .map(|remote| remote.name.clone())
+            .unwrap_or_default();
+        // Warm/cached probe for the active link so Dash can show reachability
+        // even when chat is still on This PC. Cache keeps this cheap on polls.
+        let health = if remote_saved { app.remote_health() } else { None };
         Self {
             expose: network.expose,
             listening_exposed: app.listening_exposed(),
             restart_required: app.network_restart_required(),
+            device_name: network.resolved_device_name(),
             inference_mode: network.inference_mode.as_str(),
-            remote_base: network.remote_base.clone(),
+            remote_base: active.map(|r| r.base.clone()).unwrap_or_default(),
             remote_label,
+            remote_name,
+            active_remote_id: active.map(|r| r.id.clone()).unwrap_or_default(),
+            remote_count: network.remotes.len(),
+            remote_saved,
             via_remote,
             // Stay false until a probe succeeds — do not optimistically mark remotes ready.
             remote_ok: health.as_ref().is_some_and(|h| h.ok),

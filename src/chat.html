@@ -543,6 +543,28 @@
       background-repeat: no-repeat;
     }
     .chat-model-select-wrap.is-hidden { display: none !important; }
+    .chat-remote-source {
+      grid-column: 2;
+      justify-self: center;
+      min-width: 0;
+      max-width: min(18rem, 100%);
+      border: 1px solid color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 8%, var(--color-paper-2));
+      color: var(--color-ink);
+      border-radius: 0.45rem;
+      padding: 0.35rem 0.65rem;
+      font-size: var(--text-xs);
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .chat-remote-source.is-hidden { display: none !important; }
+    .chat-remote-source .chat-remote-kind {
+      color: var(--color-muted);
+      font-weight: 500;
+      margin-right: 0.35rem;
+    }
     .visually-hidden {
       position: absolute;
       width: 1px;
@@ -1864,9 +1886,13 @@
           <div class="chat-topbar-title" id="convoTitle"></div>
         </div>
         <label class="chat-model-select-wrap" id="chatModelSelectWrap">
-          <span class="visually-hidden">Model</span>
-          <select id="chatModelSelect" class="chat-model-select" aria-label="Model"></select>
+          <span class="visually-hidden">Local model</span>
+          <select id="chatModelSelect" class="chat-model-select" aria-label="Local model"></select>
         </label>
+        <div class="chat-remote-source is-hidden" id="chatRemoteSource" title="Chat is using a linked LLM from another device">
+          <span class="chat-remote-kind">Linked</span>
+          <span id="chatRemoteSourceLabel">—</span>
+        </div>
         <div class="chat-topbar-trailing" aria-hidden="true"></div>
       </header>
 
@@ -2432,6 +2458,8 @@
     const serverChip = document.getElementById('serverChip');
     const chatModelSelect = document.getElementById('chatModelSelect');
     const chatModelSelectWrap = document.getElementById('chatModelSelectWrap');
+    const chatRemoteSource = document.getElementById('chatRemoteSource');
+    const chatRemoteSourceLabel = document.getElementById('chatRemoteSourceLabel');
     const SERVER_ID_KEY = 'tinyinference_server_id';
     let selectedServerId = localStorage.getItem(SERVER_ID_KEY) || '';
     let latestState = null;
@@ -4100,13 +4128,31 @@
       const network = data.network || {};
       const viaRemote = !!network.via_remote;
       const servers = (data.servers || []).filter((s) => s.ready || s.status === 'ready');
-      if (viaRemote || servers.length === 0) {
+
+      if (viaRemote) {
+        chatModelSelectWrap.classList.add('is-hidden');
+        if (chatRemoteSource) {
+          chatRemoteSource.classList.remove('is-hidden');
+          const model = network.remote_model || 'remote model';
+          const host = network.remote_name || network.remote_label || 'peer';
+          if (chatRemoteSourceLabel) {
+            chatRemoteSourceLabel.textContent = model + ' · ' + host;
+          }
+          chatRemoteSource.title = network.remote_ok
+            ? ('Chat uses linked LLM: ' + model + ' via ' + host)
+            : ('Linked LLM unreachable: ' + host);
+        }
+        return;
+      }
+
+      if (chatRemoteSource) chatRemoteSource.classList.add('is-hidden');
+      if (servers.length === 0) {
         chatModelSelectWrap.classList.add('is-hidden');
         return;
       }
       chatModelSelectWrap.classList.remove('is-hidden');
       const options = servers.map((s) => {
-        return { id: s.id, label: s.model, thinking: !!s.thinking_supported, ready: !!s.ready };
+        return { id: s.id, label: 'Local · ' + s.model, thinking: !!s.thinking_supported, ready: !!s.ready };
       });
       if (!options.some((o) => o.id === selectedServerId)) {
         const preferred = options.find((o) => o.id === data.active_server_id) || options[0];
@@ -4153,24 +4199,24 @@
 
       serverChip.className = 'status-chip status-' + statusClass;
       serverChip.textContent = viaRemote
-        ? (remoteOk ? 'via ' + (network.remote_label || 'peer') : 'remote unreachable')
-        : statusLabel;
+        ? (remoteOk ? 'linked · ready' : 'linked · unreachable')
+        : ('local · ' + statusLabel);
       serverReady = viaRemote
         ? remoteOk
         : !!(selected ? selected.ready : data.status === 'ready');
 
       const project = inProjectChat() ? getProject(activeProjectId) : null;
-      const viaSuffix = viaRemote && network.remote_label
-        ? ' · via ' + network.remote_label
+      const viaSuffix = viaRemote
+        ? (' · via ' + (network.remote_name || network.remote_label || 'linked LLM'))
         : '';
       if (!serverReady) {
         modelHintEl.textContent = viaRemote
-          ? ('Linked LLM is ' + statusLabel + '.')
+          ? ('Linked LLM is ' + statusLabel + ' — not using models on this PC.')
           : (project && !activeId
             ? 'Shared instructions and memory apply · model is ' + statusLabel + '.'
             : 'Model server is ' + statusLabel + '.');
         composerHint.textContent = viaRemote
-          ? 'Check Network sharing: remote API base, key, and that the host model is started.'
+          ? 'Fix the link in Devices, or switch chat source to This PC. Local Start/Stop will not fix a linked outage.'
           : 'Start the model on the control panel to chat.';
         composerHint.classList.add('is-warn');
       } else if (project && !activeId) {
@@ -4179,7 +4225,9 @@
       } else {
         modelHintEl.textContent = project
           ? 'Chatting with ' + modelName + ' · Project: ' + project.name + viaSuffix
-          : 'Chatting with ' + modelName + viaSuffix;
+          : (viaRemote
+            ? ('Chatting with ' + modelName + viaSuffix + ' · not local')
+            : ('Chatting with ' + modelName + viaSuffix));
         updateComposerHint();
       }
       const thinking = viaRemote

@@ -1,27 +1,82 @@
 /* ================================================================
- * Dotted thought-orb — the `orbits` ("working") painter, ported to
- * plain canvas from thinking-orbs <https://orbs.jakubantalik.com>.
- * MIT License, Copyright (c) 2026 Jakub Antalik.
+ * Dotted thought-orbs — ported to plain canvas from thinking-orbs
+ * <https://orbs.jakubantalik.com>. MIT License, Copyright (c) 2026
+ * Jakub Antalik.
  *
- * Only this one mode is carried over, with its shipped 64px / 20px
- * tunings pre-resolved into constants (the upstream preset machinery
- * scales counts linearly and radii by a size multiplier; both are
- * already applied below). Grayscale ink is tinted toward the cobalt
+ * Modes carried over:
+ *   - orbits ("working") — header / chat CTAs
+ *   - globe  ("searching") — starting & downloading status spinner
+ *
+ * Shipped 64px / 20px / 14px tunings are pre-resolved into constants
+ * (upstream preset machinery scales counts and radii; those multipliers
+ * are already applied below). Grayscale ink is tinted toward the cobalt
  * accent so the mark belongs to this design system.
  *
- * Shared by the control panel (header mark) and the chat page (empty
- * state + streaming indicator), so it is served as its own asset
- * rather than inlined twice.
+ * Shared by the control panel and the chat page, so it is served as its
+ * own asset rather than inlined twice.
  * ================================================================ */
 
 const ORB_PRESETS = {
-  64: {
-    speed: 1.885,
-    opts: { orbitN: 12, ghostN: 40, ghostR: 0.9, ghostA: 0.5, particles: 3, partR: 1.2, partRDepth: 1.6, rsPow: 0.6, rMin: 0.3 },
+  orbits: {
+    64: {
+      speed: 1.885,
+      opts: { orbitN: 12, ghostN: 40, ghostR: 0.9, ghostA: 0.5, particles: 3, partR: 1.2, partRDepth: 1.6, rsPow: 0.6, rMin: 0.3 },
+    },
+    20: {
+      speed: 3.9,
+      opts: { orbitN: 3, ghostN: 10, ghostR: 2.16, ghostA: 0.5, particles: 3, partR: 2.88, partRDepth: 3.84, rsPow: 0.6, rMin: 0.3 },
+    },
   },
-  20: {
-    speed: 3.9,
-    opts: { orbitN: 3, ghostN: 10, ghostR: 2.16, ghostA: 0.5, particles: 3, partR: 2.88, partRDepth: 3.84, rsPow: 0.6, rMin: 0.3 },
+  // searching — lat/long field with a scan meridian (size 20 / 14 tunings)
+  globe: {
+    20: {
+      speed: 2.665,
+      opts: {
+        latRings: 6,
+        lonDensity: 14,
+        rBase: 1.05,
+        rDepth: 2.975,
+        rBoost: 1.75,
+        inkFar: 0.62,
+        inkSpan: 0.54,
+        rsPow: 0.6,
+        rMin: 0.3,
+        scanMul: 4.335,
+        dimBase: 0.45,
+      },
+    },
+    14: {
+      speed: 2.9,
+      opts: {
+        latRings: 5,
+        lonDensity: 12,
+        rBase: 1.2,
+        rDepth: 3.4,
+        rBoost: 2.0,
+        inkFar: 0.62,
+        inkSpan: 0.54,
+        rsPow: 0.55,
+        rMin: 0.35,
+        scanMul: 4.5,
+        dimBase: 0.42,
+      },
+    },
+    12: {
+      speed: 3.0,
+      opts: {
+        latRings: 4,
+        lonDensity: 10,
+        rBase: 1.35,
+        rDepth: 3.6,
+        rBoost: 2.1,
+        inkFar: 0.62,
+        inkSpan: 0.54,
+        rsPow: 0.5,
+        rMin: 0.4,
+        scanMul: 4.6,
+        dimBase: 0.4,
+      },
+    },
   },
 };
 /* Multiplied into the grayscale ink value; max channel 1 keeps highlights bright. */
@@ -31,6 +86,11 @@ const ORB_TINT = [0.72, 0.84, 1];
 function orbHash(a, b) {
   const h = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
   return h - Math.floor(h);
+}
+
+/** Shortest signed angular distance, wrapped to (-π, π]. */
+function orbAngleDelta(a, b) {
+  return Math.atan2(Math.sin(a - b), Math.cos(a - b));
 }
 
 /** Spin + tilt + orthographic projection. */
@@ -121,9 +181,54 @@ function drawOrbits(ctx, size, t, o) {
   orbPaint(ctx, dots, o.rMin);
 }
 
+/** Lat/long field with a scan meridian sweeping — searching. */
+function drawGlobe(ctx, size, t, o) {
+  const spin = 0.5;
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = (size / 2) * 0.82;
+  const tilt = 0.4 + 0.06 * Math.sin(t * 0.35);
+  const pt = orbProjector(t * spin, tilt, cx, cy, radius);
+  const scan = t * (spin + (1.7 - spin) * (o.scanMul === undefined ? 1 : o.scanMul));
+  const rs = orbRadiusScale(size, o.rsPow === undefined ? 0.6 : o.rsPow);
+  const dimBase = o.dimBase === undefined ? 1 : o.dimBase;
+  const latRings = o.latRings === undefined ? 17 : o.latRings;
+  const lonDensity = o.lonDensity === undefined ? 44 : o.lonDensity;
+  const rBase = o.rBase === undefined ? 0.6 : o.rBase;
+  const rDepth = o.rDepth === undefined ? 1.7 : o.rDepth;
+  const rBoost = o.rBoost === undefined ? 1 : o.rBoost;
+  const inkFar = o.inkFar === undefined ? 0.62 : o.inkFar;
+  const inkSpan = o.inkSpan === undefined ? 0.54 : o.inkSpan;
+
+  const dots = [];
+  for (let li = 0; li <= latRings; li++) {
+    const lat = -Math.PI / 2 + (li / latRings) * Math.PI;
+    const cosLat = Math.cos(lat);
+    const sinLat = Math.sin(lat);
+    const lonCount = Math.max(1, Math.round(Math.abs(cosLat) * lonDensity));
+    for (let lj = 0; lj < lonCount; lj++) {
+      const lon = (lj / lonCount) * 2 * Math.PI;
+      const p = pt(cosLat * Math.cos(lon), sinLat, cosLat * Math.sin(lon));
+      const depth = (p[2] + 1) / 2;
+      const d = orbAngleDelta(lon + t * spin, scan);
+      const boost = Math.exp(-(d * d) / 0.18) * Math.max(0, p[2]);
+      dots.push({
+        x: p[0],
+        y: p[1],
+        z: p[2],
+        r: (rBase + rDepth * depth + rBoost * boost) * rs,
+        white: inkFar - inkSpan * depth,
+        a: dimBase + (1 - dimBase) * Math.min(1, boost),
+      });
+    }
+  }
+  orbPaint(ctx, dots, o.rMin === undefined ? 0.3 : o.rMin);
+}
+
 /**
  * Drive an orb on `canvas`. Returns { play, pause, stop }.
  *
+ * options.mode: 'orbits' (default) | 'globe'
  * With `autoplay: false` the orb paints one static frame and waits — used
  * for the header mark, which only spins while hovered so the control panel
  * chrome stays calm. Pauses on hidden tabs; reduced-motion users always get
@@ -132,7 +237,10 @@ function drawOrbits(ctx, size, t, o) {
 function mountOrb(canvas, size, options) {
   const settings = options || {};
   const autoplay = settings.autoplay !== false;
-  const preset = ORB_PRESETS[size];
+  const mode = settings.mode || 'orbits';
+  const modePresets = ORB_PRESETS[mode] || ORB_PRESETS.orbits;
+  const preset = modePresets[size] || modePresets[20] || ORB_PRESETS.orbits[20];
+  const draw = mode === 'globe' ? drawGlobe : drawOrbits;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.round(size * dpr);
   canvas.height = Math.round(size * dpr);
@@ -145,7 +253,7 @@ function mountOrb(canvas, size, options) {
   const frame = (tSec) => {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, size, size);
-    drawOrbits(ctx, size, tSec, preset.opts);
+    draw(ctx, size, tSec, preset.opts);
   };
   const liveFrame = () => frame((performance.now() / 1000) * preset.speed);
 
@@ -160,23 +268,33 @@ function mountOrb(canvas, size, options) {
 
   let raf = 0;
   let running = false;
+  let desired = autoplay;
   let stopped = false;
   const loop = () => {
     liveFrame();
     if (running) raf = requestAnimationFrame(loop);
   };
-  const play = () => {
-    if (running || stopped) return;
+  const startLoop = () => {
+    if (running || stopped || document.visibilityState === 'hidden') return;
     running = true;
     raf = requestAnimationFrame(loop);
   };
-  const pause = () => {
+  const stopLoop = () => {
     running = false;
     cancelAnimationFrame(raf);
   };
+  const play = () => {
+    if (stopped) return;
+    desired = true;
+    startLoop();
+  };
+  const pause = () => {
+    desired = false;
+    stopLoop();
+  };
   const onVisibility = () => {
-    if (document.visibilityState === 'hidden') pause();
-    else if (autoplay && !stopped) play();
+    if (document.visibilityState === 'hidden') stopLoop();
+    else if (desired && !stopped) startLoop();
   };
   document.addEventListener('visibilitychange', onVisibility);
   if (autoplay) play();
