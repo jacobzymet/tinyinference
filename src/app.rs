@@ -862,8 +862,8 @@ impl App {
 
     fn keys_or_host_diverged(&self, running: &Config) -> bool {
         // Share proxy owns public bind / TLS / API keys. llama only needs a
-        // restart when Share is toggled (metrics vs no-slots) or an older
-        // process is still bound off-loopback from pre-proxy builds.
+        // restart when Share is toggled, the upstream port mapping changed, or
+        // an older process is still bound off-loopback from pre-proxy builds.
         if running.network.expose != self.config.network.expose {
             return true;
         }
@@ -873,7 +873,15 @@ impl App {
         if self.config.network.resolve_listen_host().is_err() {
             return true;
         }
-        !is_loopback_host(&running.effective_host())
+        if !is_loopback_host(&running.effective_host()) {
+            return true;
+        }
+        // Older launches lacked an override / used the public port for llama.
+        let Some(actual) = running.llama_port_override else {
+            return true;
+        };
+        actual != self.config.desired_llama_listen_port()
+            || running.effective_port() != self.config.effective_port()
     }
 
     pub fn sync_mdns_advertise(&mut self) {
@@ -1023,17 +1031,18 @@ impl App {
         } else {
             Vec::new()
         };
-        let ports: Vec<(u16, String)> = if expose {
+        let ports: Vec<(u16, u16, String)> = if expose {
             self.shareable_running_ports()
                 .into_iter()
-                .filter_map(|port| {
+                .filter_map(|public_port| {
                     let model = self
                         .server_summaries()
                         .into_iter()
-                        .find(|s| s.port == port)
+                        .find(|s| s.port == public_port)
                         .map(|s| s.model)
-                        .unwrap_or_else(|| format!(":{port}"));
-                    Some((port, model))
+                        .unwrap_or_else(|| format!(":{public_port}"));
+                    let upstream = crate::config::share_upstream_port(public_port);
+                    Some((public_port, upstream, model))
                 })
                 .collect()
         } else {
@@ -1443,10 +1452,16 @@ impl App {
         let mut ports = Vec::new();
         if let Some(running) = &self.running_config {
             ports.push(running.effective_port());
+            if running.network.expose {
+                ports.push(running.llama_listen_port());
+            }
         }
         for server in &self.extra_servers {
             if server.is_running() {
                 ports.push(server.port());
+                if server.running_config.network.expose {
+                    ports.push(server.running_config.llama_listen_port());
+                }
             }
         }
         ports
@@ -1455,7 +1470,10 @@ impl App {
     pub fn allocate_port(&self) -> u16 {
         let used = self.used_ports();
         let mut port = self.config.server.port.max(1);
-        while used.contains(&port) {
+        while used.contains(&port)
+            || (self.config.network.expose
+                && used.contains(&crate::config::share_upstream_port(port)))
+        {
             port = port.saturating_add(1);
             if port == 0 {
                 port = 8080;
@@ -2085,9 +2103,14 @@ impl App {
         // Additional instances get the next free port; primary keeps the configured port.
         if self.process.is_some() {
             launch_config.server.port = self.allocate_port();
-        } else if self.used_ports().contains(&launch_config.effective_port()) {
+        } else if self.used_ports().contains(&launch_config.effective_port())
+            || self
+                .used_ports()
+                .contains(&launch_config.desired_llama_listen_port())
+        {
             launch_config.server.port = self.allocate_port();
         }
+        launch_config.llama_port_override = Some(launch_config.desired_llama_listen_port());
         let display = CommandSpec::from_config(&launch_config).display();
         self.push_log(format!("$ {display}"));
         match ServerProcess::start(&launch_config) {

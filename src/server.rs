@@ -144,7 +144,7 @@ impl CommandSpec {
         push_pair(
             &mut args,
             "--port",
-            config.effective_port().to_string(),
+            config.llama_listen_port().to_string(),
         );
         if config.uses_tls() {
             if let (Some(cert), Some(key)) = (&config.tls_cert_file, &config.tls_key_file) {
@@ -614,7 +614,7 @@ fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, Stri
         return https_get(config, path, timeout);
     }
     let host = config.connect_host();
-    let port = config.effective_port();
+    let port = config.llama_listen_port();
     let address = host
         .parse::<IpAddr>()
         .ok()
@@ -921,7 +921,7 @@ mod tests {
         assert!(
             actual
                 .windows(2)
-                .any(|window| window[0] == "--port" && window[1] == "8080")
+                .any(|window| window[0] == "--port" && window[1] == "18080")
         );
         assert!(!actual.iter().any(|argument| argument == "0.0.0.0"));
         assert!(!actual.iter().any(|argument| argument == "100.64.1.2"));

@@ -201,7 +201,10 @@ impl ShareActivityStore {
 
 #[derive(Clone)]
 struct ProxyState {
-    local_port: u16,
+    /// Public share port (shown in Connected now / share URLs).
+    public_port: u16,
+    /// Loopback llama-server port the proxy forwards to.
+    upstream_port: u16,
     model: Arc<Mutex<String>>,
     keys: Arc<Mutex<Vec<(String, String, String)>>>,
     activity: Arc<Mutex<ShareActivityStore>>,
@@ -279,15 +282,15 @@ impl ShareProxyManager {
         self.last_error = None;
     }
 
-    /// Ensure listeners match concrete public bind hosts + running share ports.
+    /// Ensure listeners match public bind hosts + running share ports.
     ///
-    /// `bind_hosts` must be real NIC addresses (not `0.0.0.0`) so they do not
-    /// clash with llama on `127.0.0.1:<port>`.
+    /// `ports` are `(public_port, upstream_port, model)`. llama owns the
+    /// upstream loopback port; the proxy owns the public port.
     pub fn sync(
         &mut self,
         expose: bool,
         bind_hosts: &[String],
-        ports: &[(u16, String)],
+        ports: &[(u16, u16, String)],
         cert: Option<&PathBuf>,
         key: Option<&PathBuf>,
         keys: Vec<(String, String, String)>,
@@ -303,7 +306,7 @@ impl ShareProxyManager {
 
         let hosts: Vec<String> = bind_hosts
             .iter()
-            .filter(|host| !is_loopback_host(host) && *host != "0.0.0.0" && *host != "::")
+            .filter(|host| !is_loopback_host(host))
             .cloned()
             .collect();
         if hosts.is_empty() {
@@ -312,12 +315,12 @@ impl ShareProxyManager {
             return;
         }
 
-        let desired: HashMap<String, &String> = hosts
+        let desired: HashMap<String, &(u16, u16, String)> = hosts
             .iter()
             .flat_map(|host| {
                 ports
                     .iter()
-                    .map(|(port, model)| (runner_key(host, *port), model))
+                    .map(|entry| (runner_key(host, entry.0), entry))
             })
             .collect();
 
@@ -339,20 +342,20 @@ impl ShareProxyManager {
 
         let mut errors = Vec::new();
         for host in &hosts {
-            for (port, model) in ports {
-                let id = runner_key(host, *port);
+            for (public_port, upstream_port, model) in ports {
+                let id = runner_key(host, *public_port);
                 if let Some(runner) = self.runners.get_mut(&id) {
                     if let Ok(mut guard) = runner.model.lock() {
                         *guard = model.clone();
                     }
                     continue;
                 }
-                match self.spawn_listener(host, *port, model, &cert, &key) {
+                match self.spawn_listener(host, *public_port, *upstream_port, model, &cert, &key) {
                     Ok(runner) => {
                         self.runners.insert(id, runner);
                     }
                     Err(error) => {
-                        errors.push(format!("{host}:{port}: {error}"));
+                        errors.push(format!("{host}:{public_port}: {error}"));
                     }
                 }
             }
@@ -367,12 +370,13 @@ impl ShareProxyManager {
     fn spawn_listener(
         &self,
         bind_host: &str,
-        port: u16,
+        public_port: u16,
+        upstream_port: u16,
         model: &str,
         cert: &PathBuf,
         key: &PathBuf,
     ) -> Result<ProxyRunner, String> {
-        let addr = resolve_bind_addr(bind_host, port)?;
+        let addr = resolve_bind_addr(bind_host, public_port)?;
         // Fail fast if the address is unavailable (don't pretend the proxy is up).
         {
             let probe = std::net::TcpListener::bind(addr)
@@ -401,7 +405,8 @@ impl ShareProxyManager {
             };
             let client = Client::builder(TokioExecutor::new()).build_http();
             let state = ProxyState {
-                local_port: port,
+                public_port,
+                upstream_port,
                 model: model_for_state,
                 keys,
                 activity,
@@ -474,7 +479,7 @@ async fn proxy_request(
             &remote,
             &key_id,
             &key_name,
-            state.local_port,
+            state.public_port,
             &model,
             method.as_str(),
             &path,
@@ -530,7 +535,7 @@ async fn forward(
         Err(error) => return Err(error.to_string()),
     };
 
-    let upstream = format!("http://127.0.0.1:{}{path}", state.local_port);
+    let upstream = format!("http://127.0.0.1:{}{path}", state.upstream_port);
     let uri: Uri = upstream.parse().map_err(|error| format!("{error}"))?;
 
     let mut builder = hyper::Request::builder().method(method).uri(uri);
@@ -540,7 +545,10 @@ async fn forward(
         }
         builder = builder.header(name, value);
     }
-    builder = builder.header(header::HOST, format!("127.0.0.1:{}", state.local_port));
+    builder = builder.header(
+        header::HOST,
+        format!("127.0.0.1:{}", state.upstream_port),
+    );
 
     let upstream_req = builder
         .body(Full::new(bytes))

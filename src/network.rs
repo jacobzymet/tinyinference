@@ -595,26 +595,12 @@ impl NetworkConfig {
         }
     }
 
-    /// Concrete addresses the share proxy should bind (never `0.0.0.0`).
+    /// Addresses the share proxy should bind (public port).
     ///
-    /// llama stays on `127.0.0.1:<port>`; the proxy must use real NIC IPs so
-    /// both can share the port number without an exclusive-bind clash.
+    /// llama uses a separate loopback upstream port while Share is on, so
+    /// binding `0.0.0.0` here is safe.
     pub fn proxy_bind_hosts(&self) -> Result<Vec<String>, String> {
         let host = self.resolve_listen_host()?;
-        if host == "0.0.0.0" || host == "::" {
-            let (lan, ts) = shareable_ipv4_addrs();
-            let hosts: Vec<String> = lan
-                .into_iter()
-                .chain(ts)
-                .map(|ip| ip.to_string())
-                .collect();
-            if hosts.is_empty() {
-                return Err(
-                    "No LAN or Tailscale address found to bind the share proxy.".into(),
-                );
-            }
-            return Ok(hosts);
-        }
         if host == "127.0.0.1" || host == "localhost" || host == "::1" {
             return Err("Share proxy will not bind on loopback".into());
         }
@@ -1884,13 +1870,11 @@ mod tests {
     }
 
     #[test]
-    fn proxy_bind_hosts_expands_all_interfaces() {
+    fn proxy_bind_hosts_follows_listen_scope() {
         let mut cfg = NetworkConfig::default();
         cfg.expose = true;
         cfg.listen_scope = ListenScope::All;
-        let hosts = cfg.proxy_bind_hosts().unwrap_or_default();
-        // Machine-dependent, but must never ask the proxy to bind wildcard.
-        assert!(!hosts.iter().any(|h| h == "0.0.0.0" || h == "::"));
+        assert_eq!(cfg.proxy_bind_hosts().unwrap(), vec!["0.0.0.0".to_string()]);
         cfg.listen_scope = ListenScope::Custom;
         cfg.listen_host = "10.0.0.187".into();
         assert_eq!(cfg.proxy_bind_hosts().unwrap(), vec!["10.0.0.187".to_string()]);
