@@ -892,6 +892,9 @@ pub struct DiscoveredPeer {
     pub name: String,
     pub host: String,
     pub port: u16,
+    /// Additional shared llama ports on this peer (multi-LLM hosts).
+    #[serde(default)]
+    pub ports: Vec<u16>,
     pub base_url: String,
     pub fullname: String,
 }
@@ -932,6 +935,7 @@ struct AdvertisedService {
 struct BeaconOut {
     name: String,
     port: u16,
+    ports: Vec<u16>,
     ips: Vec<Ipv4Addr>,
 }
 
@@ -945,6 +949,9 @@ struct BeaconPayload {
     name: String,
     #[serde(default)]
     port: u16,
+    /// All shared llama ports on this device (multi-LLM hosts).
+    #[serde(default)]
+    ports: Vec<u16>,
     #[serde(default = "default_https_scheme")]
     scheme: String,
     #[serde(default)]
@@ -1113,12 +1120,17 @@ impl NetworkDiscovery {
             .list()
     }
 
-    pub fn sync_advertise(&self, expose: bool, device_name: &str, port: u16) {
+    pub fn sync_advertise(&self, expose: bool, device_name: &str, ports: &[u16]) {
         self.ensure_daemon_and_browse();
 
         let (lan, _ts) = shareable_ipv4_addrs();
         let ips = lan;
         let instance = sanitize_instance_name(device_name);
+        let mut ports = ports.to_vec();
+        ports.retain(|p| *p != 0);
+        ports.sort_unstable();
+        ports.dedup();
+        let port = ports.first().copied().unwrap_or(0);
 
         // UDP beacon works even when mDNS is broken (common on Windows Wi‑Fi).
         {
@@ -1127,6 +1139,7 @@ impl NetworkDiscovery {
                 *beacon = Some(BeaconOut {
                     name: instance.clone(),
                     port,
+                    ports: ports.clone(),
                     ips: ips.clone(),
                 });
             } else {
@@ -1215,6 +1228,7 @@ fn announce_payload(out: &BeaconOut) -> BeaconPayload {
         t: "announce".into(),
         name: out.name.clone(),
         port: out.port,
+        ports: out.ports.clone(),
         scheme: "https".into(),
         ips: out.ips.iter().map(|ip| ip.to_string()).collect(),
     }
@@ -1302,6 +1316,7 @@ fn spawn_beacon_broadcaster(beacon_out: Arc<Mutex<Option<BeaconOut>>>) {
                     t: "discover".into(),
                     name: String::new(),
                     port: 0,
+                    ports: Vec::new(),
                     scheme: "https".into(),
                     ips: Vec::new(),
                 }) {
@@ -1417,6 +1432,7 @@ fn probe_openai_compatible_peer(ip: Ipv4Addr, port: u16) -> Option<DiscoveredPee
         name: format!("lan-{ip}"),
         host: ip.to_string(),
         port,
+        ports: vec![port],
         base_url: format!("https://{ip}:{port}/v1"),
         fullname: format!("scan:{ip}:{port}"),
     })
@@ -1518,10 +1534,16 @@ fn peer_from_announce(payload: &BeaconPayload, from: SocketAddr) -> Option<Disco
         "https"
     };
     let name = sanitize_instance_name(&payload.name);
+    let mut ports = payload.ports.clone();
+    ports.push(payload.port);
+    ports.retain(|p| *p != 0);
+    ports.sort_unstable();
+    ports.dedup();
     Some(DiscoveredPeer {
         name: name.clone(),
         host: host.clone(),
         port: payload.port,
+        ports,
         base_url: format!("{scheme}://{host}:{}/v1", payload.port),
         fullname: format!("beacon:{name}:{}", payload.port),
     })
@@ -1563,6 +1585,7 @@ fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer>
         name: short_name,
         host: host.clone(),
         port,
+        ports: vec![port],
         base_url: format!("{scheme}://{host}:{port}/v1"),
         fullname: info.fullname.clone(),
     })
@@ -1576,9 +1599,25 @@ pub struct RemoteHealth {
     pub error: Option<String>,
 }
 
+/// One selectable model on a linked host (may span multiple llama ports).
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteModelOption {
+    pub id: String,
+    pub model: String,
+    pub base: String,
+    pub port: u16,
+    pub ready: bool,
+    pub label: String,
+}
+
 #[derive(Debug, Default)]
 pub struct HealthCache {
     last: Mutex<Option<(String, Instant, RemoteHealth)>>,
+}
+
+#[derive(Debug, Default)]
+pub struct CatalogCache {
+    last: Mutex<Option<(String, Instant, Vec<RemoteModelOption>)>>,
 }
 
 impl HealthCache {
@@ -1610,69 +1649,186 @@ impl HealthCache {
     }
 }
 
-fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
-    let mut base = base.trim().trim_end_matches('/').to_string();
-    if base.is_empty() {
-        return RemoteHealth {
-            ok: false,
-            model: None,
-            status: None,
-            error: Some("No remote URL configured".into()),
+impl CatalogCache {
+    pub fn peek(&self, base: &str, token: &str) -> Option<Vec<RemoteModelOption>> {
+        let key = format!("{base}|{token}");
+        let Ok(guard) = self.last.lock() else {
+            return None;
         };
-    }
-    if !base.contains("://") {
-        base = format!("http://{base}");
-    }
-    if !base.ends_with("/v1") {
-        base = format!("{base}/v1");
-    }
-    let url = format!("{base}/models");
-    let agent = crate::chat::llm_http_agent(Duration::from_secs(2));
-    let mut request = agent.get(&url);
-    if !token.trim().is_empty() {
-        request = request.header("Authorization", &format!("Bearer {}", token.trim()));
-    }
-    match request.call() {
-        Ok(mut response) => {
-            if response.status() != 200 {
-                return RemoteHealth {
-                    ok: false,
-                    model: None,
-                    status: None,
-                    error: Some(format!("Remote responded with {}", response.status())),
-                };
+        match guard.as_ref() {
+            Some((cached_key, at, catalog))
+                if cached_key == &key && at.elapsed() < HEALTH_CACHE =>
+            {
+                Some(catalog.clone())
             }
-            match response.body_mut().read_json::<serde_json::Value>() {
-                Ok(body) => {
-                    let model = body
-                        .get("data")
-                        .and_then(|v| v.as_array())
-                        .and_then(|arr| arr.first())
-                        .and_then(|m| m.get("id"))
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string);
-                    RemoteHealth {
-                        ok: true,
-                        model,
-                        status: Some("ready".into()),
-                        error: None,
-                    }
-                }
-                Err(error) => RemoteHealth {
-                    ok: false,
-                    model: None,
-                    status: None,
-                    error: Some(error.to_string()),
-                },
-            }
+            _ => None,
         }
+    }
+
+    pub fn probe(&self, base: &str, token: &str, extra_ports: &[u16]) -> Vec<RemoteModelOption> {
+        let key = format!("{base}|{token}");
+        if let Some(catalog) = self.peek(base, token) {
+            return catalog;
+        }
+        let catalog = probe_remote_catalog(base, token, extra_ports);
+        if let Ok(mut guard) = self.last.lock() {
+            *guard = Some((key, Instant::now(), catalog.clone()));
+        }
+        catalog
+    }
+}
+
+fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
+    match fetch_remote_models(base, token) {
+        Ok(models) => RemoteHealth {
+            ok: true,
+            model: models.first().cloned(),
+            status: Some("ready".into()),
+            error: None,
+        },
         Err(error) => RemoteHealth {
             ok: false,
             model: None,
             status: None,
-            error: Some(error.to_string()),
+            error: Some(error),
         },
     }
+}
+
+fn fetch_remote_models(base: &str, token: &str) -> Result<Vec<String>, String> {
+    fetch_remote_models_with_timeout(base, token, Duration::from_secs(2))
+}
+
+fn fetch_remote_models_with_timeout(
+    base: &str,
+    token: &str,
+    timeout: Duration,
+) -> Result<Vec<String>, String> {
+    let Some(base) = normalize_openai_base(base) else {
+        return Err("No remote URL configured".into());
+    };
+    let url = format!("{base}/models");
+    let agent = crate::chat::llm_http_agent(timeout);
+    let mut request = agent.get(&url);
+    if !token.trim().is_empty() {
+        request = request.header("Authorization", &format!("Bearer {}", token.trim()));
+    }
+    let mut response = request.call().map_err(|error| error.to_string())?;
+    if response.status() != 200 {
+        return Err(format!("Remote responded with {}", response.status()));
+    }
+    let body = response
+        .body_mut()
+        .read_json::<serde_json::Value>()
+        .map_err(|error| error.to_string())?;
+    let models = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if models.is_empty() {
+        Err("Remote /models returned no models".into())
+    } else {
+        Ok(models)
+    }
+}
+
+/// Probe the linked base and sibling ports on the same host for every ready model.
+pub fn probe_remote_catalog(base: &str, token: &str, extra_ports: &[u16]) -> Vec<RemoteModelOption> {
+    let Some(primary) = normalize_openai_base(base) else {
+        return Vec::new();
+    };
+    let Some((scheme, host, primary_port)) = split_openai_base(&primary) else {
+        return Vec::new();
+    };
+
+    // Prefer advertised/discovered ports; only sweep a small neighborhood + common set.
+    let mut ports = Vec::new();
+    ports.push(primary_port);
+    for port in extra_ports {
+        ports.push(*port);
+    }
+    for port in SCAN_PORTS {
+        ports.push(*port);
+    }
+    for delta in 1..=4u16 {
+        ports.push(primary_port.saturating_add(delta));
+        if primary_port > delta {
+            ports.push(primary_port - delta);
+        }
+    }
+    ports.sort_unstable();
+    ports.dedup();
+
+    // Fast fail on closed ports so a multi-port scan stays snappy.
+    let sibling_timeout = Duration::from_millis(450);
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for port in ports {
+        let candidate = format!("{scheme}://{host}:{port}/v1");
+        let timeout = if port == primary_port {
+            Duration::from_secs(2)
+        } else {
+            sibling_timeout
+        };
+        let Ok(models) = fetch_remote_models_with_timeout(&candidate, token, timeout) else {
+            continue;
+        };
+        for model in models {
+            let id = format!("remote|{candidate}|{model}");
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            out.push(RemoteModelOption {
+                id,
+                model: model.clone(),
+                base: candidate.clone(),
+                port,
+                ready: true,
+                label: model,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.port.cmp(&b.port).then(a.model.cmp(&b.model)));
+    let multi = out.len() > 1;
+    if multi {
+        for item in &mut out {
+            item.label = format!("{} · :{}", item.model, item.port);
+        }
+    }
+    out
+}
+
+pub fn split_openai_base(base: &str) -> Option<(String, String, u16)> {
+    let base = normalize_openai_base(base)?;
+    let url = base.trim_end_matches("/v1");
+    let without_scheme = url.split("://").nth(1)?;
+    let scheme = url.split("://").next()?.to_string();
+    let authority = without_scheme.split('/').next()?;
+    let (host, port) = if let Some((h, p)) = authority.rsplit_once(':') {
+        // Handle IPv6 [addr]:port lightly — tinyinference share URLs are IPv4 today.
+        let port = p.parse().ok()?;
+        (h.to_string(), port)
+    } else {
+        let port = if scheme == "https" { 443 } else { 80 };
+        (authority.to_string(), port)
+    };
+    Some((scheme, host, port))
+}
+
+/// True when `candidate` is an OpenAI base on the same host as `linked`.
+pub fn remote_base_same_host(linked: &str, candidate: &str) -> bool {
+    let Some((_, host_a, _)) = split_openai_base(linked) else {
+        return false;
+    };
+    let Some((_, host_b, _)) = split_openai_base(candidate) else {
+        return false;
+    };
+    host_a.eq_ignore_ascii_case(&host_b)
 }
 
 #[cfg(test)]
@@ -1718,6 +1874,7 @@ mod tests {
         let payload = announce_payload(&BeaconOut {
             name: "desk".into(),
             port: 8080,
+            ports: vec![8080, 8081],
             ips: vec![Ipv4Addr::new(192, 168, 1, 20)],
         });
         let packet = encode_beacon(&payload).unwrap();
@@ -1725,6 +1882,7 @@ mod tests {
         let peer = peer_from_announce(&decoded, "192.168.1.20:9".parse().unwrap()).unwrap();
         assert_eq!(peer.name, "desk");
         assert_eq!(peer.port, 8080);
+        assert_eq!(peer.ports, vec![8080, 8081]);
         assert_eq!(peer.base_url, "https://192.168.1.20:8080/v1");
     }
 

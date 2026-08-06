@@ -476,6 +476,17 @@
       display: flex;
       flex-wrap: wrap;
       gap: 0.35rem;
+      align-items: center;
+    }
+    .actions .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .remote-model-card .model-card-meta {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      color: var(--color-muted);
     }
     .meta-block {
       margin-top: var(--space-xs);
@@ -1404,15 +1415,22 @@
       <div class="stack">
         <div id="linkedSourceBlock" class="panel stack-md source-panel is-hidden">
           <div class="eyebrow">
-            <span>Linked LLM</span>
+            <span>Linked device</span>
             <span id="linkedSourceTag" class="source-tag">saved</span>
           </div>
           <div id="linkedSourceTitle" class="tps-value" style="font-size:1.05rem">—</div>
           <p id="linkedSourceDetail" class="source-detail">—</p>
+          <p id="linkedSourceChatHint" class="source-detail is-hidden">Open Chat to pick among these models in the model selector.</p>
+          <ul id="linkedSourceModels" class="network-list is-hidden" style="margin-top:0.5rem"></ul>
           <div class="actions" style="margin-top:0.65rem">
+            <a class="btn btn-primary is-hidden" id="btnDashOpenChat" href="/chat">
+              <canvas class="chat-cta-orb" id="dashLinkedChatOrb" aria-hidden="true" style="width:16px;height:16px"></canvas>
+              <span>Open Chat</span>
+            </a>
             <button type="button" class="btn btn-ghost" id="btnDashUseLinked">Use for chat</button>
             <button type="button" class="btn btn-ghost" id="btnDashUseLocal">Use this PC</button>
             <a class="btn btn-ghost" href="#network" id="btnDashNetwork" data-stage-jump="network">Devices</a>
+            <a class="btn btn-ghost is-hidden" href="#models" id="btnDashRemoteModels" data-stage-jump="models">Remote models</a>
           </div>
         </div>
         <div id="runningServersBlock" class="panel stack-md source-panel is-hidden">
@@ -1507,10 +1525,28 @@
           <p id="modelsError" class="text-error is-hidden"></p>
         </div>
 
+        <div id="remoteModelsSection" class="panel model-section is-hidden">
+          <div class="model-section-head">
+            <div>
+              <p class="eyebrow">Linked device</p>
+              <h3>Remote models</h3>
+            </div>
+          </div>
+          <p id="remoteModelsHint" class="setting-hint">
+            Models on the linked device. They are not stored here — open Chat and use the model selector to talk to them.
+          </p>
+          <div id="remoteModelsLibrary" class="model-library"></div>
+          <div class="model-card-actions" style="justify-content:flex-start;margin-top:0.65rem">
+            <a class="btn btn-primary" id="btnRemoteModelsOpenChat" href="/chat">Open Chat</a>
+            <button type="button" class="btn btn-ghost" id="btnRemoteModelsUseLinked">Use linked for chat</button>
+            <a class="btn btn-ghost" href="#network" id="btnRemoteModelsDevices">Devices</a>
+          </div>
+        </div>
+
         <div class="panel model-section">
           <div class="model-section-head">
             <div>
-              <p class="eyebrow">Library</p>
+              <p class="eyebrow">This PC</p>
               <h3>My models</h3>
             </div>
             <input class="field-input" id="modelFilter" type="search" placeholder="Filter…" autocomplete="off">
@@ -2552,9 +2588,18 @@
       if (!block) return;
       const net = next.network || {};
       const saved = !!(net.remote_saved || (net.remote_base && String(net.remote_base).trim()));
+      const models = net.remote_models || [];
+      const list = document.getElementById('linkedSourceModels');
+      const chatHint = document.getElementById('linkedSourceChatHint');
+      const openChat = document.getElementById('btnDashOpenChat');
+      const remoteModelsBtn = document.getElementById('btnDashRemoteModels');
       if (!saved) {
         block.classList.add('is-hidden');
         block.classList.remove('is-active-source');
+        if (list) { list.innerHTML = ''; list.classList.add('is-hidden'); }
+        if (chatHint) chatHint.classList.add('is-hidden');
+        if (openChat) openChat.classList.add('is-hidden');
+        if (remoteModelsBtn) remoteModelsBtn.classList.add('is-hidden');
         return;
       }
       block.classList.remove('is-hidden');
@@ -2568,31 +2613,59 @@
       const count = net.remote_count || 1;
       if (tag) tag.textContent = via ? 'active for chat' : (count > 1 ? (count + ' saved') : 'saved');
       if (title) {
-        title.textContent = net.remote_name || net.remote_model || 'Linked LLM';
+        title.textContent = net.remote_name || net.remote_model || 'Linked device';
       }
       if (detail) {
-        const host = net.remote_name || net.remote_label || net.remote_base || 'remote';
-        const model = net.remote_model ? (' · ' + net.remote_model) : '';
+        const host = net.remote_label || net.remote_base || 'remote';
         if (via && net.remote_ok) {
-          detail.textContent = host + model + ' · reachable · chat uses this';
+          detail.textContent = host + ' · reachable · Chat uses this device’s models';
         } else if (via) {
           detail.textContent = host + ' · unreachable — fix on Devices (URL / API key / host model)';
-        } else if (net.remote_ok) {
-          detail.textContent = host + model + ' · reachable · chat still on this PC';
-        } else if (net.remote_model || net.remote_status === 'unreachable') {
-          detail.textContent = host + ' · unreachable · open Devices to fix';
+        } else if (net.remote_ok || models.length) {
+          detail.textContent = host + ' · reachable · switch to Linked LLM to use these in Chat';
         } else {
           detail.textContent = host + ' · saved · open Devices to manage';
         }
       }
+      if (list) {
+        if (models.length) {
+          list.classList.remove('is-hidden');
+          const sig = models.map((m) => m.id).join('|');
+          if (list.dataset.signature !== sig) {
+            list.dataset.signature = sig;
+            list.innerHTML = models.map((model) => `
+              <li>
+                <div class="network-meta">
+                  <strong>${escapeHtml(model.label || model.model)}</strong>
+                  <span>remote · :${model.port}${via ? ' · available in Chat' : ''}</span>
+                </div>
+              </li>`).join('');
+          }
+        } else {
+          list.classList.add('is-hidden');
+          list.innerHTML = '';
+          delete list.dataset.signature;
+        }
+      }
+      if (chatHint) {
+        chatHint.classList.toggle('is-hidden', !(via && models.length));
+        if (via && models.length) {
+          chatHint.textContent = models.length === 1
+            ? 'Open Chat — this remote model is in the model selector.'
+            : ('Open Chat — pick among these ' + models.length + ' remote models in the model selector.');
+        }
+      }
+      if (openChat) openChat.classList.toggle('is-hidden', !via);
+      if (remoteModelsBtn) remoteModelsBtn.classList.toggle('is-hidden', !models.length && !via);
       if (useLinked) {
+        useLinked.classList.toggle('is-hidden', via);
         if (via) {
           useLinked.disabled = true;
           useLinked.textContent = 'In use for chat';
         } else if (count > 1) {
           useLinked.disabled = false;
           useLinked.textContent = 'Choose in Devices';
-        } else if (!net.remote_ok) {
+        } else if (!net.remote_ok && !models.length) {
           useLinked.disabled = false;
           useLinked.textContent = 'Fix in Devices';
         } else {
@@ -2604,6 +2677,66 @@
         useLocal.disabled = !via;
         useLocal.textContent = 'Use this PC';
       }
+    }
+
+    function renderRemoteModelsSection(next) {
+      const section = document.getElementById('remoteModelsSection');
+      const library = document.getElementById('remoteModelsLibrary');
+      const hint = document.getElementById('remoteModelsHint');
+      const useLinked = document.getElementById('btnRemoteModelsUseLinked');
+      if (!section || !library) return;
+      const net = next.network || {};
+      const saved = !!(net.remote_saved || (net.remote_base && String(net.remote_base).trim()));
+      const via = !!net.via_remote;
+      const models = net.remote_models || [];
+      if (!saved) {
+        section.classList.add('is-hidden');
+        library.innerHTML = '';
+        return;
+      }
+      section.classList.remove('is-hidden');
+      const host = net.remote_name || net.remote_label || 'linked device';
+      if (hint) {
+        if (via && models.length) {
+          hint.textContent = 'From “' + host + '”. Not stored on this PC — open Chat and choose one in the model selector.';
+        } else if (via) {
+          hint.textContent = 'Chat is linked to “' + host + '”, but no remote models responded yet. Check Share, API key, and that models are running on the host.';
+        } else if (models.length) {
+          hint.textContent = 'From “' + host + '”. Switch chat to Linked LLM (or Use linked for chat), then open Chat to use these in the model selector.';
+        } else {
+          hint.textContent = 'A linked device is saved. Use linked for chat to connect, then remote models appear here and in Chat.';
+        }
+      }
+      if (useLinked) {
+        useLinked.disabled = via;
+        useLinked.textContent = via ? 'Chat uses linked' : 'Use linked for chat';
+      }
+      const sig = [via ? 1 : 0, host, ...models.map((m) => m.id + '|' + m.label)].join('\x1f');
+      if (library.dataset.signature === sig) return;
+      library.dataset.signature = sig;
+      if (!models.length) {
+        library.innerHTML = '<p class="model-empty">' + (via
+          ? 'No remote models found yet.'
+          : 'Connect with Use linked for chat to load remote models.') + '</p>';
+        return;
+      }
+      library.innerHTML = models.map((model) => `
+        <article class="model-card remote-model-card">
+          <div class="model-card-main">
+            <div class="model-card-title">${escapeHtml(model.label || model.model)}</div>
+            <div class="model-card-meta">
+              <span class="model-pill is-accent">Remote</span>
+              <span class="model-pill">${escapeHtml(host)}</span>
+              <span class="model-pill">:${model.port}</span>
+              <span class="model-pill ${model.ready ? 'is-ok' : 'is-warn'}">${model.ready ? 'Ready' : 'Unavailable'}</span>
+              ${via ? '<span class="model-pill is-accent">In Chat selector</span>' : ''}
+            </div>
+          </div>
+          <div class="model-card-actions">
+            <a class="btn btn-primary" href="/chat">Open Chat</a>
+          </div>
+        </article>
+      `).join('');
     }
 
     function renderLinkedBadge(next) {
@@ -2688,6 +2821,7 @@
       }
       renderLinkedBadge(next);
       renderLinkedSource(next);
+      renderRemoteModelsSection(next);
       renderRunningServers(next);
       document.getElementById('storageLine').textContent =
         next.mapped_size.gib != null
@@ -2787,8 +2921,12 @@
         model.kind,
         model.downloading ? 'Downloading' : model.status,
       ].join('\x1f')).join('\x1e');
+      const remote = (next.network?.remote_models || []).map((m) => m.id).join('\x1e');
       return [
         modelFilter,
+        next.network?.via_remote ? 1 : 0,
+        next.network?.remote_name || '',
+        remote,
         pack(libraryModels(next), 'library'),
         pack(availableModels(next), 'available'),
       ].join('|');
@@ -3720,6 +3858,10 @@
       const canvas = document.getElementById(orbId);
       if (canvas) mountOrb(canvas, 20);
     });
+    {
+      const canvas = document.getElementById('dashLinkedChatOrb');
+      if (canvas) mountOrb(canvas, 16);
+    }
 
     // Status busy spinner uses the globe ("searching") painter — distinct from
     // the orbits mark used for Chat CTAs. Starts paused; applyState plays it
@@ -4080,6 +4222,30 @@
       event.preventDefault();
       showStage('network');
       refreshNetwork();
+    });
+    document.getElementById('btnDashRemoteModels')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      showStage('models');
+    });
+    document.getElementById('btnRemoteModelsDevices')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      showStage('network');
+      refreshNetwork();
+    });
+    document.getElementById('btnRemoteModelsUseLinked')?.addEventListener('click', () => {
+      const net = state?.network || networkState || {};
+      const id = net.active_remote_id;
+      if (!id) {
+        showStage('network');
+        refreshNetwork();
+        return;
+      }
+      mutateRemote('/api/network/remotes/' + encodeURIComponent(id) + '/activate', {
+        method: 'POST',
+      }).catch((error) => {
+        showStage('network');
+        showNetworkError(error);
+      });
     });
 
     document.querySelectorAll('.reveal').forEach((el) => el.classList.add('is-in'));

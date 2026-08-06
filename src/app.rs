@@ -16,8 +16,8 @@ use crate::{
     hub,
     instance::ManagedServer,
     network::{
-        self, DiscoveredPeer, HealthCache, InferenceMode, ListenCandidate, ListenScope,
-        NetworkDiscovery, RemoteHealth, ShareUrl,
+        self, CatalogCache, DiscoveredPeer, HealthCache, InferenceMode, ListenCandidate,
+        ListenScope, NetworkDiscovery, RemoteHealth, ShareUrl,
     },
     server::{
         CommandSpec, PendingProbe, PendingThinkingProbe, ProbeResult, ServerEvent, ServerMetrics,
@@ -648,6 +648,7 @@ pub struct App {
     listen_addr: Option<SocketAddr>,
     discovery: NetworkDiscovery,
     remote_health: HealthCache,
+    remote_catalog: CatalogCache,
     /// Whether the loaded model supports controllable thinking / reasoning effort.
     thinking_supported: Option<bool>,
     thinking_probe_for: Option<String>,
@@ -709,6 +710,7 @@ impl App {
             listen_addr: None,
             discovery: NetworkDiscovery::new(),
             remote_health: HealthCache::default(),
+            remote_catalog: CatalogCache::default(),
             thinking_supported: None,
             thinking_probe_for: None,
             pending_thinking_probe: None,
@@ -869,11 +871,10 @@ impl App {
         // Advertise only while a shared llama is actually running.
         let ports = self.shareable_running_ports();
         let advertise = self.config.network.should_advertise_mdns() && !ports.is_empty();
-        let port = ports.first().copied().unwrap_or(0);
         self.discovery.sync_advertise(
             advertise,
             &self.config.network.resolved_device_name(),
-            port,
+            &ports,
         );
         if let Some(error) = self.discovery.last_error() {
             let line = format!("[network] {error}");
@@ -1023,6 +1024,38 @@ impl App {
     /// Probe (cached) health for every saved linked LLM — used by the manager UI.
     pub fn remote_health_for(&self, base: &str, token: &str) -> RemoteHealth {
         self.remote_health.probe(base.trim(), token.trim())
+    }
+
+    /// Models available on the active linked host (primary + sibling ports).
+    pub fn remote_model_catalog(&self) -> Vec<network::RemoteModelOption> {
+        let Some(remote) = self.config.network.active_remote() else {
+            return Vec::new();
+        };
+        let base = remote.base.trim();
+        if base.is_empty() {
+            return Vec::new();
+        }
+        let mut extra_ports = Vec::new();
+        if let Some((_, host, _)) = network::split_openai_base(base) {
+            for peer in self.discovered_peers() {
+                if peer.host.eq_ignore_ascii_case(&host) {
+                    extra_ports.extend(peer.ports.iter().copied());
+                    extra_ports.push(peer.port);
+                }
+            }
+        }
+        self.remote_catalog
+            .probe(base, remote.token.trim(), &extra_ports)
+    }
+
+    /// Cached catalog only — safe for high-frequency polls after a warm probe.
+    pub fn remote_model_catalog_cached(&self) -> Vec<network::RemoteModelOption> {
+        let Some(remote) = self.config.network.active_remote() else {
+            return Vec::new();
+        };
+        self.remote_catalog
+            .peek(remote.base.trim(), remote.token.trim())
+            .unwrap_or_default()
     }
 
     pub fn apply_network_update(

@@ -1886,8 +1886,8 @@
           <div class="chat-topbar-title" id="convoTitle"></div>
         </div>
         <label class="chat-model-select-wrap" id="chatModelSelectWrap">
-          <span class="visually-hidden">Local model</span>
-          <select id="chatModelSelect" class="chat-model-select" aria-label="Local model"></select>
+          <span class="visually-hidden">Model</span>
+          <select id="chatModelSelect" class="chat-model-select" aria-label="Model"></select>
         </label>
         <div class="chat-remote-source is-hidden" id="chatRemoteSource" title="Chat is using a linked LLM from another device">
           <span class="chat-remote-kind">Linked</span>
@@ -2461,7 +2461,9 @@
     const chatRemoteSource = document.getElementById('chatRemoteSource');
     const chatRemoteSourceLabel = document.getElementById('chatRemoteSourceLabel');
     const SERVER_ID_KEY = 'tinyinference_server_id';
+    const REMOTE_MODEL_KEY = 'tinyinference_remote_model_id';
     let selectedServerId = localStorage.getItem(SERVER_ID_KEY) || '';
+    let selectedRemoteModelId = localStorage.getItem(REMOTE_MODEL_KEY) || '';
     let latestState = null;
 
     function newId(prefix) {
@@ -4128,19 +4130,45 @@
       const network = data.network || {};
       const viaRemote = !!network.via_remote;
       const servers = (data.servers || []).filter((s) => s.ready || s.status === 'ready');
+      const remoteModels = network.remote_models || [];
 
       if (viaRemote) {
-        chatModelSelectWrap.classList.add('is-hidden');
-        if (chatRemoteSource) {
-          chatRemoteSource.classList.remove('is-hidden');
-          const model = network.remote_model || 'remote model';
-          const host = network.remote_name || network.remote_label || 'peer';
-          if (chatRemoteSourceLabel) {
-            chatRemoteSourceLabel.textContent = model + ' · ' + host;
+        if (chatRemoteSource) chatRemoteSource.classList.add('is-hidden');
+        if (remoteModels.length === 0) {
+          chatModelSelectWrap.classList.add('is-hidden');
+          if (chatRemoteSource) {
+            chatRemoteSource.classList.remove('is-hidden');
+            const model = network.remote_model || 'remote model';
+            const host = network.remote_name || network.remote_label || 'peer';
+            if (chatRemoteSourceLabel) {
+              chatRemoteSourceLabel.textContent = model + ' · ' + host;
+            }
+            chatRemoteSource.title = network.remote_ok
+              ? ('Chat uses linked LLM: ' + model + ' via ' + host)
+              : ('Linked LLM unreachable: ' + host);
           }
-          chatRemoteSource.title = network.remote_ok
-            ? ('Chat uses linked LLM: ' + model + ' via ' + host)
-            : ('Linked LLM unreachable: ' + host);
+          return;
+        }
+        chatModelSelectWrap.classList.remove('is-hidden');
+        const options = remoteModels.map((m) => ({
+          id: m.id,
+          label: m.label || m.model,
+          ready: !!m.ready,
+          remote: true,
+        }));
+        if (!options.some((o) => o.id === selectedRemoteModelId)) {
+          selectedRemoteModelId = options[0].id;
+          localStorage.setItem(REMOTE_MODEL_KEY, selectedRemoteModelId);
+        }
+        const signature = 'remote|' + options.map((o) => o.id + '|' + o.label).join(';');
+        if (chatModelSelect.dataset.signature !== signature) {
+          chatModelSelect.dataset.signature = signature;
+          chatModelSelect.innerHTML = options.map((o) =>
+            '<option value="' + o.id.replace(/"/g, '&quot;') + '">' + o.label.replace(/</g, '&lt;') + '</option>'
+          ).join('');
+        }
+        if (selectedRemoteModelId && chatModelSelect.value !== selectedRemoteModelId) {
+          chatModelSelect.value = selectedRemoteModelId;
         }
         return;
       }
@@ -4179,6 +4207,13 @@
         || null;
     }
 
+    function selectedRemoteModel(data) {
+      const models = data?.network?.remote_models || [];
+      return models.find((m) => m.id === selectedRemoteModelId)
+        || models[0]
+        || null;
+    }
+
     function updateServerChip(data) {
       latestState = data;
       applyAppearance(data);
@@ -4187,8 +4222,9 @@
       const viaRemote = !!network.via_remote;
       const remoteOk = !!network.remote_ok;
       const selected = selectedServer(data);
+      const remoteSelected = viaRemote ? selectedRemoteModel(data) : null;
       const modelName = viaRemote
-        ? (network.remote_model || data.model || 'remote model')
+        ? (remoteSelected?.model || network.remote_model || data.model || 'remote model')
         : (selected ? selected.model : data.model);
       const statusLabel = viaRemote
         ? (remoteOk ? (network.remote_status || 'ready') : 'unreachable')
@@ -4202,7 +4238,7 @@
         ? (remoteOk ? 'linked · ready' : 'linked · unreachable')
         : ('local · ' + statusLabel);
       serverReady = viaRemote
-        ? remoteOk
+        ? !!(remoteOk && (!remoteSelected || remoteSelected.ready))
         : !!(selected ? selected.ready : data.status === 'ready');
 
       const project = inProjectChat() ? getProject(activeProjectId) : null;
@@ -4452,7 +4488,13 @@
         },
         ...(thinkingSupported ? reasoningRequestFields(settings.thinkingEffort) : {}),
       };
-      if (selectedServerId && !(latestState?.network?.via_remote)) {
+      if (latestState?.network?.via_remote) {
+        const remote = selectedRemoteModel(latestState);
+        if (remote) {
+          requestBody.remote_base = remote.base;
+          requestBody.model = remote.model;
+        }
+      } else if (selectedServerId) {
         requestBody.server_id = selectedServerId;
       }
 
@@ -4744,8 +4786,13 @@
     });
 
     chatModelSelect.addEventListener('change', () => {
-      selectedServerId = chatModelSelect.value;
-      localStorage.setItem(SERVER_ID_KEY, selectedServerId);
+      if (latestState?.network?.via_remote) {
+        selectedRemoteModelId = chatModelSelect.value;
+        localStorage.setItem(REMOTE_MODEL_KEY, selectedRemoteModelId);
+      } else {
+        selectedServerId = chatModelSelect.value;
+        localStorage.setItem(SERVER_ID_KEY, selectedServerId);
+      }
       if (latestState) updateServerChip(latestState);
     });
     composerInput.addEventListener('input', () => {

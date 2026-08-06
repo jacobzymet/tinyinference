@@ -24,7 +24,7 @@ use crate::{
     config::RuntimePreset,
     network::{
         ApiKeyPublic, DiscoveredPeer, InferenceMode, LinkedRemotePublic, ListenCandidate,
-        RemoteHealth, ShareUrl, mask_token,
+        RemoteHealth, RemoteModelOption, ShareUrl, mask_token, remote_base_same_host,
     },
     server::ServerProcess,
 };
@@ -225,6 +225,14 @@ async fn chat_completions(
         .as_object_mut()
         .and_then(|obj| obj.remove("server_id"))
         .and_then(|v| v.as_str().map(str::to_string));
+    let remote_base_override = body
+        .as_object_mut()
+        .and_then(|obj| obj.remove("remote_base"))
+        .and_then(|v| v.as_str().map(str::to_string));
+    let remote_model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
 
     let (remote, user_skills) = {
         let app = app.lock().map_err(|_| ApiError::lock())?;
@@ -236,26 +244,40 @@ async fn chat_completions(
                     "Remote inference is selected but no linked LLM is configured.".into(),
                 ));
             };
-            let Some(url) = network.remote_chat_url() else {
-                return Err(ApiError::bad_request(
-                    "Remote inference is selected but no remote URL is configured.".into(),
-                ));
+            let linked_base = active.base.clone();
+            let token = active.token.clone();
+            let api_base = if let Some(requested) = remote_base_override.as_deref() {
+                if !remote_base_same_host(&linked_base, requested) {
+                    return Err(ApiError::bad_request(
+                        "Remote model must be on the same linked host.".into(),
+                    ));
+                }
+                crate::network::normalize_openai_base(requested).ok_or_else(|| {
+                    ApiError::bad_request("Invalid remote model API base.".into())
+                })?
+            } else {
+                crate::network::normalize_openai_base(&linked_base).ok_or_else(|| {
+                    ApiError::bad_request(
+                        "Remote inference is selected but no remote URL is configured.".into(),
+                    )
+                })?
             };
-            Some((url, active.token.clone()))
+            let chat_url = format!("{api_base}/chat/completions");
+            Some((chat_url, api_base, token))
         } else {
             None
         };
         (remote, user_skills)
     };
 
-    let stream = if let Some((chat_url, token)) = remote {
+    let stream = if let Some((chat_url, api_base, token)) = remote {
         // Linked OpenAI-compatible LLM. Agent capabilities still run on this machine;
         // only model tokens go to the remote `/v1` base.
-        let api_base = chat_url
-            .trim_end_matches('/')
-            .strip_suffix("/chat/completions")
-            .unwrap_or(chat_url.trim_end_matches('/'))
-            .to_string();
+        if let Some(model) = remote_model {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("model".into(), serde_json::Value::String(model));
+            }
+        }
         let key = (!token.trim().is_empty()).then_some(token.as_str());
         match serde_json::from_value::<AgentRequest>(body.clone()) {
             Ok(request) if agent::should_run_agent(&request, &user_skills) => {
@@ -890,6 +912,8 @@ struct NetworkSummary {
     remote_ok: bool,
     remote_model: Option<String>,
     remote_status: Option<String>,
+    /// All models found on the linked host (primary + sibling ports).
+    remote_models: Vec<RemoteModelOption>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1051,6 +1075,21 @@ impl NetworkSummary {
         // Warm/cached probe for the active link so Dash can show reachability
         // even when chat is still on This PC. Cache keeps this cheap on polls.
         let health = if remote_saved { app.remote_health() } else { None };
+        // Catalog scan can touch several ports — use cache on hot polls; warm when a link is saved.
+        let remote_models = if remote_saved {
+            let cached = app.remote_model_catalog_cached();
+            if cached.is_empty() {
+                app.remote_model_catalog()
+            } else {
+                cached
+            }
+        } else {
+            Vec::new()
+        };
+        let remote_model = remote_models
+            .first()
+            .map(|m| m.model.clone())
+            .or_else(|| health.as_ref().and_then(|h| h.model.clone()));
         Self {
             expose: network.expose,
             listening_exposed: app.listening_exposed(),
@@ -1065,9 +1104,12 @@ impl NetworkSummary {
             remote_saved,
             via_remote,
             // Stay false until a probe succeeds — do not optimistically mark remotes ready.
-            remote_ok: health.as_ref().is_some_and(|h| h.ok),
-            remote_model: health.as_ref().and_then(|h| h.model.clone()),
-            remote_status: health.as_ref().and_then(|h| h.status.clone()),
+            remote_ok: health.as_ref().is_some_and(|h| h.ok) || !remote_models.is_empty(),
+            remote_model,
+            remote_status: health.as_ref().and_then(|h| h.status.clone()).or_else(|| {
+                (!remote_models.is_empty()).then(|| "ready".to_string())
+            }),
+            remote_models,
         }
     }
 }
