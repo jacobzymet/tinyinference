@@ -2027,9 +2027,11 @@
       const empty = document.getElementById('networkPeerEmpty');
       empty.classList.toggle('is-hidden', peers.length > 0);
       if (peers.length === 0) {
-        empty.textContent = next.mdns_error
-          ? next.mdns_error
-          : 'Listening for peers… None found yet. Peers must be on the same Wi‑Fi/LAN (not Tailscale-only), with Share on, Listen on “Wi‑Fi / LAN and Tailscale”, and a model running.';
+        if (next.mdns_error) {
+          empty.textContent = next.mdns_error;
+        } else {
+          empty.textContent = 'Listening for peers… None found yet. Both PCs need a current tinyinference build on the same Wi‑Fi/LAN (not Tailscale-only). On the other PC: Share on, Listen on “Wi‑Fi / LAN and Tailscale”, model running, then restart the model. Or paste its Endpoints URL into Linked LLM above.';
+        }
       }
       const peerSignature = JSON.stringify(peers.map((p) => [p.name, p.base_url]));
       if (peerSignature !== lastPeerSignature) {

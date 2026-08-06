@@ -887,6 +887,10 @@ impl App {
         self.discovery.last_error()
     }
 
+    pub fn discovery_advertising(&self) -> bool {
+        self.discovery.is_advertising()
+    }
+
     pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
         let own_fullname = self.discovery.advertised_fullname();
         let (lan, ts) = network::shareable_ipv4_addrs();

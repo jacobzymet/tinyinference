@@ -2,7 +2,8 @@
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr},
+    io::ErrorKind,
+    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -13,6 +14,10 @@ use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use serde::{Deserialize, Serialize};
 
 pub const SERVICE_TYPE: &str = "_tinyinference._tcp.local.";
+/// UDP broadcast discovery port (mDNS fallback — more reliable on Windows Wi‑Fi).
+pub const BEACON_PORT: u16 = 39217;
+const BEACON_MAGIC: &[u8] = b"TI1\n";
+const BEACON_INTERVAL: Duration = Duration::from_secs(2);
 const TOKEN_BYTES: usize = 24;
 const PEER_TTL: Duration = Duration::from_secs(90);
 const HEALTH_CACHE: Duration = Duration::from_secs(5);
@@ -656,24 +661,46 @@ struct AdvertisedService {
     ips: Vec<Ipv4Addr>,
 }
 
-/// Shared mDNS advertise + browse lifecycle for the process.
+#[derive(Debug, Clone)]
+struct BeaconOut {
+    name: String,
+    port: u16,
+    ips: Vec<Ipv4Addr>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BeaconPayload {
+    v: u8,
+    name: String,
+    port: u16,
+    scheme: String,
+    ips: Vec<String>,
+}
+
+/// Shared mDNS + UDP-beacon advertise/browse lifecycle for the process.
 pub struct NetworkDiscovery {
     peers: Arc<Mutex<PeerStore>>,
     daemon: Mutex<Option<ServiceDaemon>>,
     browse_started: Mutex<bool>,
     advertised: Mutex<Option<AdvertisedService>>,
-    last_error: Mutex<Option<String>>,
+    beacon_out: Arc<Mutex<Option<BeaconOut>>>,
+    last_error: Arc<Mutex<Option<String>>>,
 }
 
 impl NetworkDiscovery {
     pub fn new() -> Self {
         let peers = Arc::new(Mutex::new(PeerStore::default()));
+        let beacon_out = Arc::new(Mutex::new(None));
+        let last_error = Arc::new(Mutex::new(None));
+        spawn_beacon_listener(Arc::clone(&peers), Arc::clone(&last_error));
+        spawn_beacon_broadcaster(Arc::clone(&beacon_out));
         let discovery = Self {
-            peers: Arc::clone(&peers),
+            peers,
             daemon: Mutex::new(None),
             browse_started: Mutex::new(false),
             advertised: Mutex::new(None),
-            last_error: Mutex::new(None),
+            beacon_out,
+            last_error,
         };
         discovery.ensure_daemon_and_browse();
         discovery
@@ -692,6 +719,18 @@ impl NetworkDiscovery {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|adv| adv.fullname.clone())
+    }
+
+    pub fn is_advertising(&self) -> bool {
+        self.advertised
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+            || self
+                .beacon_out
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
     }
 
     fn set_error(&self, message: impl Into<String>) {
@@ -730,7 +769,6 @@ impl NetworkDiscovery {
         match daemon.browse(SERVICE_TYPE) {
             Ok(receiver) => {
                 *browse_started = true;
-                self.clear_error();
                 let peers = Arc::clone(&self.peers);
                 thread::spawn(move || {
                     while let Ok(event) = receiver.recv() {
@@ -768,27 +806,46 @@ impl NetworkDiscovery {
 
     pub fn sync_advertise(&self, expose: bool, device_name: &str, port: u16) {
         self.ensure_daemon_and_browse();
+
+        let (lan, _ts) = shareable_ipv4_addrs();
+        let ips = lan;
+        let instance = sanitize_instance_name(device_name);
+
+        // UDP beacon works even when mDNS is broken (common on Windows Wi‑Fi).
+        {
+            let mut beacon = self.beacon_out.lock().unwrap_or_else(|e| e.into_inner());
+            if expose && port != 0 && !ips.is_empty() {
+                *beacon = Some(BeaconOut {
+                    name: instance.clone(),
+                    port,
+                    ips: ips.clone(),
+                });
+            } else {
+                *beacon = None;
+            }
+        }
+
         let daemon_guard = self.daemon.lock().unwrap_or_else(|e| e.into_inner());
         let Some(daemon) = daemon_guard.as_ref() else {
+            if expose && ips.is_empty() {
+                self.set_error(
+                    "LAN discovery: no Wi‑Fi/Ethernet IPv4 found to advertise".to_string(),
+                );
+            }
             return;
         };
         let mut advertised = self.advertised.lock().unwrap_or_else(|e| e.into_inner());
 
-        if !expose {
+        if !expose || port == 0 {
             if let Some(previous) = advertised.take() {
                 let _ = daemon.unregister(&previous.fullname);
             }
             return;
         }
 
-        // Announce every non-virtual LAN IP when possible. mDNS is link-local — a
-        // Tailscale-only IP is useless for “Nearby on LAN”, and a single WSL/
-        // Hyper-V address can hide the service from Wi‑Fi peers.
-        let (lan, _ts) = shareable_ipv4_addrs();
-        let ips: Vec<Ipv4Addr> = lan;
         if ips.is_empty() {
             self.set_error(
-                "mDNS advertise skipped: no LAN IPv4 address found (Wi‑Fi/Ethernet)".to_string(),
+                "LAN discovery: no Wi‑Fi/Ethernet IPv4 found to advertise".to_string(),
             );
             if let Some(previous) = advertised.take() {
                 let _ = daemon.unregister(&previous.fullname);
@@ -796,7 +853,6 @@ impl NetworkDiscovery {
             return;
         }
 
-        let instance = sanitize_instance_name(device_name);
         let host_name = format!("{instance}.local.");
         let ip_addrs: Vec<IpAddr> = ips.iter().copied().map(IpAddr::V4).collect();
         let properties = [("path", "/v1"), ("ver", "1"), ("scheme", "https")];
@@ -836,12 +892,126 @@ impl NetworkDiscovery {
     }
 }
 
-fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer> {
-    if !info.is_valid() {
+fn spawn_beacon_listener(
+    peers: Arc<Mutex<PeerStore>>,
+    last_error: Arc<Mutex<Option<String>>>,
+) {
+    thread::Builder::new()
+        .name("tinyinference-beacon-rx".into())
+        .spawn(move || {
+            let socket = match UdpSocket::bind(("0.0.0.0", BEACON_PORT)) {
+                Ok(socket) => socket,
+                Err(error) => {
+                    *last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
+                        "LAN beacon listen failed on UDP {BEACON_PORT}: {error}"
+                    ));
+                    return;
+                }
+            };
+            let _ = socket.set_broadcast(true);
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(1)));
+            let mut buf = [0u8; 2048];
+            loop {
+                match socket.recv_from(&mut buf) {
+                    Ok((n, from)) => {
+                        if let Some(peer) = peer_from_beacon(&buf[..n], from) {
+                            if let Ok(mut store) = peers.lock() {
+                                store.upsert(peer);
+                            }
+                        }
+                    }
+                    Err(error) if error.kind() == ErrorKind::TimedOut || error.kind() == ErrorKind::WouldBlock => {}
+                    Err(_) => break,
+                }
+            }
+        })
+        .ok();
+}
+
+fn spawn_beacon_broadcaster(beacon_out: Arc<Mutex<Option<BeaconOut>>>) {
+    thread::Builder::new()
+        .name("tinyinference-beacon-tx".into())
+        .spawn(move || {
+            let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0)) else {
+                return;
+            };
+            let _ = socket.set_broadcast(true);
+            loop {
+                thread::sleep(BEACON_INTERVAL);
+                let Some(out) = beacon_out
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+                else {
+                    continue;
+                };
+                let payload = BeaconPayload {
+                    v: 1,
+                    name: out.name,
+                    port: out.port,
+                    scheme: "https".into(),
+                    ips: out.ips.iter().map(|ip| ip.to_string()).collect(),
+                };
+                let Ok(body) = serde_json::to_vec(&payload) else {
+                    continue;
+                };
+                let mut packet = Vec::with_capacity(BEACON_MAGIC.len() + body.len());
+                packet.extend_from_slice(BEACON_MAGIC);
+                packet.extend_from_slice(&body);
+                let _ = socket.send_to(&packet, ("255.255.255.255", BEACON_PORT));
+                for ip in &out.ips {
+                    let bcast = guess_broadcast(*ip);
+                    let _ = socket.send_to(&packet, (bcast, BEACON_PORT));
+                }
+            }
+        })
+        .ok();
+}
+
+fn guess_broadcast(ip: Ipv4Addr) -> Ipv4Addr {
+    // Home/office LANs are almost always /24; good enough for discovery beacons.
+    let o = ip.octets();
+    Ipv4Addr::new(o[0], o[1], o[2], 255)
+}
+
+fn peer_from_beacon(bytes: &[u8], from: SocketAddr) -> Option<DiscoveredPeer> {
+    let body = bytes.strip_prefix(BEACON_MAGIC)?;
+    let payload: BeaconPayload = serde_json::from_slice(body).ok()?;
+    if payload.v != 1 || payload.port == 0 || payload.name.trim().is_empty() {
         return None;
     }
+    let mut ips: Vec<Ipv4Addr> = payload
+        .ips
+        .iter()
+        .filter_map(|ip| ip.parse().ok())
+        .collect();
+    if ips.is_empty() {
+        if let SocketAddr::V4(v4) = from {
+            ips.push(*v4.ip());
+        }
+    }
+    ips.sort_by_key(|ip| (is_tailscale_cg_nat(*ip), lan_range_rank(*ip)));
+    let host = ips.first()?.to_string();
+    let scheme = if payload.scheme == "http" {
+        "http"
+    } else {
+        "https"
+    };
+    let name = sanitize_instance_name(&payload.name);
+    Some(DiscoveredPeer {
+        name: name.clone(),
+        host: host.clone(),
+        port: payload.port,
+        base_url: format!("{scheme}://{host}:{}/v1", payload.port),
+        fullname: format!("beacon:{name}:{}", payload.port),
+    })
+}
+
+fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer> {
+    // Do not use is_valid() — on Windows, resolves often arrive with an empty
+    // address set while host is still usable, and we'd drop every peer.
     let port = info.port;
-    if port == 0 {
+    if port == 0 || info.fullname.trim().is_empty() {
         return None;
     }
     // Prefer a real LAN address over Tailscale/CGNAT when both are published.
@@ -1021,6 +1191,28 @@ mod tests {
 
         cfg.expose = false;
         assert_eq!(cfg.resolve_listen_host().unwrap(), "127.0.0.1");
+    }
+
+    #[test]
+    fn beacon_payload_roundtrip() {
+        let payload = BeaconPayload {
+            v: 1,
+            name: "desk".into(),
+            port: 8080,
+            scheme: "https".into(),
+            ips: vec!["192.168.1.20".into()],
+        };
+        let body = serde_json::to_vec(&payload).unwrap();
+        let mut packet = BEACON_MAGIC.to_vec();
+        packet.extend_from_slice(&body);
+        let peer = peer_from_beacon(
+            &packet,
+            "192.168.1.20:9".parse().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(peer.name, "desk");
+        assert_eq!(peer.port, 8080);
+        assert_eq!(peer.base_url, "https://192.168.1.20:8080/v1");
     }
 
     #[test]
