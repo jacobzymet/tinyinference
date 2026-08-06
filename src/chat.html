@@ -520,11 +520,14 @@
       grid-column: 2;
       justify-self: center;
       min-width: 0;
-      max-width: min(16rem, 100%);
+      max-width: min(22rem, 100%);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
     }
     .chat-model-select {
       width: max-content;
-      max-width: min(16rem, 70vw);
+      max-width: min(16rem, 60vw);
       min-width: 8rem;
       appearance: none;
       border: 1px solid var(--color-rule);
@@ -542,6 +545,27 @@
       background-size: 0.35rem 0.35rem, 0.35rem 0.35rem;
       background-repeat: no-repeat;
     }
+    .chat-model-origin-pill {
+      flex: 0 0 auto;
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      line-height: 1;
+      padding: 0.28rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid var(--color-rule);
+      color: var(--color-muted);
+      background: var(--color-paper);
+      white-space: nowrap;
+    }
+    .chat-model-origin-pill.is-remote {
+      color: var(--color-accent);
+      border-color: color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 10%, var(--color-paper));
+    }
+    .chat-model-origin-pill.is-hidden { display: none !important; }
     .chat-model-select-wrap.is-hidden { display: none !important; }
     .chat-remote-source {
       grid-column: 2;
@@ -1888,6 +1912,7 @@
         <label class="chat-model-select-wrap" id="chatModelSelectWrap">
           <span class="visually-hidden">Model</span>
           <select id="chatModelSelect" class="chat-model-select" aria-label="Model"></select>
+          <span id="chatModelOriginPill" class="chat-model-origin-pill is-hidden" aria-hidden="true">Local</span>
         </label>
         <div class="chat-remote-source is-hidden" id="chatRemoteSource" title="Chat is using a linked LLM from another device">
           <span class="chat-remote-kind">Linked</span>
@@ -2458,12 +2483,15 @@
     const serverChip = document.getElementById('serverChip');
     const chatModelSelect = document.getElementById('chatModelSelect');
     const chatModelSelectWrap = document.getElementById('chatModelSelectWrap');
+    const chatModelOriginPill = document.getElementById('chatModelOriginPill');
     const chatRemoteSource = document.getElementById('chatRemoteSource');
     const chatRemoteSourceLabel = document.getElementById('chatRemoteSourceLabel');
     const SERVER_ID_KEY = 'tinyinference_server_id';
     const REMOTE_MODEL_KEY = 'tinyinference_remote_model_id';
+    const CHAT_MODEL_KEY = 'tinyinference_chat_model';
     let selectedServerId = localStorage.getItem(SERVER_ID_KEY) || '';
     let selectedRemoteModelId = localStorage.getItem(REMOTE_MODEL_KEY) || '';
+    let selectedChatModel = localStorage.getItem(CHAT_MODEL_KEY) || '';
     let latestState = null;
 
     function newId(prefix) {
@@ -4126,77 +4154,115 @@
       btnSend.disabled = !serverReady || sending || composerInput.value.trim() === '';
     }
 
-    function syncModelSelector(data) {
-      const network = data.network || {};
-      const viaRemote = !!network.via_remote;
-      const servers = (data.servers || []).filter((s) => s.ready || s.status === 'ready');
-      const remoteModels = network.remote_models || [];
+    function isRemoteChatSelection(value) {
+      return String(value || '').startsWith('remote|');
+    }
 
-      if (viaRemote) {
-        if (chatRemoteSource) chatRemoteSource.classList.add('is-hidden');
-        if (remoteModels.length === 0) {
-          chatModelSelectWrap.classList.add('is-hidden');
-          if (chatRemoteSource) {
-            chatRemoteSource.classList.remove('is-hidden');
-            const model = network.remote_model || 'remote model';
-            const host = network.remote_name || network.remote_label || 'peer';
-            if (chatRemoteSourceLabel) {
-              chatRemoteSourceLabel.textContent = model + ' · ' + host;
-            }
-            chatRemoteSource.title = network.remote_ok
-              ? ('Chat uses linked LLM: ' + model + ' via ' + host)
-              : ('Linked LLM unreachable: ' + host);
-          }
-          return;
-        }
-        chatModelSelectWrap.classList.remove('is-hidden');
-        const options = remoteModels.map((m) => ({
-          id: m.id,
-          label: m.label || m.model,
-          ready: !!m.ready,
-          remote: true,
-        }));
-        if (!options.some((o) => o.id === selectedRemoteModelId)) {
-          selectedRemoteModelId = options[0].id;
-          localStorage.setItem(REMOTE_MODEL_KEY, selectedRemoteModelId);
-        }
-        const signature = 'remote|' + options.map((o) => o.id + '|' + o.label).join(';');
-        if (chatModelSelect.dataset.signature !== signature) {
-          chatModelSelect.dataset.signature = signature;
-          chatModelSelect.innerHTML = options.map((o) =>
-            '<option value="' + o.id.replace(/"/g, '&quot;') + '">' + o.label.replace(/</g, '&lt;') + '</option>'
-          ).join('');
-        }
-        if (selectedRemoteModelId && chatModelSelect.value !== selectedRemoteModelId) {
-          chatModelSelect.value = selectedRemoteModelId;
-        }
+    function localChatOptionId(serverId) {
+      return 'local:' + serverId;
+    }
+
+    function syncModelOriginPill(isRemote) {
+      if (!chatModelOriginPill) return;
+      if (chatModelSelectWrap.classList.contains('is-hidden')) {
+        chatModelOriginPill.classList.add('is-hidden');
+        chatModelOriginPill.setAttribute('aria-hidden', 'true');
         return;
       }
+      chatModelOriginPill.classList.remove('is-hidden');
+      chatModelOriginPill.setAttribute('aria-hidden', 'false');
+      chatModelOriginPill.textContent = isRemote ? 'Remote' : 'Local';
+      chatModelOriginPill.classList.toggle('is-remote', !!isRemote);
+      chatModelOriginPill.title = isRemote
+        ? 'This model runs on a linked device'
+        : 'This model runs on this PC';
+    }
+
+    function syncModelSelector(data) {
+      const network = data.network || {};
+      const servers = (data.servers || []).filter((s) => s.ready || s.status === 'ready');
+      const remoteModels = network.remote_models || [];
+      const remoteHost = network.remote_name || network.remote_label || 'linked device';
 
       if (chatRemoteSource) chatRemoteSource.classList.add('is-hidden');
-      if (servers.length === 0) {
+
+      if (!servers.length && !remoteModels.length) {
         chatModelSelectWrap.classList.add('is-hidden');
+        syncModelOriginPill(false);
         return;
       }
       chatModelSelectWrap.classList.remove('is-hidden');
-      const options = servers.map((s) => {
-        return { id: s.id, label: 'Local · ' + s.model, thinking: !!s.thinking_supported, ready: !!s.ready };
-      });
-      if (!options.some((o) => o.id === selectedServerId)) {
-        const preferred = options.find((o) => o.id === data.active_server_id) || options[0];
-        selectedServerId = preferred ? preferred.id : '';
-        if (selectedServerId) localStorage.setItem(SERVER_ID_KEY, selectedServerId);
+
+      const localOptions = servers.map((s) => ({
+        value: localChatOptionId(s.id),
+        label: s.model,
+        ready: !!s.ready,
+        remote: false,
+        thinking: !!s.thinking_supported,
+      }));
+      const remoteOptions = remoteModels.map((m) => ({
+        value: m.id,
+        label: m.label || m.model,
+        ready: !!m.ready,
+        remote: true,
+      }));
+
+      const allValues = [...localOptions, ...remoteOptions].map((o) => o.value);
+      if (!allValues.includes(selectedChatModel)) {
+        // Prefer last explicit choice, then active inference mode, then first ready option.
+        if (selectedRemoteModelId && allValues.includes(selectedRemoteModelId)) {
+          selectedChatModel = selectedRemoteModelId;
+        } else if (selectedServerId && allValues.includes(localChatOptionId(selectedServerId))) {
+          selectedChatModel = localChatOptionId(selectedServerId);
+        } else if (network.via_remote && remoteOptions.length) {
+          selectedChatModel = remoteOptions[0].value;
+        } else if (localOptions.length) {
+          const preferred = localOptions.find((o) => o.value === localChatOptionId(data.active_server_id))
+            || localOptions[0];
+          selectedChatModel = preferred.value;
+        } else {
+          selectedChatModel = remoteOptions[0].value;
+        }
+        localStorage.setItem(CHAT_MODEL_KEY, selectedChatModel);
       }
-      const signature = options.map((o) => o.id + '|' + o.label).join(';');
+
+      const signature = [
+        remoteHost,
+        ...localOptions.map((o) => o.value + '|' + o.label),
+        ...remoteOptions.map((o) => o.value + '|' + o.label),
+      ].join(';');
       if (chatModelSelect.dataset.signature !== signature) {
         chatModelSelect.dataset.signature = signature;
-        chatModelSelect.innerHTML = options.map((o) =>
-          '<option value="' + o.id.replace(/"/g, '&quot;') + '">' + o.label.replace(/</g, '&lt;') + '</option>'
-        ).join('');
+        let html = '';
+        if (localOptions.length) {
+          html += '<optgroup label="This PC">';
+          html += localOptions.map((o) =>
+            '<option value="' + o.value.replace(/"/g, '&quot;') + '">'
+            + o.label.replace(/</g, '&lt;') + '</option>'
+          ).join('');
+          html += '</optgroup>';
+        }
+        if (remoteOptions.length) {
+          html += '<optgroup label="Remote · ' + remoteHost.replace(/</g, '&lt;').replace(/"/g, '&quot;') + '">';
+          html += remoteOptions.map((o) =>
+            '<option value="' + o.value.replace(/"/g, '&quot;') + '">'
+            + o.label.replace(/</g, '&lt;') + ' · Remote</option>'
+          ).join('');
+          html += '</optgroup>';
+        }
+        chatModelSelect.innerHTML = html;
       }
-      if (selectedServerId && chatModelSelect.value !== selectedServerId) {
-        chatModelSelect.value = selectedServerId;
+      if (selectedChatModel && chatModelSelect.value !== selectedChatModel) {
+        chatModelSelect.value = selectedChatModel;
       }
+      if (isRemoteChatSelection(selectedChatModel)) {
+        selectedRemoteModelId = selectedChatModel;
+        localStorage.setItem(REMOTE_MODEL_KEY, selectedRemoteModelId);
+      } else if (selectedChatModel.startsWith('local:')) {
+        selectedServerId = selectedChatModel.slice('local:'.length);
+        localStorage.setItem(SERVER_ID_KEY, selectedServerId);
+      }
+      syncModelOriginPill(isRemoteChatSelection(selectedChatModel));
     }
 
     function selectedServer(data) {
@@ -4210,8 +4276,13 @@
     function selectedRemoteModel(data) {
       const models = data?.network?.remote_models || [];
       return models.find((m) => m.id === selectedRemoteModelId)
+        || models.find((m) => m.id === selectedChatModel)
         || models[0]
         || null;
+    }
+
+    function chatSelectionIsRemote() {
+      return isRemoteChatSelection(selectedChatModel);
     }
 
     function updateServerChip(data) {
@@ -4219,41 +4290,41 @@
       applyAppearance(data);
       syncModelSelector(data);
       const network = data.network || {};
-      const viaRemote = !!network.via_remote;
-      const remoteOk = !!network.remote_ok;
+      const usingRemote = chatSelectionIsRemote();
+      const remoteOk = !!network.remote_ok || !!(network.remote_models || []).length;
       const selected = selectedServer(data);
-      const remoteSelected = viaRemote ? selectedRemoteModel(data) : null;
-      const modelName = viaRemote
+      const remoteSelected = usingRemote ? selectedRemoteModel(data) : null;
+      const modelName = usingRemote
         ? (remoteSelected?.model || network.remote_model || data.model || 'remote model')
         : (selected ? selected.model : data.model);
-      const statusLabel = viaRemote
-        ? (remoteOk ? (network.remote_status || 'ready') : 'unreachable')
+      const statusLabel = usingRemote
+        ? (remoteSelected?.ready || remoteOk ? (network.remote_status || 'ready') : 'unreachable')
         : (selected ? selected.status_label : data.status_label);
-      const statusClass = viaRemote
-        ? (remoteOk ? 'ready' : 'failed')
+      const statusClass = usingRemote
+        ? ((remoteSelected?.ready || remoteOk) ? 'ready' : 'failed')
         : (selected ? selected.status : data.status);
 
       serverChip.className = 'status-chip status-' + statusClass;
-      serverChip.textContent = viaRemote
-        ? (remoteOk ? 'linked · ready' : 'linked · unreachable')
+      serverChip.textContent = usingRemote
+        ? ((remoteSelected?.ready || remoteOk) ? 'remote · ready' : 'remote · unreachable')
         : ('local · ' + statusLabel);
-      serverReady = viaRemote
-        ? !!(remoteOk && (!remoteSelected || remoteSelected.ready))
+      serverReady = usingRemote
+        ? !!(remoteSelected ? remoteSelected.ready : remoteOk)
         : !!(selected ? selected.ready : data.status === 'ready');
 
       const project = inProjectChat() ? getProject(activeProjectId) : null;
-      const viaSuffix = viaRemote
+      const viaSuffix = usingRemote
         ? (' · via ' + (network.remote_name || network.remote_label || 'linked LLM'))
         : '';
       if (!serverReady) {
-        modelHintEl.textContent = viaRemote
-          ? ('Linked LLM is ' + statusLabel + ' — not using models on this PC.')
+        modelHintEl.textContent = usingRemote
+          ? ('Remote model is ' + statusLabel + '.')
           : (project && !activeId
             ? 'Shared instructions and memory apply · model is ' + statusLabel + '.'
             : 'Model server is ' + statusLabel + '.');
-        composerHint.textContent = viaRemote
-          ? 'Fix the link in Devices, or switch chat source to This PC. Local Start/Stop will not fix a linked outage.'
-          : 'Start the model on the control panel to chat.';
+        composerHint.textContent = usingRemote
+          ? 'Fix the link in Devices, or pick a local model in the selector.'
+          : 'Start the model on the control panel to chat, or pick a remote model if linked.';
         composerHint.classList.add('is-warn');
       } else if (project && !activeId) {
         modelHintEl.textContent = 'Shared instructions & memory apply · ' + modelName + viaSuffix;
@@ -4261,12 +4332,10 @@
       } else {
         modelHintEl.textContent = project
           ? 'Chatting with ' + modelName + ' · Project: ' + project.name + viaSuffix
-          : (viaRemote
-            ? ('Chatting with ' + modelName + viaSuffix + ' · not local')
-            : ('Chatting with ' + modelName + viaSuffix));
+          : ('Chatting with ' + modelName + viaSuffix);
         updateComposerHint();
       }
-      const thinking = viaRemote
+      const thinking = usingRemote
         ? !!data.thinking_supported
         : !!(selected ? selected.thinking_supported : data.thinking_supported);
       syncComposerThinkVisibility(thinking);
@@ -4488,7 +4557,7 @@
         },
         ...(thinkingSupported ? reasoningRequestFields(settings.thinkingEffort) : {}),
       };
-      if (latestState?.network?.via_remote) {
+      if (chatSelectionIsRemote()) {
         const remote = selectedRemoteModel(latestState);
         if (remote) {
           requestBody.remote_base = remote.base;
@@ -4786,13 +4855,16 @@
     });
 
     chatModelSelect.addEventListener('change', () => {
-      if (latestState?.network?.via_remote) {
-        selectedRemoteModelId = chatModelSelect.value;
+      selectedChatModel = chatModelSelect.value;
+      localStorage.setItem(CHAT_MODEL_KEY, selectedChatModel);
+      if (isRemoteChatSelection(selectedChatModel)) {
+        selectedRemoteModelId = selectedChatModel;
         localStorage.setItem(REMOTE_MODEL_KEY, selectedRemoteModelId);
-      } else {
-        selectedServerId = chatModelSelect.value;
+      } else if (selectedChatModel.startsWith('local:')) {
+        selectedServerId = selectedChatModel.slice('local:'.length);
         localStorage.setItem(SERVER_ID_KEY, selectedServerId);
       }
+      syncModelOriginPill(isRemoteChatSelection(selectedChatModel));
       if (latestState) updateServerChip(latestState);
     });
     composerInput.addEventListener('input', () => {

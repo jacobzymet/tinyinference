@@ -238,32 +238,47 @@ async fn chat_completions(
         let app = app.lock().map_err(|_| ApiError::lock())?;
         let user_skills = app.enabled_user_skills();
         let network = &app.config.network;
-        let remote = if network.inference_mode == InferenceMode::Remote {
+        // Selector is the source of truth: an explicit local server_id wins over linked mode.
+        let prefer_local = server_id.as_ref().is_some_and(|id| {
+            app.server_by_id(id).is_some_and(|lookup| lookup.ready)
+        });
+        let remote = if prefer_local {
+            None
+        } else if let Some(requested) = remote_base_override.as_deref() {
+            // Allow any saved linked host (same-host check), even if chat mode is still Local.
+            let Some(linked) = network
+                .remotes
+                .iter()
+                .find(|remote| remote_base_same_host(&remote.base, requested))
+                .or_else(|| network.active_remote())
+            else {
+                return Err(ApiError::bad_request(
+                    "No linked LLM is configured for that remote model.".into(),
+                ));
+            };
+            if !remote_base_same_host(&linked.base, requested) {
+                return Err(ApiError::bad_request(
+                    "Remote model must be on a linked host.".into(),
+                ));
+            }
+            let api_base = crate::network::normalize_openai_base(requested).ok_or_else(|| {
+                ApiError::bad_request("Invalid remote model API base.".into())
+            })?;
+            let chat_url = format!("{api_base}/chat/completions");
+            Some((chat_url, api_base, linked.token.clone()))
+        } else if network.inference_mode == InferenceMode::Remote {
             let Some(active) = network.active_remote() else {
                 return Err(ApiError::bad_request(
                     "Remote inference is selected but no linked LLM is configured.".into(),
                 ));
             };
-            let linked_base = active.base.clone();
-            let token = active.token.clone();
-            let api_base = if let Some(requested) = remote_base_override.as_deref() {
-                if !remote_base_same_host(&linked_base, requested) {
-                    return Err(ApiError::bad_request(
-                        "Remote model must be on the same linked host.".into(),
-                    ));
-                }
-                crate::network::normalize_openai_base(requested).ok_or_else(|| {
-                    ApiError::bad_request("Invalid remote model API base.".into())
-                })?
-            } else {
-                crate::network::normalize_openai_base(&linked_base).ok_or_else(|| {
-                    ApiError::bad_request(
-                        "Remote inference is selected but no remote URL is configured.".into(),
-                    )
-                })?
-            };
+            let api_base = crate::network::normalize_openai_base(&active.base).ok_or_else(|| {
+                ApiError::bad_request(
+                    "Remote inference is selected but no remote URL is configured.".into(),
+                )
+            })?;
             let chat_url = format!("{api_base}/chat/completions");
-            Some((chat_url, api_base, token))
+            Some((chat_url, api_base, active.token.clone()))
         } else {
             None
         };
