@@ -1,17 +1,25 @@
 # tinyinference
 
-A minimal Rust web UI for launching and managing `llama-server` with GGUF models.
+A minimal, lightweight Rust desktop app for launching and managing `llama-server` with GGUF models.
 
-> **Note:** tinyinference started as a terminal UI (TUI). It now runs as a local web UI instead. Start the binary and open the printed URL in your browser (default `http://127.0.0.1:3920`).
+> **Note:** tinyinference started as a terminal UI (TUI), then became a local web UI. The control panel now opens in its own native window. The web server is still there underneath — the chat page runs in your browser, and `--no-window` gives you the old browser-only behaviour.
 
-It is designed to make large, capable LLMs runnable on low-spec, low-RAM machines without a GPU, using CPU inference and file-backed model weights. **It will not be fast, in fact, it will often be painfully slow. The point is that it runs at all on low-spec hardware, which is pretty cool.**
+A primary feature/appeal of tinyinference is the seamless ability to make large, capable LLMs runnable on low-spec, low-RAM machines without a GPU, using CPU inference and file-backed model weights. **It will not be fast, in fact, it will often be painfully slow. The point is that it runs at all on low-spec hardware, which is pretty cool.**
+
+**This feature uses mmap**, and [you can read more about how it works and its integration into tinyinference here.](https://jacobzymet.com/notes/running-oversized-gguf-language-models-on-low-ram-hardware-using-system-memory-mapping)
 
 ## Requirements
 
 - [Rust](https://www.rust-lang.org/tools/install)
 - [`llama-server`](https://github.com/ggml-org/llama.cpp) from llama.cpp
 - A GGUF model available locally or on Hugging Face
-- A modern web browser
+- A modern web browser (for the chat page)
+- A system webview for the control-panel window:
+  - **Windows** — WebView2, preinstalled on Windows 11
+  - **macOS** — WKWebView, part of the OS
+  - **Linux** — WebKitGTK development packages, e.g.
+    `libwebkit2gtk-4.1-dev` and `libxdo-dev` on Debian/Ubuntu. To skip this
+    entirely, build with `--no-default-features` (see [Windowless](#windowless)).
 
 `llama-server` must be on `PATH`, or you can set its full executable path from
 tinyinference's Configure tab.
@@ -26,15 +34,44 @@ cd tinyinference
 cargo run
 ```
 
-Open the printed URL in your browser (default `http://127.0.0.1:3920`), or pass
-`--open` to launch it automatically:
+The control panel opens in its own window. On first launch, tinyinference checks
+for `llama-server`. If it cannot find it, use the prompt to open the
+executable-path setting.
+
+Only one instance runs per address. Launching tinyinference again raises the
+window that is already open rather than starting a second server — so a desktop
+shortcut behaves the way you would expect. If the address is held by an
+unrelated program, tinyinference says so and exits instead of guessing; use
+`--bind` to pick another. Two instances *can* coexist on different addresses.
+
+### Two surfaces
+
+The **control panel** is the native window: models, runtime settings, logs, and
+live statistics. **Chat** is a separate page served at `/chat` that opens in your
+default browser, so conversations live alongside your normal tabs. The window
+hosts only the control panel — the Chat button, the llama-server UI link, and
+any other outbound link are handed to your browser rather than opened in-window.
+
+### Windowless
+
+To run headless, or on a machine without a system webview, skip the window:
+
+```powershell
+cargo run -- --no-window
+```
+
+Then open the printed URL yourself (default `http://127.0.0.1:3920`), or use
+`--open` to launch the browser automatically (this implies `--no-window`):
 
 ```powershell
 cargo run -- --open
 ```
 
-On first launch, tinyinference checks for `llama-server`. If it cannot find it,
-use the prompt to open the executable-path setting.
+To drop the windowing dependencies at build time entirely:
+
+```powershell
+cargo build --release --no-default-features
+```
 
 ## Build
 
@@ -85,7 +122,8 @@ cargo run -- --config .\tinyinference.toml
 `tinyinference.toml` is ignored by Git, so local paths and preferences remain
 local. Advanced llama.cpp options can be added through `server.extra_args`.
 
-The web UI listen address can be set before the UI is up, in priority order:
+The server listen address (used by the window, the chat page, and the API) can
+be set before the UI is up, in priority order:
 
 1. `--bind 127.0.0.1:4000`
 2. environment variable `TINYINFERENCE_BIND=127.0.0.1:4000`
@@ -101,6 +139,7 @@ Useful commands:
 
 ```powershell
 cargo run -- --start
+cargo run -- --no-window
 cargo run -- --open
 cargo run -- --bind 127.0.0.1:4000
 cargo run -- --print-command
@@ -112,6 +151,7 @@ cargo run -- --print-command
 | --- | --- |
 | Start / stop | Header button |
 | Restart | Header button |
+| Chat with the model | Header **Chat** button (opens in your browser) |
 | Manage models | Models tab |
 | Configure runtime / server | Configure tab |
 | View logs | Logs tab |
@@ -135,10 +175,13 @@ metrics remain marked unavailable until the server is ready. Clipboard copy uses
 the browser clipboard API, with a system clipboard fallback via `clip.exe` on
 Windows, `pbcopy` on macOS, and `wl-copy`, `xclip`, or `xsel` on Linux.
 
-The control UI binds to `127.0.0.1:3920` by default (override with `--bind`,
-`TINYINFERENCE_BIND`, or `[ui]` in the config). The managed `llama-server`
-binds to `127.0.0.1:8080` by default and has no authentication. Configure
-authentication and firewalling before exposing either to a network.
+The tinyinference server binds to `127.0.0.1:3920` by default (override with
+`--bind`, `TINYINFERENCE_BIND`, or `[ui]` in the config). It has no
+authentication: anything that can reach it can drive the model, read the logs,
+and change the configuration — running it in a window does not hide it from the
+network. The managed `llama-server` binds to `127.0.0.1:8080` by default and is
+likewise unauthenticated. Configure authentication and firewalling before
+exposing either to a network.
 
 ## How low-RAM operation works
 

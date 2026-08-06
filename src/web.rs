@@ -1,28 +1,34 @@
 use std::{
-    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path, State},
-    http::StatusCode,
-    response::{Html, IntoResponse},
+    http::{StatusCode, header},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 use crate::{
+    agent::{self, AgentRequest},
     app::{App, Download, LibraryFetch, ServerStatus, SettingField},
+    chat,
     config::RuntimePreset,
     server::ServerProcess,
 };
 
 pub type SharedApp = Arc<Mutex<App>>;
 
-pub async fn serve(app: SharedApp, addr: SocketAddr) -> anyhow::Result<()> {
+/// Marker returned by `POST /api/focus`, used by a second launch to tell a
+/// running tinyinference apart from an unrelated program on the same port.
+pub const INSTANCE_MARKER: &str = "tinyinference";
+
+pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> {
     let tick_app = Arc::clone(&app);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(100));
@@ -36,6 +42,12 @@ pub async fn serve(app: SharedApp, addr: SocketAddr) -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/", get(index))
+        .route("/chat", get(chat_page))
+        .route("/orb.js", get(orb_script))
+        .route("/ti.png", get(app_icon_png))
+        .route("/ti-transparent-bg-white.png", get(ui_mark))
+        .route("/favicon.ico", get(app_icon_png))
+        .route("/api/chat/completions", post(chat_completions))
         .route("/api/state", get(state))
         .route("/api/start", post(start))
         .route("/api/stop", post(stop))
@@ -58,9 +70,9 @@ pub async fn serve(app: SharedApp, addr: SocketAddr) -> anyhow::Result<()> {
         .route("/api/copy/logs", post(copy_logs))
         .route("/api/dismiss-prompt", post(dismiss_prompt))
         .route("/api/configure-server", post(configure_server))
+        .route("/api/focus", post(focus))
         .with_state(app);
 
-    let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -93,6 +105,75 @@ async fn shutdown_signal() {
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+async fn chat_page() -> Html<&'static str> {
+    Html(CHAT_HTML)
+}
+
+async fn orb_script() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        ORB_JS,
+    )
+}
+
+/// App / favicon icon (solid `ti.png`).
+async fn app_icon_png() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/png")],
+        APP_ICON_PNG,
+    )
+}
+
+/// Dark-UI wordmark mark (white glyphs on transparent).
+async fn ui_mark() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/png")],
+        UI_MARK_PNG,
+    )
+}
+
+async fn chat_completions(
+    State(app): State<SharedApp>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Response, ApiError> {
+    let api_base = {
+        let app = app.lock().map_err(|_| ApiError::lock())?;
+        if app.status != ServerStatus::Ready {
+            return Err(ApiError::bad_request(
+                "The model server is not ready. Start it from the dashboard first.".into(),
+            ));
+        }
+        app.displayed_config().api_endpoint()
+    };
+
+    // Agent mode runs a tool loop server-side; plain chat still streams through.
+    // Strip tinyinference-only fields before proxying to llama-server.
+    let stream = match serde_json::from_value::<AgentRequest>(body.clone()) {
+        Ok(request) if request.agent && request.skills.any_enabled() => {
+            if request.messages.is_empty() {
+                return Err(ApiError::bad_request("messages must not be empty".into()));
+            }
+            agent::stream_agent(&api_base, request)
+        }
+        _ => {
+            let mut upstream = body;
+            if let Some(object) = upstream.as_object_mut() {
+                object.remove("agent");
+                object.remove("skills");
+            }
+            chat::stream_completion(&api_base, upstream)
+        }
+    };
+
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from_stream(stream))
+        .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    Ok(response)
 }
 
 async fn state(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
@@ -272,6 +353,20 @@ async fn configure_server(State(app): State<SharedApp>) -> Result<Json<AppState>
     with_app(app, |app| app.open_server_configuration())
 }
 
+/// Identify this instance and raise its window.
+///
+/// A second launch that finds the port taken posts here: a tinyinference reply
+/// means "already running, come to the front"; anything else means the port
+/// belongs to an unrelated program.
+async fn focus(State(app): State<SharedApp>) -> Result<Json<InstanceInfo>, ApiError> {
+    let app = app.lock().map_err(|_| ApiError::lock())?;
+    Ok(Json(InstanceInfo {
+        app: INSTANCE_MARKER,
+        version: env!("CARGO_PKG_VERSION"),
+        focused: app.request_focus(),
+    }))
+}
+
 fn with_app(app: SharedApp, action: impl FnOnce(&mut App)) -> Result<Json<AppState>, ApiError> {
     let mut app = app.lock().map_err(|_| ApiError::lock())?;
     action(&mut app);
@@ -305,6 +400,13 @@ struct AddModelRequest {
     value: String,
     #[serde(default)]
     download: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct InstanceInfo {
+    app: &'static str,
+    version: &'static str,
+    focused: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -905,3 +1007,7 @@ impl IntoResponse for ApiError {
 }
 
 const INDEX_HTML: &str = include_str!("index.html");
+const CHAT_HTML: &str = include_str!("chat.html");
+const ORB_JS: &str = include_str!("orb.js");
+const APP_ICON_PNG: &[u8] = include_bytes!("../assets/ti.png");
+const UI_MARK_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-white.png");

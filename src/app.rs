@@ -568,6 +568,10 @@ pub struct App {
     last_discover: Instant,
     /// Models-tab managed download into the local hub cache.
     pub library_fetch: Option<LibraryFetch>,
+    /// Raises the desktop window, when there is one. Installed by `desktop::run`
+    /// so a second launch can surface the running instance instead of starting
+    /// a rival server. Boxed rather than typed so `app` stays windowing-agnostic.
+    focus_hook: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl App {
@@ -616,6 +620,7 @@ impl App {
             pending_discover: Some(cache::discover_models_async()),
             last_discover: Instant::now(),
             library_fetch: None,
+            focus_hook: None,
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -624,6 +629,24 @@ impl App {
 
     pub fn command(&self) -> CommandSpec {
         CommandSpec::from_config(&self.config)
+    }
+
+    /// Register the callback that raises the desktop window.
+    pub fn set_focus_hook(&mut self, hook: Box<dyn Fn() + Send + Sync>) {
+        self.focus_hook = Some(hook);
+    }
+
+    /// Ask the desktop window to come forward. Returns false when this instance
+    /// has no window (headless), which is not an error — the caller still knows
+    /// an instance is alive and can print its address instead.
+    pub fn request_focus(&self) -> bool {
+        match &self.focus_hook {
+            Some(hook) => {
+                hook();
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn displayed_config(&self) -> &Config {
@@ -2147,6 +2170,11 @@ fn trim_wrapping_quotes(value: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
     use super::*;
 
     #[test]
@@ -2495,6 +2523,20 @@ mod tests {
 
         app.observe_startup_line("srv    load_model: loading model");
         assert!(app.active_download().is_none());
+    }
+
+    #[test]
+    fn focus_is_only_reported_once_a_window_installs_a_hook() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        // Headless: an instance exists, but there is nothing to raise.
+        assert!(!app.request_focus());
+
+        let raised = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&raised);
+        app.set_focus_hook(Box::new(move || flag.store(true, Ordering::SeqCst)));
+
+        assert!(app.request_focus());
+        assert!(raised.load(Ordering::SeqCst));
     }
 
     #[test]

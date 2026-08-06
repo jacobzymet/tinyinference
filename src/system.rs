@@ -191,6 +191,26 @@ pub fn copy_to_clipboard(_text: &str) -> Result<()> {
     bail!("clipboard is not supported on this platform")
 }
 
+/// Hand a URL to the platform's default browser.
+///
+/// Used for `--open`, and by the desktop window whenever a link leaves the
+/// control panel — the native window only ever hosts the control panel itself.
+pub fn open_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd").args(["/C", "start", "", url]).spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(url).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open").arg(url).spawn()?;
+    }
+    Ok(())
+}
+
 fn pipe_to_clipboard(program: &str, args: &[&str], text: &str) -> Result<()> {
     let mut child = Command::new(program)
         .args(args)
