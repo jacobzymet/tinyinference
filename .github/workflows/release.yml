@@ -1,12 +1,17 @@
 name: Release
 
-# Builds one self-contained binary per OS (HTML/JS/assets are compiled in).
-# Trigger: push a version tag (v0.3.1) or run manually from the Actions tab.
-
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v[0-9]+.*"
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach (e.g. v0.4.0-beta)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -15,7 +20,38 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          TAG="${TAG#refs/tags/}"
+          if [[ ! "$TAG" =~ ^v[0-9]+ ]]; then
+            echo "Refusing non-version tag: $TAG"
+            exit 1
+          fi
+          PRERELEASE=false
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE=true
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Building for tag $TAG (prerelease=$PRERELEASE)"
+
   build:
+    needs: meta
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +81,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.meta.outputs.tag }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -85,9 +123,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [meta, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -99,6 +136,9 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
+          prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
           files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
