@@ -42,6 +42,32 @@ pub struct ManagedServer {
 }
 
 impl ManagedServer {
+    #[cfg(test)]
+    pub fn stub_ready(id: String, running_config: Config) -> Self {
+        Self {
+            id,
+            process: None,
+            running_config,
+            status: ServerStatus::Ready,
+            status_detail: String::new(),
+            endpoint_online: true,
+            download: None,
+            process_usage: None,
+            server_metrics: None,
+            process_monitor: ProcessMonitor::default(),
+            probe: None,
+            last_probe: Instant::now(),
+            last_stats_refresh: Instant::now(),
+            last_slots_at: None,
+            last_slots_decoded: None,
+            live_generated_tps: None,
+            last_throughput_at: None,
+            thinking_supported: None,
+            thinking_probe_for: None,
+            pending_thinking_probe: None,
+        }
+    }
+
     pub fn new_launching(
         id: String,
         running_config: Config,
@@ -201,7 +227,7 @@ impl ManagedServer {
         if self.endpoint_online {
             self.download = None;
             self.status = ServerStatus::Ready;
-            self.status_detail = format!("Listening at {}", self.running_config.endpoint());
+            self.status_detail = format!("Listening on {}", self.running_config.listen_label());
             self.ensure_thinking_probe();
         } else if self.status != ServerStatus::Downloading {
             self.status = ServerStatus::Starting;

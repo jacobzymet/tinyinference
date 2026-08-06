@@ -352,13 +352,15 @@
       border-radius: var(--radius-panel);
       background: var(--color-paper-2);
       padding: var(--space-sm);
+      min-width: 0;
     }
     .instrument {
-      background: var(--color-graphite);
-      border: 1px solid var(--color-graphite-2);
+      background: var(--color-paper-2);
+      border: 1px solid var(--color-rule);
       border-radius: var(--radius-panel);
       color: var(--color-ink);
       padding: var(--space-sm);
+      min-width: 0;
     }
     .instrument .eyebrow { color: var(--color-muted); }
     .tps-value {
@@ -429,6 +431,12 @@
       color: var(--color-muted);
       display: grid;
       gap: 0.25rem;
+      min-width: 0;
+    }
+    .meta-block > * {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .external-icon {
       width: 0.8em; height: 0.8em; margin-left: 0.3em; vertical-align: -0.1em;
@@ -441,7 +449,6 @@
       overflow: hidden;
       border: 1px solid var(--color-rule);
     }
-    .instrument .progress { background: var(--color-graphite-2); border-color: transparent; }
     .progress-bar {
       height: 100%; width: 0; background: var(--color-accent);
       transition: width 180ms var(--ease-out);
@@ -524,10 +531,33 @@
       background: transparent;
     }
 
+    .configure-layout {
+      display: grid;
+      gap: var(--space-lg);
+      max-width: 42rem;
+    }
+    .configure-section {
+      padding: var(--space-md) var(--space-md) var(--space-lg);
+    }
+    .configure-section-title {
+      font-family: var(--font-display);
+      font-size: var(--text-lg);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.35rem;
+      color: var(--color-ink);
+    }
+    .configure-section-lede {
+      margin: 0 0 var(--space-md);
+      font-size: var(--text-sm);
+      line-height: 1.55;
+      color: var(--color-muted);
+      max-width: 36rem;
+    }
     .settings-grid {
       display: grid;
       grid-template-columns: 1fr;
-      gap: var(--space-sm);
+      gap: var(--space-md) var(--space-sm);
     }
     @media (min-width: 640px) {
       .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -539,7 +569,7 @@
       font-size: var(--text-sm);
       font-weight: 500;
       color: var(--color-ink);
-      margin-bottom: 0.25rem;
+      margin-bottom: 0.35rem;
     }
     .field-input, .field-select {
       width: 100%;
@@ -562,16 +592,17 @@
     }
     .field-switch input { width: 2.2rem; height: 1.2rem; accent-color: var(--color-accent); }
     .setting-hint {
-      margin-top: 0.25rem;
+      margin-top: 0.35rem;
       font-size: var(--text-xs);
+      line-height: 1.45;
       color: var(--color-muted);
       white-space: pre-line;
     }
     .settings-section {
-      border: 1px solid var(--color-rule);
-      border-radius: var(--radius-panel);
-      padding: var(--space-sm);
-      background: var(--color-paper);
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      background: transparent;
     }
     .settings-section-title {
       font-family: var(--font-display);
@@ -581,14 +612,11 @@
       margin: 0 0 0.25rem;
     }
     .choice-help {
-      list-style: none; padding: 0; margin: var(--space-xs) 0 0; columns: 1;
-    }
-    @media (min-width: 640px) {
-      .choice-help { columns: 2; column-gap: var(--space-md); }
+      list-style: none; padding: 0; margin: var(--space-sm) 0 0; columns: 1;
     }
     .choice-help li {
-      margin: 0.12rem 0; break-inside: avoid;
-      font-size: var(--text-xs); color: var(--color-muted);
+      margin: 0.2rem 0; break-inside: avoid;
+      font-size: var(--text-xs); line-height: 1.45; color: var(--color-muted);
     }
     .choice-help code {
       font-family: var(--font-mono); color: var(--color-accent); font-size: 0.74rem;
@@ -596,6 +624,22 @@
     .choice-help strong {
       color: var(--color-ink);
       font-weight: 700;
+    }
+    .configure-details {
+      margin-top: var(--space-md);
+      border-top: 1px solid var(--color-rule);
+      padding-top: var(--space-sm);
+    }
+    .configure-details summary {
+      cursor: pointer;
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+      user-select: none;
+    }
+    .configure-details summary:hover { color: var(--color-ink); }
+    .configure-details[open] summary { margin-bottom: var(--space-xs); }
+    #configure #settingsError {
+      margin: 0;
     }
     .size-panel {
       border: 1px solid var(--color-rule);
@@ -803,52 +847,148 @@
       }
       .model-card-actions { justify-content: flex-start; }
     }
+    .network-layout {
+      display: grid;
+      gap: var(--space-lg);
+      max-width: 40rem;
+    }
+    .network-section {
+      padding: var(--space-md) var(--space-md) var(--space-lg);
+    }
+    .network-section-title {
+      font-family: var(--font-display);
+      font-size: var(--text-lg);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.35rem;
+      color: var(--color-ink);
+    }
+    .network-section-lede {
+      margin: 0 0 var(--space-md);
+      font-size: var(--text-sm);
+      line-height: 1.55;
+      color: var(--color-muted);
+      max-width: 36rem;
+    }
+    .network-section .field-switch {
+      margin: 0 0 var(--space-md);
+    }
+    .network-subsection {
+      margin-top: var(--space-lg);
+      padding-top: var(--space-md);
+      border-top: 1px solid var(--color-rule);
+    }
+    .network-subsection:first-child {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+    }
+    .network-share-stack {
+      display: grid;
+      gap: var(--space-lg);
+    }
     .network-list {
       list-style: none;
       margin: 0;
       padding: 0;
       display: flex;
       flex-direction: column;
-      gap: 0.4rem;
     }
     .network-list li {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 0.4rem 0.6rem;
-      padding: 0.55rem 0.65rem;
-      border: 1px solid var(--color-rule);
-      border-radius: var(--radius-panel);
-      background: var(--color-graphite-2);
+      gap: 0.5rem 0.75rem;
+      padding: 0.85rem 0;
+      border: 0;
+      border-bottom: 1px solid var(--color-rule);
+      border-radius: 0;
+      background: transparent;
+    }
+    .network-list li:first-child { padding-top: 0.35rem; }
+    .network-list li:last-child {
+      border-bottom: 0;
+      padding-bottom: 0.15rem;
     }
     .network-list .network-meta {
-      flex: 1 1 10rem;
+      flex: 1 1 12rem;
       min-width: 0;
+      display: grid;
+      gap: 0.2rem;
     }
     .network-list .network-meta strong {
       display: block;
       color: var(--color-ink);
       font-size: var(--text-sm);
+      font-weight: 600;
     }
     .network-list .network-meta span,
     .network-mono {
       font-family: var(--font-mono);
       font-size: var(--text-xs);
-      color: var(--color-ink-2);
+      color: var(--color-muted);
       word-break: break-all;
     }
+    .network-list .btn { flex: 0 0 auto; }
     .network-token-row {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 0.4rem;
+      gap: 0.5rem;
+      margin-top: var(--space-md);
+    }
+    .network-token-row .field-input {
+      flex: 1 1 12rem;
+      min-width: 0;
     }
     .network-token-row .network-mono {
       flex: 1 1 12rem;
       padding: 0.4rem 0.5rem;
       border: 1px solid var(--color-rule);
       border-radius: var(--radius-input);
-      background: var(--color-graphite);
+      background: var(--color-paper);
+    }
+    .api-key-secret {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      word-break: break-all;
+      color: var(--color-muted);
+    }
+    .api-key-secret.is-revealed {
+      color: var(--color-ink);
+    }
+    .api-key-name-input {
+      width: 100%;
+      max-width: 14rem;
+      font: inherit;
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--color-ink);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius-input);
+      padding: 0.15rem 0.3rem;
+      margin: -0.15rem -0.3rem;
+    }
+    .api-key-name-input:hover,
+    .api-key-name-input:focus {
+      border-color: var(--color-rule);
+      background: var(--color-paper);
+      outline: none;
+    }
+    #network .setting-hint {
+      line-height: 1.5;
+      max-width: 36rem;
+    }
+    #networkScopeDetail {
+      margin-top: 0.15rem;
+      opacity: 0.75;
+    }
+    #network .field-label {
+      margin-bottom: 0.4rem;
+    }
+    #networkRestartBanner {
+      margin-top: var(--space-md);
     }
     .segmented {
       display: inline-flex;
@@ -1152,14 +1292,16 @@
           <button type="button" class="btn btn-text" id="btnReset">Reset defaults</button>
         </div>
       </div>
-      <div class="panel stack-md">
-        <div>
+      <div class="configure-layout">
+        <div class="panel configure-section">
+          <h3 class="configure-section-title">Preset</h3>
+          <p class="configure-section-lede">Start from a known runtime profile, then tweak below.</p>
           <label class="field-label" for="runtimePreset">Runtime preset</label>
           <select class="field-select" id="runtimePreset"></select>
-          <ul id="runtimePresetHelp" class="choice-help"></ul>
+          <p id="runtimePresetHelp" class="setting-hint"></p>
           <div id="runtimePresetWarning" class="preset-warning is-hidden" role="alert"></div>
         </div>
-        <div id="settingsForm" class="settings-grid"></div>
+        <div id="settingsForm" class="configure-layout"></div>
         <p id="settingsError" class="text-error is-hidden"></p>
       </div>
     </section>
@@ -1171,76 +1313,75 @@
           <span id="networkStatusChip" class="status-chip status-stopped">local only</span>
         </div>
       </div>
-      <div class="stack" style="gap:var(--space-md)">
-        <div class="panel stack-md">
-          <div class="eyebrow">This device</div>
+      <div class="network-layout">
+        <div class="panel network-section">
+          <h3 class="network-section-title">Share models</h3>
+          <p class="network-section-lede">Let other devices call this PC’s OpenAI-compatible API over HTTP with an API key. Control panel and chat stay on this machine only. Prefer Tailscale only.</p>
           <div class="field-switch">
             <input type="checkbox" id="networkExposeToggle">
             <label for="networkExposeToggle">Share LLM API</label>
           </div>
-          <p class="setting-hint">Exposes only the OpenAI-compatible llama-server endpoint so other devices (or another tinyinference) can use your model. The control panel and chat stay private on this computer. Clients authenticate with the API key — there is no separate login on the LLM.</p>
-          <div id="networkScopeBlock" class="stack-md is-hidden">
-            <div>
-              <label class="field-label" for="networkListenScope">Who can reach this?</label>
-              <select class="field-select" id="networkListenScope">
-                <option value="all">Wi‑Fi / LAN and Tailscale — easiest</option>
-                <option value="tailscale">Tailscale only — more private</option>
-                <option value="custom">A specific address — advanced</option>
-              </select>
-              <p id="networkScopeHint" class="setting-hint"></p>
-              <p id="networkScopeDetail" class="setting-hint" style="font-family:var(--font-mono);font-size:var(--text-xs)"></p>
-            </div>
-            <div id="networkCustomHostBlock" class="is-hidden">
+          <div id="networkScopeBlock" class="is-hidden">
+            <label class="field-label" for="networkListenScope">Who can reach this?</label>
+            <select class="field-select" id="networkListenScope">
+              <option value="all">Wi‑Fi / LAN and Tailscale</option>
+              <option value="tailscale">Tailscale only</option>
+              <option value="custom">A specific address</option>
+            </select>
+            <p id="networkScopeHint" class="setting-hint"></p>
+            <p id="networkScopeDetail" class="setting-hint is-hidden" aria-hidden="true"></p>
+            <div id="networkCustomHostBlock" class="is-hidden" style="margin-top:var(--space-md)">
               <label class="field-label" for="networkListenHost">Listen address</label>
               <select class="field-select" id="networkListenHost"></select>
-              <p class="setting-hint">Choose one detected IP. The app will only accept connections on that address.</p>
             </div>
             <div id="networkBindError" class="preset-warning is-hidden" role="alert"></div>
+            <p id="networkLlamaHint" class="setting-hint" style="margin-top:var(--space-sm)"></p>
           </div>
-          <div id="networkRestartBanner" class="preset-warning is-hidden" role="status">Restart the model server to apply the new listen address or API key.</div>
-          <div id="networkShareBlock" class="stack-md is-hidden">
-            <div>
-              <div class="field-label">API key</div>
-              <div class="network-token-row">
-                <code id="networkTokenDisplay" class="network-mono">—</code>
-                <button type="button" class="btn btn-ghost" id="btnCopyToken">Copy</button>
-                <button type="button" class="btn btn-ghost" id="btnRegenToken">Regenerate</button>
-              </div>
-              <p id="networkTokenHint" class="setting-hint">Key is shown once after enable or regenerate. Clients send <code>Authorization: Bearer …</code>.</p>
-            </div>
-            <div>
-              <div class="field-label">API base URLs</div>
-              <ul id="networkShareList" class="network-list"></ul>
-            </div>
-          </div>
-          <p id="networkLlamaHint" class="setting-hint">Managed llama-server bind: loopback only.</p>
+          <div id="networkRestartBanner" class="preset-warning is-hidden" role="status">Restart the model server to apply listen or API key changes.</div>
         </div>
 
-        <div class="panel stack-md">
-          <div class="eyebrow">Linked LLM</div>
-          <p class="setting-hint">Use your local chat UI against an OpenAI-compatible LLM hosted elsewhere (another tinyinference with Share LLM API, or any llama-server).</p>
+        <div id="networkShareBlock" class="network-share-stack is-hidden">
+          <div class="panel network-section">
+            <h3 class="network-section-title">API keys</h3>
+            <p class="network-section-lede">Send as <code>Authorization: Bearer …</code>. Full secrets appear once after create or regenerate.</p>
+            <ul id="networkApiKeyList" class="network-list"></ul>
+            <div class="network-token-row">
+              <input class="field-input" id="networkNewKeyName" type="text" placeholder="Name (Phone, Laptop…)" autocomplete="off" spellcheck="false" maxlength="64">
+              <button type="button" class="btn btn-primary" id="btnCreateApiKey">Create key</button>
+            </div>
+          </div>
+          <div class="panel network-section">
+            <h3 class="network-section-title">Endpoints</h3>
+            <p class="network-section-lede">OpenAI-compatible base URLs for clients on your network.</p>
+            <ul id="networkShareList" class="network-list"></ul>
+          </div>
+        </div>
+
+        <div class="panel network-section">
+          <h3 class="network-section-title">Use a remote model</h3>
+          <p class="network-section-lede">Point this chat at an LLM hosted elsewhere.</p>
           <div class="segmented" role="tablist" aria-label="Inference mode">
             <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
             <button type="button" id="modeRemoteBtn" data-mode="remote">Linked LLM</button>
           </div>
-          <div id="networkRemoteFields" class="stack-md is-hidden">
+          <div id="networkRemoteFields" class="stack-md is-hidden" style="margin-top:var(--space-md)">
             <div>
-              <label class="field-label" for="networkRemoteBase">Remote API base</label>
+              <label class="field-label" for="networkRemoteBase">API base</label>
               <input class="field-input" id="networkRemoteBase" type="url" placeholder="http://100.x.x.x:8080/v1" autocomplete="off" spellcheck="false">
             </div>
             <div>
-              <label class="field-label" for="networkRemoteToken">Remote API key</label>
-              <input class="field-input" id="networkRemoteToken" type="password" placeholder="API key from the host" autocomplete="off" spellcheck="false">
+              <label class="field-label" for="networkRemoteToken">API key</label>
+              <input class="field-input" id="networkRemoteToken" type="password" placeholder="From the host" autocomplete="off" spellcheck="false">
             </div>
             <div class="mast-actions" style="justify-content:flex-start">
               <button type="button" class="btn btn-primary" id="btnSaveRemoteLink">Link</button>
             </div>
             <p id="networkRemoteHealth" class="setting-hint">Not linked.</p>
           </div>
-          <div>
-            <div class="field-label">Discovered on LAN</div>
+          <div class="network-subsection">
+            <div class="field-label">Nearby on LAN</div>
             <ul id="networkPeerList" class="network-list"></ul>
-            <p id="networkPeerEmpty" class="setting-hint">No peers yet. Hosts need Share LLM API on, model server running, and LAN reachability.</p>
+            <p id="networkPeerEmpty" class="setting-hint">None found yet. Peers need sharing on and a running model.</p>
           </div>
           <p id="networkError" class="text-error is-hidden"></p>
         </div>
@@ -1296,7 +1437,7 @@
   <div id="exposeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="exposeConfirmTitle">
     <div class="dialog">
       <h2 id="exposeConfirmTitle">Share the LLM API?</h2>
-      <p>Only llama-server’s OpenAI-compatible endpoint is exposed — not the control panel or chat. Anyone who can reach the address and has the API key can call the model. Restart the model server after enabling to apply the bind and key.</p>
+      <p>Only the model server is exposed — not the control panel or chat. Traffic is plain HTTP (not TLS). Callers need an API key. Default bind is Tailscale only; Wi‑Fi/LAN is broader and optional. Restart the model after enabling so the bind and keys apply.</p>
       <div class="dialog-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelExpose">Cancel</button>
         <button type="button" class="btn btn-primary" id="btnConfirmExpose">Continue</button>
@@ -1359,8 +1500,9 @@
 
     let state = null;
     let networkState = null;
-    let revealedToken = null;
+    let revealedTokens = {}; // id -> full secret (session only)
     let lastShareSignature = '';
+    let lastApiKeySignature = '';
     let lastPeerSignature = '';
     let settingsDirty = false;
     let autosaveTimer = null;
@@ -1516,11 +1658,46 @@
       document.getElementById('networkError').classList.add('is-hidden');
     }
 
-    function applyNetworkState(next, revealed) {
+    function renderApiKeys(next) {
+      const list = document.getElementById('networkApiKeyList');
+      const keys = next.api_keys || [];
+      const knownIds = new Set(keys.map((k) => k.id));
+      Object.keys(revealedTokens).forEach((id) => {
+        if (!knownIds.has(id)) delete revealedTokens[id];
+      });
+      const signature = JSON.stringify(keys) + '|' + Object.keys(revealedTokens).sort().join(',')
+        + '|' + Object.values(revealedTokens).join('|');
+      if (signature === lastApiKeySignature && document.activeElement?.classList?.contains('api-key-name-input')) {
+        return;
+      }
+      lastApiKeySignature = signature;
+      if (!keys.length) {
+        list.innerHTML = '<li><div class="network-meta"><strong>No keys yet</strong><span>Create one below.</span></div></li>';
+        return;
+      }
+      list.innerHTML = keys.map((key) => {
+        const secret = revealedTokens[key.id];
+        const secretText = secret || key.secret_masked || '••••';
+        const revealedClass = secret ? ' is-revealed' : '';
+        return `
+          <li data-key-id="${escapeHtml(key.id)}">
+            <div class="network-meta">
+              <input class="api-key-name-input" data-key-rename="${escapeHtml(key.id)}" value="${escapeHtml(key.name)}" aria-label="API key name">
+              <span class="api-key-secret${revealedClass}">${escapeHtml(secretText)}${secret ? ' · copy now' : ''}</span>
+            </div>
+            <button type="button" class="btn btn-ghost" data-key-copy="${escapeHtml(key.id)}" ${secret ? '' : 'disabled'} title="Copy secret">Copy</button>
+            <button type="button" class="btn btn-ghost" data-key-regen="${escapeHtml(key.id)}" title="Regenerate secret">Regen</button>
+            <button type="button" class="btn btn-ghost" data-key-delete="${escapeHtml(key.id)}" ${keys.length <= 1 ? 'disabled' : ''} title="Delete key">Delete</button>
+          </li>`;
+      }).join('');
+    }
+
+    function applyNetworkState(next, revealed, revealedId) {
       networkState = next;
-      if (revealed) {
-        revealedToken = revealed;
-        sessionStorage.setItem('tinyinference_token', revealed);
+      if (revealed && revealedId) {
+        revealedTokens[revealedId] = revealed;
+      } else if (revealed && !revealedId && next.api_keys?.length) {
+        revealedTokens[next.api_keys[0].id] = revealed;
       }
       const chip = document.getElementById('networkStatusChip');
       if (next.listening_exposed) {
@@ -1539,20 +1716,26 @@
       document.getElementById('networkScopeBlock').classList.toggle('is-hidden', !next.expose);
       document.getElementById('networkRestartBanner').classList.toggle('is-hidden', !next.restart_required);
       document.getElementById('networkShareBlock').classList.toggle('is-hidden', !next.expose);
-      document.getElementById('networkLlamaHint').textContent = next.expose
-        ? (next.llama_endpoint
-          ? 'Managed llama-server will listen on ' + next.llama_endpoint + ' with the API key.'
-          : 'Managed llama-server will follow the share scope above.')
-        : 'Managed llama-server bind: loopback only. Control panel & chat always stay local.';
+      const llamaHint = document.getElementById('networkLlamaHint');
+      if (next.expose && next.llama_endpoint) {
+        llamaHint.textContent = 'Listening on ' + next.llama_endpoint;
+        llamaHint.classList.remove('is-hidden');
+      } else if (next.expose) {
+        llamaHint.textContent = 'Start the model server after changing who can reach this.';
+        llamaHint.classList.remove('is-hidden');
+      } else {
+        llamaHint.textContent = '';
+        llamaHint.classList.add('is-hidden');
+      }
 
       const scopeSelect = document.getElementById('networkListenScope');
       if (document.activeElement !== scopeSelect) {
-        scopeSelect.value = next.listen_scope || 'all';
+        scopeSelect.value = next.listen_scope || 'tailscale';
       }
       document.getElementById('networkScopeHint').textContent = next.listen_scope_hint || '';
-      document.getElementById('networkScopeDetail').textContent = next.listen_scope_detail || '';
+      document.getElementById('networkScopeDetail').textContent = '';
       const customBlock = document.getElementById('networkCustomHostBlock');
-      customBlock.classList.toggle('is-hidden', (next.listen_scope || 'all') !== 'custom');
+      customBlock.classList.toggle('is-hidden', (next.listen_scope || 'tailscale') !== 'custom');
       const hostSelect = document.getElementById('networkListenHost');
       const candidates = next.listen_candidates || [];
       const hostSignature = JSON.stringify(candidates.map((c) => c.address)) + '|' + (next.listen_host || '');
@@ -1568,9 +1751,12 @@
         if (next.listen_host && candidates.some((c) => c.address === next.listen_host)) {
           hostSelect.value = next.listen_host;
         } else if (candidates.length && document.activeElement !== hostSelect) {
-          // Prefer Tailscale in the advanced picker when available.
-          const preferred = candidates.find((c) => c.kind === 'tailscale') || candidates[0];
-          hostSelect.value = preferred.address;
+          // Do not invent a saved address — require an explicit choice.
+          hostSelect.insertAdjacentHTML(
+            'afterbegin',
+            '<option value="" selected disabled>Choose address…</option>'
+          );
+          hostSelect.value = '';
         }
       }
       const bindError = document.getElementById('networkBindError');
@@ -1582,27 +1768,23 @@
         bindError.classList.add('is-hidden');
       }
 
-      const tokenDisplay = document.getElementById('networkTokenDisplay');
-      const tokenHint = document.getElementById('networkTokenHint');
-      if (revealedToken) {
-        tokenDisplay.textContent = revealedToken;
-        tokenHint.textContent = 'Copy this API key now — it will be masked after reload.';
-      } else if (next.access_token_masked) {
-        tokenDisplay.textContent = next.access_token_masked;
-        tokenHint.textContent = 'API key is masked. Regenerate if you need the full value again.';
-      } else {
-        tokenDisplay.textContent = '—';
-        tokenHint.textContent = 'API key is created when sharing is enabled.';
-      }
+      renderApiKeys(next);
 
       const shareList = document.getElementById('networkShareList');
       const shareSignature = JSON.stringify(next.share_urls || []);
       if (shareSignature !== lastShareSignature) {
         lastShareSignature = shareSignature;
         if (!next.share_urls || next.share_urls.length === 0) {
-          const emptyMsg = (next.listen_scope === 'tailscale' && !next.tailscale_available)
-            ? '<li><div class="network-meta"><strong>No Tailscale IP found</strong><span>Start Tailscale on this computer, or choose “Wi‑Fi / LAN and Tailscale”.</span></div></li>'
-            : '<li><div class="network-meta"><strong>No shareable address found</strong><span>Connect to a network or start Tailscale, then refresh.</span></div></li>';
+          let emptyMsg;
+          if (next.listen_bind_error) {
+            emptyMsg = `<li><div class="network-meta"><strong>Not sharing yet</strong><span>${escapeHtml(next.listen_bind_error)}</span></div></li>`;
+          } else if (next.llama_binds_loopback) {
+            emptyMsg = '<li><div class="network-meta"><strong>Not sharing yet</strong><span>Bind fell back to this machine only. Fix the scope above, then restart the model.</span></div></li>';
+          } else if (next.listen_scope === 'tailscale' && !next.tailscale_available) {
+            emptyMsg = '<li><div class="network-meta"><strong>No Tailscale IP found</strong><span>Start Tailscale on this computer, or choose “Wi‑Fi / LAN and Tailscale”.</span></div></li>';
+          } else {
+            emptyMsg = '<li><div class="network-meta"><strong>Start the model to share</strong><span>Endpoints appear once llama-server is running with Share on.</span></div></li>';
+          }
           shareList.innerHTML = emptyMsg;
         } else {
           shareList.innerHTML = next.share_urls.map((item) => `
@@ -1611,7 +1793,7 @@
                 <strong>${escapeHtml(item.label)}</strong>
                 <span>${escapeHtml(item.api_base)}</span>
               </div>
-              <button type="button" class="btn btn-ghost" data-copy="${escapeHtml(item.api_base)}">Copy API base</button>
+              <button type="button" class="btn btn-ghost" data-copy="${escapeHtml(item.api_base)}">Copy</button>
             </li>`).join('');
         }
       }
@@ -1675,7 +1857,23 @@
         body: JSON.stringify(body),
       });
       if (result.state) applyState(result.state);
-      applyNetworkState(result.network, result.access_token || null);
+      applyNetworkState(
+        result.network,
+        result.access_token || null,
+        result.revealed_api_key_id || null
+      );
+      return result;
+    }
+
+    async function mutateApiKey(path, options) {
+      clearNetworkError();
+      const result = await api(path, options);
+      if (result.state) applyState(result.state);
+      applyNetworkState(
+        result.network,
+        result.access_token || null,
+        result.revealed_api_key_id || null
+      );
       return result;
     }
 
@@ -2181,11 +2379,14 @@
           `<option value="${preset.id}" ${preset.available ? '' : 'disabled'}>${escapeHtml(preset.label)}${preset.available ? '' : ' (unavailable)'}</option>`
         ).join('');
       select.value = next.active_preset || '';
-      help.innerHTML = presets.map((preset) =>
-        `<li><code>${escapeHtml(preset.label)}</code> — ${formatPresetDescription(preset.description)}</li>`
-      ).join('') + (custom
-        ? '<li>Current settings are custom — pick a preset to reapply a known profile.</li>'
-        : '');
+      const active = presets.find((preset) => preset.id === select.value);
+      if (active) {
+        help.innerHTML = formatPresetDescription(active.description);
+      } else if (custom) {
+        help.textContent = 'Current settings are custom — pick a preset to reapply a known profile.';
+      } else {
+        help.textContent = '';
+      }
       updatePresetWarning(presets, select.value);
     }
 
@@ -2302,90 +2503,101 @@
       }
     }
 
-    function renderKvCacheSection(form, next, keySetting, valueSetting) {
-      const wrap = document.createElement('div');
-      wrap.className = 'setting-span';
-      const section = document.createElement('div');
-      section.className = 'settings-section';
+    const CONFIG_GROUPS = [
+      {
+        id: 'server',
+        title: 'Server',
+        lede: 'llama-server binary and port. Bind address is owned by Network sharing.',
+        fields: ['executable', 'host', 'port'],
+      },
+      {
+        id: 'context',
+        title: 'Context & batching',
+        lede: 'How much context the model keeps and how prompts are batched.',
+        fields: ['context', 'batch', 'micro_batch', 'parallel'],
+      },
+      {
+        id: 'runtime',
+        title: 'Runtime',
+        lede: 'CPU, memory mapping, and inference behavior.',
+        fields: ['cpu_only', 'mmap', 'fit', 'repack', 'warmup', 'flash_attn', 'mmproj', 'jinja'],
+      },
+      {
+        id: 'kv',
+        title: 'KV cache',
+        lede: 'Temporary context scratchpad — not the model file. Lower precision uses less RAM as context grows.',
+        fields: ['cache_type_k', 'cache_type_v', 'cache_ram', 'checkpoints'],
+        kvHelp: true,
+      },
+    ];
 
-      const title = document.createElement('h3');
-      title.className = 'settings-section-title';
-      title.textContent = 'KV cache';
-      section.appendChild(title);
-
-      const intro = document.createElement('div');
-      intro.className = 'setting-hint';
-      intro.style.marginBottom = '1rem';
-      intro.textContent =
-        'Temporary context scratchpad while the model runs — not the model file. Lower precision uses less RAM as context grows.';
-      section.appendChild(intro);
-
-      const row = document.createElement('div');
-      row.className = 'settings-grid';
-      for (const setting of [keySetting, valueSetting]) {
-        if (!setting) continue;
-        const col = document.createElement('div');
-        col.className = 'setting-col';
-        const label = document.createElement('label');
-        label.className = 'field-label';
-        label.textContent = setting.label;
-        label.setAttribute('for', 'setting-' + setting.id);
-        col.appendChild(label);
-        appendSettingControl(col, setting);
-        const hint = document.createElement('div');
-        hint.className = 'setting-hint';
-        hint.textContent = setting.hint;
-        col.appendChild(hint);
-        row.appendChild(col);
-      }
-      section.appendChild(row);
-
-      if (next.cache_type_help && next.cache_type_help.length) {
-        const list = document.createElement('ul');
-        list.className = 'choice-help';
-        for (const item of next.cache_type_help) {
-          const li = document.createElement('li');
-          li.innerHTML = `<code>${escapeHtml(item.value)}</code> — ${escapeHtml(item.description)}`;
-          list.appendChild(li);
-        }
-        section.appendChild(list);
-      }
-
-      wrap.appendChild(section);
-      form.appendChild(wrap);
+    function appendSettingColumn(grid, setting) {
+      if (!setting) return;
+      const col = document.createElement('div');
+      col.className = 'setting-col';
+      const label = document.createElement('label');
+      label.className = 'field-label';
+      label.textContent = setting.label;
+      label.setAttribute('for', 'setting-' + setting.id);
+      col.appendChild(label);
+      appendSettingControl(col, setting);
+      const hint = document.createElement('div');
+      hint.className = 'setting-hint';
+      hint.textContent = setting.hint;
+      col.appendChild(hint);
+      grid.appendChild(col);
     }
 
     function renderSettings(next) {
       const form = document.getElementById('settingsForm');
       if (settingsDirty || form.contains(document.activeElement)) return;
       form.innerHTML = '';
-      const seen = new Set();
-      for (const setting of next.settings) {
+      const byField = new Map();
+      for (const setting of next.settings || []) {
         if (MODEL_SETTING_FIELDS.has(setting.field)) continue;
-        if (seen.has(setting.field)) continue;
-        if (setting.field === 'cache_type_k' || setting.field === 'cache_type_v') {
-          const keySetting = next.settings.find((item) => item.field === 'cache_type_k');
-          const valueSetting = next.settings.find((item) => item.field === 'cache_type_v');
-          renderKvCacheSection(form, next, keySetting, valueSetting);
-          seen.add('cache_type_k');
-          seen.add('cache_type_v');
-          continue;
+        byField.set(setting.field, setting);
+      }
+
+      for (const group of CONFIG_GROUPS) {
+        const panel = document.createElement('div');
+        panel.className = 'panel configure-section';
+        panel.dataset.configGroup = group.id;
+
+        const title = document.createElement('h3');
+        title.className = 'configure-section-title';
+        title.textContent = group.title;
+        panel.appendChild(title);
+
+        const lede = document.createElement('p');
+        lede.className = 'configure-section-lede';
+        lede.textContent = group.lede;
+        panel.appendChild(lede);
+
+        const grid = document.createElement('div');
+        grid.className = 'settings-grid';
+        for (const field of group.fields) {
+          appendSettingColumn(grid, byField.get(field));
+        }
+        panel.appendChild(grid);
+
+        if (group.kvHelp && next.cache_type_help && next.cache_type_help.length) {
+          const details = document.createElement('details');
+          details.className = 'configure-details';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Cache type reference';
+          details.appendChild(summary);
+          const list = document.createElement('ul');
+          list.className = 'choice-help';
+          for (const item of next.cache_type_help) {
+            const li = document.createElement('li');
+            li.innerHTML = `<code>${escapeHtml(item.value)}</code> — ${escapeHtml(item.description)}`;
+            list.appendChild(li);
+          }
+          details.appendChild(list);
+          panel.appendChild(details);
         }
 
-        const col = document.createElement('div');
-        col.className = 'setting-col';
-        const label = document.createElement('label');
-        label.className = 'field-label';
-        label.textContent = setting.label;
-        label.setAttribute('for', 'setting-' + setting.id);
-        col.appendChild(label);
-        appendSettingControl(col, setting);
-        const hint = document.createElement('div');
-        hint.className = 'setting-hint';
-        hint.textContent = setting.hint;
-        col.appendChild(hint);
-        form.appendChild(col);
-        seen.add(setting.field);
+        form.appendChild(panel);
       }
     }
 
@@ -2768,7 +2980,8 @@
     });
     document.getElementById('btnConfirmExpose').addEventListener('click', async () => {
       try {
-        await postNetwork({ expose: true, listen_scope: 'all' });
+        // Keep the saved/default scope (Tailscale-first). Do not widen to LAN here.
+        await postNetwork({ expose: true });
         exposeModal.hide();
       } catch (error) {
         showNetworkError(error);
@@ -2776,6 +2989,15 @@
     });
     document.getElementById('networkListenScope').addEventListener('change', (event) => {
       const listen_scope = event.target.value;
+      if (listen_scope === 'all') {
+        const ok = window.confirm(
+          'Bind on all interfaces (0.0.0.0)? Anyone on your LAN who has an API key can use the model. Prefer Tailscale only when you can.'
+        );
+        if (!ok) {
+          event.target.value = networkState?.listen_scope || 'tailscale';
+          return;
+        }
+      }
       const body = { listen_scope };
       if (listen_scope === 'custom') {
         let host = document.getElementById('networkListenHost').value.trim();
@@ -2786,7 +3008,10 @@
         }
         if (host) body.listen_host = host;
       }
-      postNetwork(body).catch(showNetworkError);
+      postNetwork(body).catch((error) => {
+        event.target.value = networkState?.listen_scope || 'tailscale';
+        showNetworkError(error);
+      });
     });
     document.getElementById('networkListenHost').addEventListener('change', (event) => {
       postNetwork({
@@ -2804,11 +3029,54 @@
       if (!btn || !document.getElementById('networkPeerList').contains(btn)) return;
       linkDiscoveredPeer(btn.getAttribute('data-link-base') || '');
     });
-    document.getElementById('btnCopyToken').addEventListener('click', () => {
-      if (revealedToken) copyText(revealedToken);
+    document.getElementById('btnCreateApiKey').addEventListener('click', () => {
+      const name = document.getElementById('networkNewKeyName').value.trim() || 'API key';
+      mutateApiKey('/api/network/keys', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      }).then(() => {
+        document.getElementById('networkNewKeyName').value = '';
+      }).catch(showNetworkError);
     });
-    document.getElementById('btnRegenToken').addEventListener('click', () => {
-      postNetwork({ regenerate_token: true }).catch(showNetworkError);
+    document.getElementById('networkNewKeyName').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        document.getElementById('btnCreateApiKey').click();
+      }
+    });
+    document.getElementById('networkApiKeyList').addEventListener('click', (event) => {
+      const copyBtn = event.target.closest('[data-key-copy]');
+      if (copyBtn) {
+        const id = copyBtn.getAttribute('data-key-copy');
+        if (revealedTokens[id]) copyText(revealedTokens[id]);
+        return;
+      }
+      const regenBtn = event.target.closest('[data-key-regen]');
+      if (regenBtn) {
+        const id = regenBtn.getAttribute('data-key-regen');
+        mutateApiKey('/api/network/keys/' + encodeURIComponent(id) + '/regenerate', {
+          method: 'POST',
+        }).catch(showNetworkError);
+        return;
+      }
+      const deleteBtn = event.target.closest('[data-key-delete]');
+      if (deleteBtn && !deleteBtn.disabled) {
+        const id = deleteBtn.getAttribute('data-key-delete');
+        mutateApiKey('/api/network/keys/' + encodeURIComponent(id), {
+          method: 'DELETE',
+        }).catch(showNetworkError);
+      }
+    });
+    document.getElementById('networkApiKeyList').addEventListener('change', (event) => {
+      const input = event.target.closest('[data-key-rename]');
+      if (!input) return;
+      const id = input.getAttribute('data-key-rename');
+      const name = input.value.trim();
+      if (!name) return;
+      mutateApiKey('/api/network/keys/' + encodeURIComponent(id), {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      }).catch(showNetworkError);
     });
     document.getElementById('modeLocalBtn').addEventListener('click', () => {
       postNetwork({ inference_mode: 'local' }).catch(showNetworkError);

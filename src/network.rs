@@ -47,9 +47,9 @@ impl InferenceMode {
 #[serde(rename_all = "lowercase")]
 pub enum ListenScope {
     /// All IPv4 interfaces (`0.0.0.0`) — LAN + Tailscale + others.
-    #[default]
     All,
-    /// First Tailscale CGNAT address only (`100.64/10`).
+    /// First Tailscale CGNAT address only (`100.64/10`). Safer default.
+    #[default]
     Tailscale,
     /// Explicit host/IP in [`NetworkConfig::listen_host`].
     Custom,
@@ -84,22 +84,57 @@ impl ListenScope {
     pub fn novice_hint(self) -> &'static str {
         match self {
             Self::All => {
-                "Easiest option. Other machines on your home/office network or Tailscale can call this computer’s OpenAI-compatible API (with the API key)."
+                "Broadest reach: every interface on this PC. Prefer Tailscale only unless you need LAN."
             }
             Self::Tailscale => {
-                "More private. Only devices on your Tailscale network can reach the LLM API — not random devices on café Wi‑Fi. Tailscale must be running."
+                "Narrowest common option: only Tailscale peers. Tailscale must be running."
             }
-            Self::Custom => {
-                "Advanced: bind llama-server to one IP you choose (for example a single LAN or Tailscale address)."
-            }
+            Self::Custom => "Bind to exactly one IP you choose below — nothing else.",
         }
     }
 
     pub fn technical_detail(self) -> &'static str {
         match self {
-            Self::All => "Listens on 0.0.0.0 (all interfaces).",
-            Self::Tailscale => "Listens on your Tailscale IP (100.x) only.",
-            Self::Custom => "Listens on the address you select below.",
+            Self::All => "Binds llama-server to 0.0.0.0 (all interfaces). HTTP, not TLS.",
+            Self::Tailscale => "Binds llama-server to your Tailscale IP (100.x) only. HTTP, not TLS.",
+            Self::Custom => "Binds llama-server to the address you select. HTTP, not TLS.",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ApiKey {
+    pub id: String,
+    pub name: String,
+    pub secret: String,
+    /// Unix seconds when the key was created or last regenerated.
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKeyPublic {
+    pub id: String,
+    pub name: String,
+    pub secret_masked: String,
+    pub created_at: u64,
+}
+
+impl ApiKey {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            id: generate_key_id(),
+            name: sanitize_key_name(name),
+            secret: generate_access_token(),
+            created_at: unix_now(),
+        }
+    }
+
+    pub fn to_public(&self) -> ApiKeyPublic {
+        ApiKeyPublic {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            secret_masked: mask_token(&self.secret),
+            created_at: self.created_at,
         }
     }
 }
@@ -112,7 +147,12 @@ pub struct NetworkConfig {
     pub listen_scope: ListenScope,
     /// Host/IP for [`ListenScope::Custom`] (and remembered Tailscale pin if set).
     pub listen_host: String,
+    /// Legacy single token — migrated into [`Self::api_keys`] on load.
+    #[serde(default)]
     pub access_token: String,
+    /// Named API keys accepted by shared llama-server (`--api-key`, repeatable).
+    #[serde(default)]
+    pub api_keys: Vec<ApiKey>,
     pub inference_mode: InferenceMode,
     pub remote_base: String,
     pub remote_token: String,
@@ -123,9 +163,10 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             expose: false,
-            listen_scope: ListenScope::All,
+            listen_scope: ListenScope::Tailscale,
             listen_host: String::new(),
             access_token: String::new(),
+            api_keys: Vec::new(),
             inference_mode: InferenceMode::Local,
             remote_base: String::new(),
             remote_token: String::new(),
@@ -135,9 +176,40 @@ impl Default for NetworkConfig {
 }
 
 impl NetworkConfig {
+    /// Move legacy `access_token` into `api_keys` when needed.
+    pub fn migrate_api_keys(&mut self) {
+        let legacy = self.access_token.trim();
+        if !legacy.is_empty()
+            && !self
+                .api_keys
+                .iter()
+                .any(|key| key.secret.trim() == legacy)
+        {
+            self.api_keys.insert(
+                0,
+                ApiKey {
+                    id: generate_key_id(),
+                    name: "Default".into(),
+                    secret: legacy.to_string(),
+                    created_at: unix_now(),
+                },
+            );
+        }
+        // Keep legacy field in sync with the first key for older readers.
+        self.access_token = self
+            .api_keys
+            .first()
+            .map(|key| key.secret.clone())
+            .unwrap_or_default();
+    }
+
+    /// Ensure at least one key exists when sharing; returns a newly created secret if any.
     pub fn ensure_token(&mut self) -> bool {
-        if self.access_token.trim().is_empty() {
-            self.access_token = generate_access_token();
+        self.migrate_api_keys();
+        if self.api_keys.is_empty() {
+            let key = ApiKey::new("Default");
+            self.access_token = key.secret.clone();
+            self.api_keys.push(key);
             true
         } else {
             false
@@ -145,7 +217,97 @@ impl NetworkConfig {
     }
 
     pub fn regenerate_token(&mut self) {
-        self.access_token = generate_access_token();
+        self.migrate_api_keys();
+        if let Some(key) = self.api_keys.first_mut() {
+            key.secret = generate_access_token();
+            key.created_at = unix_now();
+            self.access_token = key.secret.clone();
+        } else {
+            let _ = self.ensure_token();
+        }
+    }
+
+    pub fn api_key_secrets(&self) -> Vec<String> {
+        self.api_keys
+            .iter()
+            .map(|key| key.secret.trim().to_string())
+            .filter(|secret| !secret.is_empty())
+            .collect()
+    }
+
+    pub fn primary_api_key(&self) -> Option<&str> {
+        self.api_keys
+            .iter()
+            .map(|key| key.secret.trim())
+            .find(|secret| !secret.is_empty())
+    }
+
+    pub fn public_api_keys(&self) -> Vec<ApiKeyPublic> {
+        self.api_keys.iter().map(ApiKey::to_public).collect()
+    }
+
+    pub fn create_api_key(&mut self, name: &str) -> Result<ApiKey, String> {
+        self.migrate_api_keys();
+        let cleaned = sanitize_key_name(name);
+        if cleaned.is_empty() {
+            return Err("Give the API key a name.".into());
+        }
+        if self.api_keys.len() >= 32 {
+            return Err("Maximum of 32 API keys reached.".into());
+        }
+        let key = ApiKey::new(cleaned);
+        self.api_keys.push(key.clone());
+        self.access_token = self
+            .api_keys
+            .first()
+            .map(|k| k.secret.clone())
+            .unwrap_or_default();
+        Ok(key)
+    }
+
+    pub fn rename_api_key(&mut self, id: &str, name: &str) -> Result<(), String> {
+        let cleaned = sanitize_key_name(name);
+        if cleaned.is_empty() {
+            return Err("Give the API key a name.".into());
+        }
+        let key = self
+            .api_keys
+            .iter_mut()
+            .find(|key| key.id == id)
+            .ok_or_else(|| "API key not found.".to_string())?;
+        key.name = cleaned;
+        Ok(())
+    }
+
+    pub fn regenerate_api_key(&mut self, id: &str) -> Result<ApiKey, String> {
+        let key = self
+            .api_keys
+            .iter_mut()
+            .find(|key| key.id == id)
+            .ok_or_else(|| "API key not found.".to_string())?;
+        key.secret = generate_access_token();
+        key.created_at = unix_now();
+        let updated = key.clone();
+        if self.api_keys.first().map(|k| k.id.as_str()) == Some(id) {
+            self.access_token = updated.secret.clone();
+        }
+        Ok(updated)
+    }
+
+    pub fn delete_api_key(&mut self, id: &str) -> Result<(), String> {
+        if !self.api_keys.iter().any(|key| key.id == id) {
+            return Err("API key not found.".into());
+        }
+        if self.expose && self.api_keys.len() <= 1 {
+            return Err("Keep at least one API key while sharing is enabled.".into());
+        }
+        self.api_keys.retain(|key| key.id != id);
+        self.access_token = self
+            .api_keys
+            .first()
+            .map(|key| key.secret.clone())
+            .unwrap_or_default();
+        Ok(())
     }
 
     pub fn resolved_device_name(&self) -> String {
@@ -251,6 +413,36 @@ pub fn listen_candidates() -> Vec<ListenCandidate> {
         });
     }
     out
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn generate_key_id() -> String {
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_err() {
+        return format!("key-{}", unix_now());
+    }
+    format!(
+        "key-{}",
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
+}
+
+fn sanitize_key_name(raw: impl Into<String>) -> String {
+    let name = raw.into();
+    let cleaned: String = name
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    cleaned.chars().take(64).collect()
 }
 
 pub fn generate_access_token() -> String {
@@ -535,8 +727,9 @@ impl NetworkDiscovery {
             return;
         }
 
+        // mDNS is LAN discovery; prefer a LAN address so peers don't get a Tailscale IP.
         let (lan, ts) = shareable_ipv4_addrs();
-        let ip = ts.first().copied().or_else(|| lan.first().copied());
+        let ip = lan.first().copied().or_else(|| ts.first().copied());
         let Some(ip) = ip else {
             return;
         };
@@ -750,5 +943,31 @@ mod tests {
 
         cfg.expose = false;
         assert_eq!(cfg.resolve_listen_host().unwrap(), "127.0.0.1");
+    }
+
+    #[test]
+    fn api_key_crud_and_legacy_migration() {
+        let mut cfg = NetworkConfig::default();
+        cfg.access_token = "legacy-secret".into();
+        cfg.migrate_api_keys();
+        assert_eq!(cfg.api_keys.len(), 1);
+        assert_eq!(cfg.api_keys[0].secret, "legacy-secret");
+        assert_eq!(cfg.api_keys[0].name, "Default");
+
+        let created = cfg.create_api_key("Phone").unwrap();
+        assert_eq!(created.name, "Phone");
+        assert_eq!(cfg.api_keys.len(), 2);
+
+        cfg.rename_api_key(&created.id, "Tablet").unwrap();
+        assert_eq!(cfg.api_keys[1].name, "Tablet");
+
+        let regenerated = cfg.regenerate_api_key(&created.id).unwrap();
+        assert_ne!(regenerated.secret, created.secret);
+
+        cfg.expose = true;
+        let first_id = cfg.api_keys[0].id.clone();
+        let second_id = cfg.api_keys[1].id.clone();
+        assert!(cfg.delete_api_key(&first_id).is_ok());
+        assert!(cfg.delete_api_key(&second_id).is_err());
     }
 }

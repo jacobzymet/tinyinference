@@ -36,6 +36,10 @@ impl CommandSpec {
             }
         }
 
+        // Advanced extras first; managed flags are stripped so Configure / Network win.
+        let filtered_extras = filter_managed_extra_args(&config.server.extra_args);
+        args.extend(filtered_extras.iter().map(OsString::from));
+
         if config.runtime.cpu_only {
             push_pair(&mut args, "--device", "none");
             push_pair(&mut args, "--n-gpu-layers", "0");
@@ -74,37 +78,25 @@ impl CommandSpec {
             }
             .into(),
         );
-        if !has_extra_option(&config.server.extra_args, "--flash-attn")
-            && !has_extra_option(&config.server.extra_args, "-fa")
-        {
-            push_pair(
-                &mut args,
-                "--flash-attn",
-                if config.runtime.flash_attn {
-                    "on"
-                } else {
-                    "off"
-                },
-            );
-        }
-        if !has_extra_option(&config.server.extra_args, "--cache-type-k")
-            && !has_extra_option(&config.server.extra_args, "-ctk")
-        {
-            push_pair(
-                &mut args,
-                "--cache-type-k",
-                config.runtime.cache_type_k.as_str(),
-            );
-        }
-        if !has_extra_option(&config.server.extra_args, "--cache-type-v")
-            && !has_extra_option(&config.server.extra_args, "-ctv")
-        {
-            push_pair(
-                &mut args,
-                "--cache-type-v",
-                config.runtime.cache_type_v.as_str(),
-            );
-        }
+        push_pair(
+            &mut args,
+            "--flash-attn",
+            if config.runtime.flash_attn {
+                "on"
+            } else {
+                "off"
+            },
+        );
+        push_pair(
+            &mut args,
+            "--cache-type-k",
+            config.runtime.cache_type_k.as_str(),
+        );
+        push_pair(
+            &mut args,
+            "--cache-type-v",
+            config.runtime.cache_type_v.as_str(),
+        );
         push_pair(
             &mut args,
             "--ctx-size",
@@ -137,19 +129,22 @@ impl CommandSpec {
         if config.runtime.jinja {
             args.push("--jinja".into());
         }
-        // Prefer physical cores; skip when extra_args already sets --threads so
-        // advanced overrides remain last-wins without a duplicate flag.
-        if !has_threads_override(&config.server.extra_args) {
+        // Prefer physical cores; skip when extras already set --threads.
+        if !has_threads_override(&filtered_extras) {
             push_pair(&mut args, "--threads", threads.max(1).to_string());
         }
         args.push("--metrics".into());
-        push_pair(&mut args, "--host", config.server.host.as_str());
-        push_pair(&mut args, "--port", config.server.port.to_string());
-        let api_key = config.server.api_key.trim();
-        if !api_key.is_empty() && !has_extra_option(&config.server.extra_args, "--api-key") {
-            push_pair(&mut args, "--api-key", api_key);
+        push_pair(&mut args, "--host", config.effective_host());
+        push_pair(
+            &mut args,
+            "--port",
+            config.effective_port().to_string(),
+        );
+        for key in config.llama_api_keys() {
+            if !key.trim().is_empty() {
+                push_pair(&mut args, "--api-key", key);
+            }
         }
-        args.extend(config.server.extra_args.iter().map(OsString::from));
 
         Self {
             program: config.server.executable.as_os_str().into(),
@@ -172,6 +167,65 @@ fn push_pair(args: &mut Vec<OsString>, flag: impl Into<OsString>, value: impl In
 
 fn has_threads_override(extra_args: &[String]) -> bool {
     has_extra_option(extra_args, "--threads")
+}
+
+/// Drop flags owned by Configure / Network so `extra_args` cannot bypass them.
+fn filter_managed_extra_args(extra_args: &[String]) -> Vec<String> {
+    const PAIRED: &[&str] = &[
+        "--host",
+        "--port",
+        "--api-key",
+        "--device",
+        "--n-gpu-layers",
+        "--fit",
+        "--flash-attn",
+        "-fa",
+        "--cache-type-k",
+        "-ctk",
+        "--cache-type-v",
+        "-ctv",
+        "--ctx-size",
+        "--batch-size",
+        "--ubatch-size",
+        "--parallel",
+        "--cache-ram",
+        "--ctx-checkpoints",
+    ];
+    const FLAGS: &[&str] = &[
+        "--mmap",
+        "--no-mmap",
+        "--repack",
+        "--no-repack",
+        "--warmup",
+        "--no-warmup",
+        "--no-mmproj",
+        "--jinja",
+        "--metrics",
+    ];
+
+    let mut out = Vec::with_capacity(extra_args.len());
+    let mut index = 0;
+    while index < extra_args.len() {
+        let argument = &extra_args[index];
+        if FLAGS.iter().any(|flag| argument == flag) {
+            index += 1;
+            continue;
+        }
+        if let Some(option) = PAIRED.iter().find(|option| {
+            *argument == **option || argument.starts_with(&format!("{option}="))
+        }) {
+            if *argument == *option {
+                index += 2;
+            } else {
+                index += 1;
+            }
+            let _ = option;
+            continue;
+        }
+        out.push(argument.clone());
+        index += 1;
+    }
+    out
 }
 
 fn has_extra_option(extra_args: &[String], option: &str) -> bool {
@@ -798,7 +852,64 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(&actual[actual.len() - 2..], &["--threads", "12"]);
+        assert!(
+            actual
+                .windows(2)
+                .any(|window| window[0] == "--threads" && window[1] == "12")
+        );
+        assert_eq!(
+            &actual[actual.len() - 4..],
+            &["--host", "127.0.0.1", "--port", "8080"]
+        );
+    }
+
+    #[test]
+    fn configure_and_network_win_over_extra_runtime_flags() {
+        let mut config = Config::default();
+        config.network.expose = true;
+        config.network.listen_scope = crate::network::ListenScope::Custom;
+        config.network.listen_host = "100.64.1.2".into();
+        config.network.ensure_token();
+        config.sync_llama_bind_from_network();
+        config.server.extra_args = vec![
+            "--host".into(),
+            "0.0.0.0".into(),
+            "--port".into(),
+            "9999".into(),
+            "--api-key".into(),
+            "evil".into(),
+            "--no-mmap".into(),
+            "--flash-attn".into(),
+            "off".into(),
+            "--threads".into(),
+            "4".into(),
+        ];
+        let actual = args(&config);
+        assert!(
+            actual
+                .windows(2)
+                .any(|window| window[0] == "--host" && window[1] == "100.64.1.2")
+        );
+        assert!(
+            actual
+                .windows(2)
+                .any(|window| window[0] == "--port" && window[1] == "8080")
+        );
+        assert!(!actual.iter().any(|argument| argument == "0.0.0.0"));
+        assert!(!actual.iter().any(|argument| argument == "evil"));
+        assert!(!actual.iter().any(|argument| argument == "9999"));
+        assert!(actual.iter().any(|argument| argument == "--mmap"));
+        assert!(
+            actual
+                .windows(2)
+                .any(|window| window[0] == "--flash-attn" && window[1] == "on")
+        );
+        assert!(actual.iter().any(|argument| *argument == "--api-key"));
+        assert!(
+            actual
+                .windows(2)
+                .any(|window| window[0] == "--threads" && window[1] == "4")
+        );
     }
 
     #[test]
@@ -831,11 +942,8 @@ mod tests {
     }
 
     #[test]
-    fn health_uses_the_effective_port() {
-        assert!(probe_test_health_with_extra_args(
-            "200 OK",
-            vec!["--port".into(), "PORT".into()]
-        ));
+    fn health_uses_the_configured_port() {
+        assert!(probe_test_health("200 OK"));
     }
 
     #[test]

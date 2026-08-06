@@ -47,7 +47,19 @@ pub struct NetworkUpdate {
 #[derive(Debug, Clone)]
 pub struct NetworkUpdateResult {
     pub restart_required: bool,
+    /// Full secret shown once after create / regenerate (legacy field name).
     pub access_token: Option<String>,
+    pub revealed_api_key_id: Option<String>,
+}
+
+impl NetworkUpdateResult {
+    fn from_restart(restart_required: bool) -> Self {
+        Self {
+            restart_required,
+            access_token: None,
+            revealed_api_key_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -427,6 +439,16 @@ impl LibraryFetch {
     }
 }
 
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host.trim(), "127.0.0.1" | "localhost" | "::1")
+}
+
+fn configs_differ_ignoring_instance_port(running: &Config, desired: &Config) -> bool {
+    let mut running = running.clone();
+    running.server.port = desired.server.port;
+    &running != desired
+}
+
 fn is_model_file(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".gguf")
 }
@@ -517,7 +539,6 @@ impl SettingField {
             Self::Model
                 | Self::EstimatedSize
                 | Self::Executable
-                | Self::Host
                 | Self::Port
                 | Self::Context
                 | Self::Batch
@@ -655,7 +676,11 @@ impl App {
                 config.server.executable.display()
             )
         };
+        let before_migrate = config.clone();
         config.migrate_network_expose_to_llama();
+        if config != before_migrate {
+            let _ = config.save(&config_path);
+        }
         let mut app = Self {
             config,
             config_path,
@@ -732,36 +757,68 @@ impl App {
         self.listen_addr
     }
 
-    /// True when Network sharing is on and llama is bound beyond loopback.
+    /// True when Share is on and the desired llama bind is beyond loopback.
     pub fn listening_exposed(&self) -> bool {
         if !self.config.network.expose {
             return false;
         }
-        let host = self.config.effective_host();
-        !(host == "127.0.0.1" || host == "localhost" || host == "::1")
+        !is_loopback_host(&self.config.effective_host())
     }
 
-    /// Running llama needs a restart to pick up a new share bind / API key.
+    /// Ports of managed servers that are up while Share is actually bound off-loopback.
+    pub fn shareable_running_ports(&self) -> Vec<u16> {
+        if !self.listening_exposed() {
+            return Vec::new();
+        }
+        let mut ports: Vec<u16> = self
+            .server_summaries()
+            .into_iter()
+            .filter(|s| {
+                s.ready
+                    || s.status == ServerStatus::Starting
+                    || s.status == ServerStatus::Downloading
+            })
+            .map(|s| s.port)
+            .collect();
+        ports.sort_unstable();
+        ports.dedup();
+        ports
+    }
+
+    /// Running llama needs a restart to pick up a new share bind / API keys.
     pub fn network_restart_required(&self) -> bool {
-        let Some(running) = &self.running_config else {
-            return false;
-        };
+        let mut configs = Vec::new();
+        if let Some(config) = &self.running_config {
+            configs.push(config);
+        }
+        for server in &self.extra_servers {
+            if server.is_running() {
+                configs.push(&server.running_config);
+            }
+        }
+        configs.iter().any(|config| self.keys_or_host_diverged(config))
+    }
+
+    fn keys_or_host_diverged(&self, running: &Config) -> bool {
         if !self.config.network.expose {
-            let host = running.effective_host();
-            let still_shared = host != "127.0.0.1" && host != "localhost" && host != "::1";
-            return still_shared || !running.server.api_key.trim().is_empty();
+            let still_shared = !is_loopback_host(&running.effective_host());
+            return still_shared || !running.llama_api_keys().is_empty();
         }
         let Ok(desired_host) = self.config.network.resolve_listen_host() else {
             return true;
         };
-        let desired_key = self.config.network.access_token.trim();
-        running.effective_host() != desired_host || running.server.api_key.trim() != desired_key
+        let mut desired = self.config.llama_api_keys();
+        let mut actual = running.llama_api_keys();
+        desired.sort();
+        actual.sort();
+        running.effective_host() != desired_host || desired != actual
     }
 
     pub fn sync_mdns_advertise(&self) {
-        // Advertise the LLM port on LAN when sharing is on and llama is reachable.
-        let advertise = self.config.network.should_advertise_mdns() && self.listening_exposed();
-        let port = self.config.effective_port();
+        // Advertise only while a shared llama is actually running.
+        let ports = self.shareable_running_ports();
+        let advertise = self.config.network.should_advertise_mdns() && !ports.is_empty();
+        let port = ports.first().copied().unwrap_or(0);
         self.discovery.sync_advertise(
             advertise,
             &self.config.network.resolved_device_name(),
@@ -771,11 +828,13 @@ impl App {
 
     pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
         let self_name = self.config.network.resolved_device_name();
-        let port = self.config.effective_port();
+        let ports = self.shareable_running_ports();
         self.discovery
             .discovered_peers()
             .into_iter()
-            .filter(|peer| !(peer.name.eq_ignore_ascii_case(&self_name) && peer.port == port))
+            .filter(|peer| {
+                !(peer.name.eq_ignore_ascii_case(&self_name) && ports.contains(&peer.port))
+            })
             .collect()
     }
 
@@ -785,17 +844,15 @@ impl App {
         if !network.expose {
             return Vec::new();
         }
-        let mut ports: Vec<u16> = self
-            .server_summaries()
-            .into_iter()
-            .filter(|s| s.ready || s.status == ServerStatus::Starting || s.status == ServerStatus::Downloading)
-            .map(|s| s.port)
-            .collect();
-        if ports.is_empty() {
-            ports.push(self.config.effective_port());
+        // Only advertise hosts/ports that match the live fail-closed bind.
+        let bind_host = self.config.effective_host();
+        if is_loopback_host(&bind_host) {
+            return Vec::new();
         }
-        ports.sort_unstable();
-        ports.dedup();
+        let ports = self.shareable_running_ports();
+        if ports.is_empty() {
+            return Vec::new();
+        }
 
         let mut urls = Vec::new();
         for port in ports {
@@ -806,11 +863,7 @@ impl App {
                 }
                 ListenScope::Tailscale => urls.extend(network::tailscale_urls(port, token)),
                 ListenScope::Custom => {
-                    let host = network.listen_host.trim();
-                    if host.is_empty() {
-                        continue;
-                    }
-                    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+                    if let Ok(ip) = bind_host.parse::<std::net::Ipv4Addr>() {
                         let kind = if network::is_tailscale_cg_nat(ip) {
                             "tailscale"
                         } else {
@@ -825,8 +878,8 @@ impl App {
                     } else {
                         urls.push(network::share_url_host(
                             "custom",
-                            format!("Custom ({host})"),
-                            host,
+                            format!("Custom ({bind_host})"),
+                            &bind_host,
                             port,
                             token,
                         ));
@@ -875,11 +928,13 @@ impl App {
     ) -> Result<NetworkUpdateResult, String> {
         let mut token_revealed: Option<String> = None;
 
+        let mut revealed_id: Option<String> = None;
         if let Some(expose) = update.expose {
             self.config.network.expose = expose;
             if expose {
                 if self.config.network.ensure_token() {
-                    token_revealed = Some(self.config.network.access_token.clone());
+                    token_revealed = self.config.network.primary_api_key().map(str::to_string);
+                    revealed_id = self.config.network.api_keys.first().map(|k| k.id.clone());
                 }
             }
         }
@@ -908,7 +963,8 @@ impl App {
 
         if update.regenerate_token.unwrap_or(false) {
             self.config.network.regenerate_token();
-            token_revealed = Some(self.config.network.access_token.clone());
+            token_revealed = self.config.network.primary_api_key().map(str::to_string);
+            revealed_id = self.config.network.api_keys.first().map(|k| k.id.clone());
         }
 
         if let Some(mode) = update.inference_mode.as_deref() {
@@ -954,6 +1010,65 @@ impl App {
         Ok(NetworkUpdateResult {
             restart_required,
             access_token: token_revealed,
+            revealed_api_key_id: revealed_id,
+        })
+    }
+
+    pub fn create_api_key(&mut self, name: &str) -> Result<NetworkUpdateResult, String> {
+        let key = self.config.network.create_api_key(name)?;
+        self.config.sync_llama_bind_from_network();
+        self.config
+            .save(&self.config_path)
+            .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.push_log(format!("api key created: {}", key.name));
+        Ok(NetworkUpdateResult {
+            restart_required: self.network_restart_required(),
+            access_token: Some(key.secret),
+            revealed_api_key_id: Some(key.id),
+        })
+    }
+
+    pub fn rename_api_key(&mut self, id: &str, name: &str) -> Result<NetworkUpdateResult, String> {
+        self.config.network.rename_api_key(id, name)?;
+        self.config
+            .save(&self.config_path)
+            .map_err(|error| format!("could not save config: {error:#}"))?;
+        Ok(NetworkUpdateResult::from_restart(false))
+    }
+
+    pub fn regenerate_api_key(&mut self, id: &str) -> Result<NetworkUpdateResult, String> {
+        let key = self.config.network.regenerate_api_key(id)?;
+        self.config.sync_llama_bind_from_network();
+        self.config
+            .save(&self.config_path)
+            .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.push_log(format!("api key regenerated: {}", key.name));
+        Ok(NetworkUpdateResult {
+            restart_required: self.network_restart_required(),
+            access_token: Some(key.secret),
+            revealed_api_key_id: Some(key.id),
+        })
+    }
+
+    pub fn delete_api_key(&mut self, id: &str) -> Result<NetworkUpdateResult, String> {
+        let name = self
+            .config
+            .network
+            .api_keys
+            .iter()
+            .find(|key| key.id == id)
+            .map(|key| key.name.clone())
+            .unwrap_or_else(|| id.to_string());
+        self.config.network.delete_api_key(id)?;
+        self.config.sync_llama_bind_from_network();
+        self.config
+            .save(&self.config_path)
+            .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.push_log(format!("api key deleted: {name}"));
+        Ok(NetworkUpdateResult {
+            restart_required: self.network_restart_required(),
+            access_token: None,
+            revealed_api_key_id: None,
         })
     }
 
@@ -972,7 +1087,10 @@ impl App {
                 .extra_servers
                 .iter()
                 .find(|s| s.id == self.active_server_id)
-                .is_some_and(|s| s.running_config != self.config);
+                .is_some_and(|s| {
+                    // Extra instances intentionally use an allocated port.
+                    configs_differ_ignoring_instance_port(&s.running_config, &self.config)
+                });
         }
         self.running_config
             .as_ref()
@@ -1262,7 +1380,9 @@ impl App {
             (SettingField::Executable, _) => {
                 "Enter llama-server if it is on PATH, or enter its full executable path."
             }
-            (SettingField::Host, _) => "127.0.0.1 keeps the server local to this machine.",
+            (SettingField::Host, _) => {
+                "Set by Network sharing (loopback when Share is off). Not editable here."
+            }
             (SettingField::Port, _) => "Port llama-server listens on.",
             (SettingField::Context, _) => "Token count; 8k is accepted.",
             (SettingField::Batch, _) => "Prompt batch size.",
@@ -1429,7 +1549,7 @@ impl App {
             self.download = None;
             self.status = ServerStatus::Ready;
             if let Some(config) = &self.running_config {
-                self.status_detail = format!("Listening at {}", config.endpoint());
+                self.status_detail = format!("Listening on {}", config.listen_label());
             }
             self.ensure_thinking_probe();
         } else if self.status != ServerStatus::Downloading {
@@ -2083,10 +2203,10 @@ impl App {
                 self.config.server.executable = value.into();
             }
             SettingField::Host => {
-                if value.is_empty() {
-                    return Err("Listen address cannot be empty.".into());
-                }
-                self.config.server.host = value.into();
+                return Err(
+                    "Listen address is controlled by Network sharing — change the scope there."
+                        .into(),
+                );
             }
             SettingField::Port => {
                 self.config.server.port = parse_bounded_u32(value, "port", 1, 65_535)? as u16;
@@ -2893,6 +3013,44 @@ mod tests {
         assert_eq!(app.allocate_port(), 8081);
         app.config.server.port = 9090;
         assert_eq!(app.allocate_port(), 9090);
+    }
+
+    #[test]
+    fn extra_server_allocated_port_is_not_pending_restart() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        let mut extra_config = app.config.clone();
+        extra_config.server.port = 8081;
+        app.extra_servers
+            .push(crate::instance::ManagedServer::stub_ready(
+                "extra-1".into(),
+                extra_config,
+            ));
+        app.active_server_id = "extra-1".into();
+        assert!(!app.has_pending_changes());
+        app.config.runtime.context_size = 4096;
+        assert!(app.has_pending_changes());
+    }
+
+    #[test]
+    fn share_urls_require_live_non_loopback_bind() {
+        let mut app = App::new(Config::default(), "test.toml".into());
+        app.config.network.expose = true;
+        app.config.network.listen_scope = ListenScope::Custom;
+        app.config.network.listen_host = "192.168.1.50".into();
+        app.config.network.ensure_token();
+        // Fail closed: unresolved/custom not synced yet → loopback → no URLs.
+        app.config.server.host = "127.0.0.1".into();
+        assert!(app.network_share_urls().is_empty());
+        app.config.sync_llama_bind_from_network();
+        app.running_config = Some(app.config.clone());
+        app.status = ServerStatus::Ready;
+        app.endpoint_online = true;
+        assert!(!app.network_share_urls().is_empty());
+        assert!(
+            app.network_share_urls()
+                .iter()
+                .all(|url| url.api_base.contains("192.168.1.50"))
+        );
     }
 
     #[test]

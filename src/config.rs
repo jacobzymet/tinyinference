@@ -313,22 +313,25 @@ impl Config {
         env_bind: Option<String>,
         config: &Self,
     ) -> Result<SocketAddr> {
-        if let Some(addr) = cli_bind {
-            return Ok(addr);
-        }
-        if let Some(raw) = env_bind {
+        let addr = if let Some(addr) = cli_bind {
+            addr
+        } else if let Some(raw) = env_bind {
             let trimmed = raw.trim();
             if !trimmed.is_empty() {
-                return SocketAddr::from_str(trimmed)
-                    .with_context(|| format!("invalid TINYINFERENCE_BIND value: {raw}"));
+                SocketAddr::from_str(trimmed)
+                    .with_context(|| format!("invalid TINYINFERENCE_BIND value: {raw}"))?
+            } else {
+                config.desired_ui_bind()?
             }
-        }
-        config.desired_ui_bind()
+        } else {
+            config.desired_ui_bind()?
+        };
+        Ok(force_loopback_socket(addr))
     }
 
-    /// Desired UI bind from config (ignores CLI/env overrides). Always the local UI.
+    /// Desired UI bind from config (ignores CLI/env overrides). Always loopback.
     pub fn desired_ui_bind(&self) -> Result<SocketAddr> {
-        parse_ui_addr(&self.ui.host, self.ui.port)
+        Ok(force_loopback_socket(parse_ui_addr(&self.ui.host, self.ui.port)?))
     }
 
     /// Keep the control panel on loopback. Network sharing binds llama-server instead.
@@ -339,33 +342,56 @@ impl Config {
         }
     }
 
-    /// Apply Network sharing listen scope to the managed llama-server bind + API key.
+    /// Apply Network sharing listen scope to the managed llama-server bind + API keys.
+    ///
+    /// Fail closed: if sharing is on but the scope cannot be resolved (e.g. Tailscale
+    /// missing), bind loopback so a previous `0.0.0.0` listen cannot linger.
     pub fn sync_llama_bind_from_network(&mut self) {
+        self.network.migrate_api_keys();
         match self.network.resolve_listen_host() {
             Ok(host) => {
                 self.server.host = host;
                 if self.network.expose {
-                    self.server.api_key = self.network.access_token.clone();
+                    // First key used for local probes / chat Authorization header.
+                    self.server.api_key = self
+                        .network
+                        .primary_api_key()
+                        .unwrap_or("")
+                        .to_string();
                 } else {
                     self.server.api_key.clear();
                 }
             }
-            Err(_) if !self.network.expose => {
-                self.server.host = "127.0.0.1".into();
-                self.server.api_key.clear();
-            }
             Err(_) => {
-                // Keep previous llama host; UI surfaces the listen error.
+                self.server.host = "127.0.0.1".into();
+                if self.network.expose {
+                    self.server.api_key = self
+                        .network
+                        .primary_api_key()
+                        .unwrap_or("")
+                        .to_string();
+                } else {
+                    self.server.api_key.clear();
+                }
             }
         }
     }
 
-    /// Older builds exposed the UI; migrate those configs to expose llama instead.
-    pub fn migrate_network_expose_to_llama(&mut self) {
-        self.keep_ui_private();
+    /// Secrets that should be passed to llama-server when sharing is on.
+    pub fn llama_api_keys(&self) -> Vec<String> {
         if self.network.expose {
-            self.sync_llama_bind_from_network();
+            self.network.api_key_secrets()
+        } else {
+            Vec::new()
         }
+    }
+
+    /// Older builds exposed the UI; migrate those configs to expose llama instead.
+    /// Always syncs the llama bind (fail closed to loopback when Share is off).
+    pub fn migrate_network_expose_to_llama(&mut self) {
+        self.network.migrate_api_keys();
+        self.keep_ui_private();
+        self.sync_llama_bind_from_network();
     }
 
     pub fn model_label(&self) -> String {
@@ -378,26 +404,37 @@ impl Config {
     }
 
     pub fn effective_host(&self) -> String {
-        let host = extra_option_value(&self.server.extra_args, "--host")
-            .unwrap_or_else(|| self.server.host.clone());
-        strip_brackets(host.trim()).to_string()
+        // Network sharing owns the bind. `extra_args --host` is rejected / stripped.
+        strip_brackets(self.server.host.trim()).to_string()
     }
 
     pub fn effective_port(&self) -> u16 {
-        extra_option_value(&self.server.extra_args, "--port")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(self.server.port)
+        // Configure owns the port. `extra_args --port` is rejected / stripped.
+        self.server.port
     }
 
     pub fn connect_host(&self) -> String {
         loopback_host(&self.effective_host())
     }
 
+    /// Browser-openable base URL for llama-server (never `0.0.0.0` / `::`).
     pub fn endpoint(&self) -> String {
         format!(
             "http://{}",
-            format_authority(&self.effective_host(), self.effective_port())
+            format_authority(&self.connect_host(), self.effective_port())
         )
+    }
+
+    /// Human-readable listen description (bind address may be all-interfaces).
+    pub fn listen_label(&self) -> String {
+        let bind = self.effective_host();
+        let port = self.effective_port();
+        let connect = self.connect_host();
+        if bind == "0.0.0.0" || bind == "::" {
+            format!("{bind}:{port} (open via {connect})")
+        } else {
+            format_authority(&bind, port)
+        }
     }
 
     pub fn api_endpoint(&self) -> String {
@@ -444,20 +481,29 @@ impl Config {
             errors.push("port must be between 1 and 65535".into());
         }
         if has_extra_option(&self.server.extra_args, "--host") {
-            match extra_option_value(&self.server.extra_args, "--host") {
-                None => errors.push("extra --host requires a value".into()),
-                Some(value) if value.trim().is_empty() || value.starts_with("--") => {
-                    errors.push("extra --host requires a valid value".into())
-                }
-                Some(_) => {}
-            }
+            errors.push(
+                "extra --host is not allowed; the listen address is set only in Network sharing"
+                    .into(),
+            );
         }
-        if has_extra_option(&self.server.extra_args, "--port")
-            && extra_option_value(&self.server.extra_args, "--port")
-                .and_then(|value| value.parse::<u16>().ok())
-                .is_none_or(|port| port == 0)
-        {
-            errors.push("extra --port must be between 1 and 65535".into());
+        if has_extra_option(&self.server.extra_args, "--port") {
+            errors.push(
+                "extra --port is not allowed; set the port in Configure".into(),
+            );
+        }
+        if has_extra_option(&self.server.extra_args, "--api-key") {
+            errors.push(
+                "extra --api-key is not allowed; manage keys in Network sharing when Share is on"
+                    .into(),
+            );
+        }
+        if self.network.expose {
+            if let Err(error) = self.network.resolve_listen_host() {
+                errors.push(error);
+            }
+            if self.llama_api_keys().is_empty() {
+                errors.push("sharing is on but no API keys are configured".into());
+            }
         }
         if self.runtime.context_size == 0 {
             errors.push("context size must be greater than zero".into());
@@ -614,6 +660,16 @@ fn loopback_host(host: &str) -> String {
     }
 }
 
+fn force_loopback_socket(addr: SocketAddr) -> SocketAddr {
+    if addr.ip().is_loopback() {
+        return addr;
+    }
+    match addr {
+        SocketAddr::V4(_) => SocketAddr::from(([127, 0, 0, 1], addr.port())),
+        SocketAddr::V6(_) => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], addr.port())),
+    }
+}
+
 fn format_authority(host: &str, port: u16) -> String {
     let host = strip_brackets(host);
     if host.contains(':') {
@@ -627,24 +683,6 @@ fn has_extra_option(args: &[String], option: &str) -> bool {
     let prefix = format!("{option}=");
     args.iter()
         .any(|argument| argument == option || argument.starts_with(&prefix))
-}
-
-fn extra_option_value(args: &[String], option: &str) -> Option<String> {
-    let prefix = format!("{option}=");
-    let mut value = None;
-    let mut index = 0;
-    while index < args.len() {
-        if args[index] == option {
-            value = args.get(index + 1).cloned();
-            index += 2;
-        } else if let Some(argument) = args[index].strip_prefix(&prefix) {
-            value = Some(argument.to_string());
-            index += 1;
-        } else {
-            index += 1;
-        }
-    }
-    value
 }
 
 fn valid_repository_id(id: &str) -> bool {
@@ -747,20 +785,68 @@ mod tests {
     fn copied_api_endpoint_is_connectable() {
         let mut config = Config::default();
         config.server.host = "0.0.0.0".into();
+        assert_eq!(config.endpoint(), "http://127.0.0.1:8080");
         assert_eq!(config.api_endpoint(), "http://127.0.0.1:8080/v1");
+        assert_eq!(
+            config.listen_label(),
+            "0.0.0.0:8080 (open via 127.0.0.1)"
+        );
         config.server.host = "::".into();
+        assert_eq!(config.endpoint(), "http://[::1]:8080");
         assert_eq!(config.api_endpoint(), "http://[::1]:8080/v1");
     }
 
     #[test]
-    fn effective_endpoint_honors_advanced_host_and_port_overrides() {
+    fn configure_owns_port_and_rejects_extra_bind_flags() {
         let mut config = Config::default();
-        config.server.extra_args = vec!["--host".into(), "::1".into(), "--port=9090".into()];
-        assert_eq!(config.effective_host(), "::1");
+        config.server.host = "127.0.0.1".into();
+        config.server.port = 9090;
         assert_eq!(config.effective_port(), 9090);
-        assert_eq!(config.endpoint(), "http://[::1]:9090");
-        assert_eq!(config.api_endpoint(), "http://[::1]:9090/v1");
+        assert_eq!(config.endpoint(), "http://127.0.0.1:9090");
+        assert_eq!(config.api_endpoint(), "http://127.0.0.1:9090/v1");
         assert!(config.validate().is_empty());
+
+        config.server.extra_args = vec!["--port=8080".into()];
+        assert!(
+            config
+                .validate()
+                .iter()
+                .any(|error| error.contains("extra --port"))
+        );
+        config.server.extra_args = vec!["--host".into(), "0.0.0.0".into()];
+        assert!(
+            config
+                .validate()
+                .iter()
+                .any(|error| error.contains("extra --host"))
+        );
+        config.server.extra_args = vec!["--api-key".into(), "secret".into()];
+        assert!(
+            config
+                .validate()
+                .iter()
+                .any(|error| error.contains("extra --api-key"))
+        );
+    }
+
+    #[test]
+    fn migrate_always_syncs_bind_when_share_off() {
+        let mut config = Config::default();
+        config.network.expose = false;
+        config.server.host = "0.0.0.0".into();
+        config.migrate_network_expose_to_llama();
+        assert_eq!(config.server.host, "127.0.0.1");
+    }
+
+    #[test]
+    fn sync_llama_bind_fails_closed_when_scope_unresolved() {
+        let mut config = Config::default();
+        config.network.expose = true;
+        config.network.listen_scope = crate::network::ListenScope::Custom;
+        config.network.listen_host.clear();
+        config.server.host = "0.0.0.0".into();
+        config.sync_llama_bind_from_network();
+        assert_eq!(config.server.host, "127.0.0.1");
     }
 
     #[test]
@@ -768,7 +854,7 @@ mod tests {
         let mut config = Config::default();
         config.model.source = ModelSource::HuggingFace("owner/model/extra".into());
         config.model.estimated_size_gib = f64::NAN;
-        config.server.extra_args = vec!["--port".into(), "not-a-port".into()];
+        config.server.extra_args = vec!["--threads".into(), "not-a-number".into()];
         let errors = config.validate();
         assert!(errors.iter().any(|error| error.contains("owner/model")));
         assert!(
@@ -776,7 +862,6 @@ mod tests {
                 .iter()
                 .any(|error| error.contains("estimated file size"))
         );
-        assert!(errors.iter().any(|error| error.contains("extra --port")));
     }
 
     #[test]
@@ -799,14 +884,15 @@ mod tests {
         let mut config = Config::default();
         config.ui.port = 4000;
         let cli = "192.168.1.10:5555".parse().unwrap();
+        // Non-loopback binds are forced back to loopback (same port) for UI privacy.
         assert_eq!(
             Config::resolve_ui_bind_with_env(Some(cli), Some("10.0.0.1:9".into()), &config)
                 .unwrap(),
-            cli
+            "127.0.0.1:5555".parse().unwrap()
         );
         assert_eq!(
             Config::resolve_ui_bind_with_env(None, Some("10.0.0.1:9".into()), &config).unwrap(),
-            "10.0.0.1:9".parse().unwrap()
+            "127.0.0.1:9".parse().unwrap()
         );
         assert_eq!(
             Config::resolve_ui_bind_with_env(None, None, &config).unwrap(),
@@ -841,10 +927,12 @@ mod tests {
         config.sync_llama_bind_from_network();
         assert_eq!(config.server.host, "192.168.1.50");
         assert_eq!(config.server.api_key, "secret-token");
+        assert_eq!(config.llama_api_keys(), vec!["secret-token".to_string()]);
         config.network.expose = false;
         config.sync_llama_bind_from_network();
         assert_eq!(config.server.host, "127.0.0.1");
         assert!(config.server.api_key.is_empty());
+        assert!(config.llama_api_keys().is_empty());
     }
 
     #[test]

@@ -25,7 +25,7 @@ use crate::{
     chat,
     config::RuntimePreset,
     network::{
-        DiscoveredPeer, InferenceMode, ListenCandidate, RemoteHealth, ShareUrl,
+        ApiKeyPublic, DiscoveredPeer, InferenceMode, ListenCandidate, RemoteHealth, ShareUrl,
         extract_request_token, is_loopback_addr, mask_token, token_matches,
     },
     server::ServerProcess,
@@ -53,6 +53,9 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/chat/completions", post(chat_completions))
         .route("/api/state", get(state))
         .route("/api/network", get(network_state).post(update_network))
+        .route("/api/network/keys", post(create_api_key))
+        .route("/api/network/keys/{id}", axum::routing::delete(delete_api_key).patch(rename_api_key))
+        .route("/api/network/keys/{id}/regenerate", post(regenerate_api_key))
         .route("/api/start", post(start))
         .route("/api/stop", post(stop))
         .route("/api/restart", post(restart))
@@ -216,9 +219,24 @@ async fn chat_completions(
         }
     };
 
-    let stream = if let Some((url, token)) = remote {
-        // Linked OpenAI-compatible LLM; agent skills stay on this machine only.
-        chat::stream_remote_completion(&url, &token, body)
+    let stream = if let Some((chat_url, token)) = remote {
+        // Linked OpenAI-compatible LLM. Agent skills still run on this machine;
+        // only model tokens go to the remote `/v1` base.
+        let api_base = chat_url
+            .trim_end_matches('/')
+            .strip_suffix("/chat/completions")
+            .unwrap_or(chat_url.trim_end_matches('/'))
+            .to_string();
+        let key = (!token.trim().is_empty()).then_some(token.as_str());
+        match serde_json::from_value::<AgentRequest>(body.clone()) {
+            Ok(request) if request.agent && request.skills.any_enabled() => {
+                if request.messages.is_empty() {
+                    return Err(ApiError::bad_request("messages must not be empty".into()));
+                }
+                agent::stream_agent(&api_base, key, request)
+            }
+            _ => chat::stream_remote_completion(&chat_url, &token, body),
+        }
     } else {
         let (api_base, api_key) = {
             let app = app.lock().map_err(|_| ApiError::lock())?;
@@ -286,12 +304,60 @@ async fn update_network(
     let result = app
         .apply_network_update(update)
         .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse {
-        restart_required: result.restart_required,
-        access_token: result.access_token,
-        network: NetworkState::from_app(&app),
-        state: AppState::from_app(&app),
-    }))
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateApiKeyBody {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameApiKeyBody {
+    name: String,
+}
+
+async fn create_api_key(
+    State(app): State<SharedApp>,
+    Json(body): Json<CreateApiKeyBody>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .create_api_key(&body.name)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+async fn rename_api_key(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+    Json(body): Json<RenameApiKeyBody>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .rename_api_key(&id, &body.name)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+async fn regenerate_api_key(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .regenerate_api_key(&id)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+}
+
+async fn delete_api_key(
+    State(app): State<SharedApp>,
+    Path(id): Path<String>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app.delete_api_key(&id).map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
 }
 
 async fn state(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
@@ -628,6 +694,7 @@ struct NetworkState {
     tailscale_available: bool,
     access_token_set: bool,
     access_token_masked: String,
+    api_keys: Vec<ApiKeyPublic>,
     device_name: String,
     inference_mode: &'static str,
     remote_base: String,
@@ -644,8 +711,21 @@ struct NetworkState {
 struct NetworkMutationResponse {
     restart_required: bool,
     access_token: Option<String>,
+    revealed_api_key_id: Option<String>,
     network: NetworkState,
     state: AppState,
+}
+
+impl NetworkMutationResponse {
+    fn from_result(app: &App, result: crate::app::NetworkUpdateResult) -> Self {
+        Self {
+            restart_required: result.restart_required,
+            access_token: result.access_token,
+            revealed_api_key_id: result.revealed_api_key_id,
+            network: NetworkState::from_app(app),
+            state: AppState::from_app(app),
+        }
+    }
 }
 
 impl NetworkState {
@@ -657,6 +737,7 @@ impl NetworkState {
         let candidates = app.listen_candidates();
         let tailscale_available = candidates.iter().any(|c| c.kind == "tailscale");
         let listen_bind_host = network.resolve_listen_host().ok();
+        let primary = network.primary_api_key().unwrap_or("");
         Self {
             expose: network.expose,
             listening_exposed: app.listening_exposed(),
@@ -670,8 +751,9 @@ impl NetworkState {
             listen_bind_error: app.listen_bind_error(),
             listen_candidates: candidates,
             tailscale_available,
-            access_token_set: !network.access_token.trim().is_empty(),
-            access_token_masked: mask_token(&network.access_token),
+            access_token_set: !primary.is_empty(),
+            access_token_masked: mask_token(primary),
+            api_keys: network.public_api_keys(),
             device_name: network.resolved_device_name(),
             inference_mode: network.inference_mode.as_str(),
             remote_base: network.remote_base.clone(),
@@ -724,8 +806,8 @@ impl NetworkSummary {
             remote_base: network.remote_base.clone(),
             remote_label,
             via_remote,
-            // Until Network tab probes, treat a configured remote as ready enough to send.
-            remote_ok: health.as_ref().map(|h| h.ok).unwrap_or(via_remote),
+            // Stay false until a probe succeeds — do not optimistically mark remotes ready.
+            remote_ok: health.as_ref().is_some_and(|h| h.ok),
             remote_model: health.as_ref().and_then(|h| h.model.clone()),
             remote_status: health.as_ref().and_then(|h| h.status.clone()),
         }

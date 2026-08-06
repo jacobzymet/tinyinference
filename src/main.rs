@@ -52,6 +52,8 @@ fn main() -> Result<()> {
     let config = Config::load(&config_path)?;
 
     if cli.print_command {
+        let mut config = config;
+        config.migrate_network_expose_to_llama();
         println!("{}", CommandSpec::from_config(&config).display());
         return Ok(());
     }
