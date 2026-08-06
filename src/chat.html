@@ -1027,16 +1027,72 @@
       padding: 0.45rem 0.65rem;
       font: inherit;
       font-size: var(--text-sm);
+      line-height: 1.25;
       cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
       transition: background var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+    }
+    .settings-nav-btn svg {
+      width: 1rem;
+      height: 1rem;
+      flex: 0 0 1rem;
+      display: block;
+      stroke: currentColor;
+      opacity: 0.8;
     }
     .settings-nav-btn:hover {
       background: var(--color-paper-2);
       color: var(--color-ink);
     }
+    .settings-nav-btn:hover svg,
+    .settings-nav-btn.is-active svg { opacity: 1; }
     .settings-nav-btn.is-active {
       background: color-mix(in oklch, var(--color-accent) 14%, var(--color-paper-2));
       color: var(--color-ink);
+    }
+    .settings-data-actions {
+      display: grid;
+      gap: 0.85rem;
+    }
+    .settings-data-card {
+      display: grid;
+      gap: 0.45rem;
+      padding: 0.85rem 0.95rem;
+      border: 1px solid var(--color-rule);
+      border-radius: 10px;
+      background: var(--color-paper-2);
+    }
+    .settings-data-card strong {
+      color: var(--color-ink);
+      font-weight: 600;
+      font-size: var(--text-sm);
+    }
+    .settings-data-card p {
+      margin: 0;
+      color: var(--color-muted);
+      font-size: var(--text-xs);
+      line-height: 1.45;
+    }
+    .settings-data-card .btn {
+      justify-self: start;
+      margin-top: 0.15rem;
+    }
+    .btn-danger-ghost {
+      background: transparent;
+      color: var(--color-danger);
+      border-color: color-mix(in oklch, var(--color-danger) 35%, var(--color-rule));
+    }
+    .btn-danger-ghost:hover:not(:disabled) {
+      border-color: var(--color-danger);
+      background: color-mix(in oklch, var(--color-danger) 8%, transparent);
+    }
+    .btn-danger-ghost:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      color: var(--color-muted);
+      border-color: var(--color-rule);
     }
     .settings-main {
       display: flex;
@@ -2003,13 +2059,38 @@
       <button type="button" class="dialog-close" id="btnSettingsClose" aria-label="Close">×</button>
       <aside class="settings-nav" aria-label="Settings sections">
         <p class="settings-nav-group">Settings</p>
-        <button type="button" class="settings-nav-btn is-active" data-settings-pane="personalization">Personalization</button>
-        <button type="button" class="settings-nav-btn" data-settings-pane="appearance">Appearance</button>
-        <button type="button" class="settings-nav-btn" data-settings-pane="thinking">Thinking</button>
-        <button type="button" class="settings-nav-btn" data-settings-pane="agent-capabilities">Agent Capabilities</button>
-        <button type="button" class="settings-nav-btn" data-settings-pane="skills">Skills</button>
-        <button type="button" class="settings-nav-btn" data-settings-pane="connectors">Connectors</button>
-        <button type="button" class="settings-nav-btn" data-settings-pane="composer">Composer</button>
+        <button type="button" class="settings-nav-btn is-active" data-settings-pane="personalization">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span>Personalization</span>
+        </button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="appearance">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          <span>Appearance</span>
+        </button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="thinking">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 1 6 6c0 2.2-1.2 3.8-2.5 5-.9.8-1.5 1.7-1.5 3h-4c0-1.3-.6-2.2-1.5-3C7.2 12.8 6 11.2 6 9a6 6 0 0 1 6-6Z"/><path d="M10 21h4"/></svg>
+          <span>Thinking</span>
+        </button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="agent-capabilities">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
+          <span>Agent Capabilities</span>
+        </button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="skills">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/></svg>
+          <span>Skills</span>
+        </button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="connectors">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+          <span>Connectors</span>
+        </button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="composer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          <span>Composer</span>
+        </button>
+        <button type="button" class="settings-nav-btn" data-settings-pane="data">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+          <span>Data</span>
+        </button>
       </aside>
       <div class="settings-main">
         <div class="settings-scroll" id="settingsScroll">
@@ -2219,6 +2300,31 @@
                 <input type="checkbox" id="settingEnterSends" checked>
                 <span>Enter sends message <span style="color:var(--color-muted)">(Shift+Enter for a new line)</span></span>
               </label>
+            </div>
+          </section>
+
+          <section class="settings-pane" data-settings-pane="data">
+            <h2 class="settings-pane-title">Data</h2>
+            <p class="settings-pane-lede">Chats and projects are stored in this browser only. Clearing cannot be undone.</p>
+            <p class="field-hint" id="settingsDataSummary" style="margin:0 0 0.85rem">—</p>
+            <div class="settings-section">
+              <div class="settings-data-actions">
+                <div class="settings-data-card">
+                  <strong>Clear all chats</strong>
+                  <p>Deletes every conversation. Projects stay; they just become empty.</p>
+                  <button type="button" class="btn btn-danger-ghost" id="btnClearChats">Clear chats</button>
+                </div>
+                <div class="settings-data-card">
+                  <strong>Clear all projects</strong>
+                  <p>Deletes every project. Chats inside them move back to Recents.</p>
+                  <button type="button" class="btn btn-danger-ghost" id="btnClearProjects">Clear projects</button>
+                </div>
+                <div class="settings-data-card">
+                  <strong>Clear chats and projects</strong>
+                  <p>Wipes all conversations and projects from this browser.</p>
+                  <button type="button" class="btn btn-danger-ghost" id="btnClearAllData">Clear everything</button>
+                </div>
+              </div>
             </div>
           </section>
         </div>
@@ -2854,6 +2960,79 @@
       });
       const scroll = document.getElementById('settingsScroll');
       if (scroll) scroll.scrollTop = 0;
+      if (pane === 'data') refreshSettingsDataSummary();
+    }
+
+    function refreshSettingsDataSummary() {
+      const el = document.getElementById('settingsDataSummary');
+      if (!el) return;
+      const chatCount = conversations.length;
+      const projectCount = projects.length;
+      const chatLabel = chatCount === 1 ? '1 chat' : chatCount + ' chats';
+      const projectLabel = projectCount === 1 ? '1 project' : projectCount + ' projects';
+      el.textContent = 'Stored here: ' + chatLabel + ' · ' + projectLabel + '.';
+      const clearChats = document.getElementById('btnClearChats');
+      const clearProjects = document.getElementById('btnClearProjects');
+      const clearAll = document.getElementById('btnClearAllData');
+      if (clearChats) clearChats.disabled = chatCount === 0;
+      if (clearProjects) clearProjects.disabled = projectCount === 0;
+      if (clearAll) clearAll.disabled = chatCount === 0 && projectCount === 0;
+    }
+
+    function abortActiveSend() {
+      if (controller) {
+        try { controller.abort(); } catch { /* ignore */ }
+        controller = null;
+      }
+      sending = false;
+    }
+
+    function clearAllChats() {
+      if (conversations.length === 0) return;
+      const n = conversations.length;
+      if (!confirm('Delete all ' + n + ' chat' + (n === 1 ? '' : 's') + '? This cannot be undone.')) return;
+      abortActiveSend();
+      conversations = [];
+      activeId = null;
+      saveStore();
+      startDraft();
+      renderSidebar();
+      if (mainView === 'projects') renderProjectsPage();
+      refreshSettingsDataSummary();
+    }
+
+    function clearAllProjects() {
+      if (projects.length === 0) return;
+      const n = projects.length;
+      if (!confirm('Delete all ' + n + ' project' + (n === 1 ? '' : 's') + '? Chats move back to Recents.')) return;
+      conversations.forEach((convo) => { convo.projectId = null; });
+      projects = [];
+      activeProjectId = null;
+      saveStore();
+      renderSidebar();
+      if (mainView === 'projects') renderProjectsPage();
+      else {
+        showChatView();
+        syncProjectChrome();
+      }
+      updateGreeting();
+      refreshSettingsDataSummary();
+    }
+
+    function clearAllChatsAndProjects() {
+      if (conversations.length === 0 && projects.length === 0) return;
+      if (!confirm('Delete all chats and projects from this browser? This cannot be undone.')) return;
+      abortActiveSend();
+      conversations = [];
+      projects = [];
+      activeId = null;
+      activeProjectId = null;
+      saveStore();
+      startDraft();
+      renderSidebar();
+      if (mainView === 'projects') renderProjectsPage();
+      updateGreeting();
+      refreshSettingsDataSummary();
     }
 
     function openSettings() {
@@ -4810,6 +4989,9 @@
     document.querySelectorAll('.settings-nav-btn').forEach((btn) => {
       btn.addEventListener('click', () => showSettingsPane(btn.dataset.settingsPane));
     });
+    document.getElementById('btnClearChats')?.addEventListener('click', clearAllChats);
+    document.getElementById('btnClearProjects')?.addEventListener('click', clearAllProjects);
+    document.getElementById('btnClearAllData')?.addEventListener('click', clearAllChatsAndProjects);
     document.querySelectorAll('#themeToggle [data-theme-choice]').forEach((btn) => {
       btn.addEventListener('click', () => setTheme(btn.dataset.themeChoice));
     });

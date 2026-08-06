@@ -578,10 +578,6 @@ fn split_endpoint(value: &str) -> Option<(IpAddr, u16)> {
     None
 }
 
-fn split_ip_port(value: &str) -> Option<(IpAddr, u16)> {
-    split_endpoint(value)
-}
-
 fn unix_secs(at: Instant) -> u64 {
     let now_wall = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -614,13 +610,6 @@ mod tests {
         let (ip, port) = split_endpoint("[fe80::1]:8080").unwrap();
         assert_eq!(ip.to_string(), "fe80::1");
         assert_eq!(port, 8080);
-    }
-
-    #[test]
-    fn split_ip_port_parses_v4() {
-        let (ip, port) = split_ip_port("10.0.0.151:52344").unwrap();
-        assert_eq!(ip.to_string(), "10.0.0.151");
-        assert_eq!(port, 52344);
     }
 
     #[cfg(windows)]
