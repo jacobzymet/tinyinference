@@ -65,6 +65,8 @@ pub enum UiTheme {
     #[default]
     Dark,
     Light,
+    /// Follow the OS light/dark preference (`prefers-color-scheme`).
+    System,
 }
 
 impl UiTheme {
@@ -72,6 +74,7 @@ impl UiTheme {
         match self {
             Self::Dark => "dark",
             Self::Light => "light",
+            Self::System => "system",
         }
     }
 
@@ -79,6 +82,7 @@ impl UiTheme {
         match value.trim().to_ascii_lowercase().as_str() {
             "dark" => Some(Self::Dark),
             "light" => Some(Self::Light),
+            "system" | "auto" => Some(Self::System),
             _ => None,
         }
     }

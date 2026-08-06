@@ -1994,6 +1994,7 @@
               <div class="segmented" id="themeToggle" role="tablist" aria-label="Theme">
                 <button type="button" data-theme-choice="dark" class="is-active" role="tab" aria-selected="true">Dark</button>
                 <button type="button" data-theme-choice="light" role="tab" aria-selected="false">Light</button>
+                <button type="button" data-theme-choice="system" role="tab" aria-selected="false">System</button>
               </div>
             </div>
             <div class="settings-section">
@@ -2297,24 +2298,50 @@
       'fira-code': '"Fira Code", ui-monospace, monospace',
     };
 
-    function markSrcForTheme(theme) {
-      return '/ti-transparent-bg-' + (theme === 'light' ? 'black' : 'white') + '.png';
+    function markSrcForTheme(resolved) {
+      return '/ti-transparent-bg-' + (resolved === 'light' ? 'black' : 'white') + '.png';
+    }
+
+    function normalizeThemePref(theme) {
+      if (theme === 'light' || theme === 'system') return theme;
+      return 'dark';
+    }
+
+    function resolveTheme(pref) {
+      if (pref === 'light') return 'light';
+      if (pref === 'system') {
+        return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      }
+      return 'dark';
     }
 
     function applyTheme(theme) {
-      const next = theme === 'light' ? 'light' : 'dark';
-      const changed = currentTheme !== next;
-      currentTheme = next;
-      document.documentElement.dataset.theme = next;
+      const pref = normalizeThemePref(theme);
+      const resolved = resolveTheme(pref);
+      const prevResolved = document.documentElement.dataset.theme;
+      currentTheme = pref;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.dataset.themePref = pref;
       document.querySelectorAll('img.wordmark-mark').forEach((img) => {
-        img.src = markSrcForTheme(next);
+        img.src = markSrcForTheme(resolved);
       });
       document.querySelectorAll('[data-theme-choice]').forEach((btn) => {
-        const active = btn.dataset.themeChoice === next;
+        const active = btn.dataset.themeChoice === pref;
         btn.classList.toggle('is-active', active);
         btn.setAttribute('aria-selected', active ? 'true' : 'false');
       });
-      if (changed && typeof repaintStarfield === 'function') repaintStarfield();
+      if (prevResolved !== resolved && typeof repaintStarfield === 'function') {
+        repaintStarfield();
+      }
+    }
+
+    if (window.matchMedia) {
+      const systemThemeMq = window.matchMedia('(prefers-color-scheme: light)');
+      const onSystemTheme = () => {
+        if (currentTheme === 'system') applyTheme('system');
+      };
+      if (systemThemeMq.addEventListener) systemThemeMq.addEventListener('change', onSystemTheme);
+      else if (systemThemeMq.addListener) systemThemeMq.addListener(onSystemTheme);
     }
 
     function applyFonts(appearance) {

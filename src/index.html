@@ -1215,6 +1215,7 @@
         <div class="segmented" id="themeToggle" role="tablist" aria-label="Theme">
           <button type="button" data-theme-choice="dark" class="is-active" role="tab" aria-selected="true">Dark</button>
           <button type="button" data-theme-choice="light" role="tab" aria-selected="false">Light</button>
+          <button type="button" data-theme-choice="system" role="tab" aria-selected="false">System</button>
         </div>
         <button type="button" class="btn btn-cmdk" id="btnCmdk" aria-haspopup="dialog">⌘K</button>
       </div>
@@ -1276,7 +1277,7 @@
           <div class="actions">
             <a class="btn" id="chatCtaDash" href="/chat">
               <canvas class="chat-cta-orb" id="chatCtaDashOrb" aria-hidden="true"></canvas>
-              <span>Open chat</span>
+              <span>tinyinference Chat</span>
             </a>
             <a id="openServerUi" class="btn btn-ghost" href="#" target="_blank" rel="noopener noreferrer">
               llama-server UI
@@ -1408,7 +1409,7 @@
             <label for="networkExposeToggle">Share LLM API</label>
           </div>
           <div id="networkScopeBlock" class="is-hidden">
-            <label class="field-label" for="networkListenScope">Who can reach this?</label>
+            <label class="field-label" for="networkListenScope">Listen on</label>
             <select class="field-select" id="networkListenScope">
               <option value="all">Wi‑Fi / LAN and Tailscale</option>
               <option value="tailscale">Tailscale only</option>
@@ -1539,6 +1540,17 @@
     </div>
   </div>
 
+  <div id="lanScopeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="lanScopeConfirmTitle">
+    <div class="dialog">
+      <h2 id="lanScopeConfirmTitle">Share on Wi‑Fi / LAN too?</h2>
+      <p>Binds on all interfaces (0.0.0.0). Anyone on your LAN who has an API key can use the model. Prefer Tailscale only when you can.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="btnCancelLanScope">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btnConfirmLanScope">Continue</button>
+      </div>
+    </div>
+  </div>
+
   <div id="addModelModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="addModelTitle">
     <div class="dialog" style="width:min(28rem,100%)">
       <h2 id="addModelTitle">Add a model</h2>
@@ -1601,22 +1613,46 @@
       'fira-code': '"Fira Code", ui-monospace, monospace',
     };
 
-    function markSrcForTheme(theme) {
-      return '/ti-transparent-bg-' + (theme === 'light' ? 'black' : 'white') + '.png';
+    function markSrcForTheme(resolved) {
+      return '/ti-transparent-bg-' + (resolved === 'light' ? 'black' : 'white') + '.png';
+    }
+
+    function normalizeThemePref(theme) {
+      if (theme === 'light' || theme === 'system') return theme;
+      return 'dark';
+    }
+
+    function resolveTheme(pref) {
+      if (pref === 'light') return 'light';
+      if (pref === 'system') {
+        return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      }
+      return 'dark';
     }
 
     function applyTheme(theme) {
-      const next = theme === 'light' ? 'light' : 'dark';
-      currentTheme = next;
-      document.documentElement.dataset.theme = next;
+      const pref = normalizeThemePref(theme);
+      const resolved = resolveTheme(pref);
+      currentTheme = pref;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.dataset.themePref = pref;
       document.querySelectorAll('img.wordmark-mark').forEach((img) => {
-        img.src = markSrcForTheme(next);
+        img.src = markSrcForTheme(resolved);
       });
       document.querySelectorAll('[data-theme-choice]').forEach((btn) => {
-        const active = btn.dataset.themeChoice === next;
+        const active = btn.dataset.themeChoice === pref;
         btn.classList.toggle('is-active', active);
         btn.setAttribute('aria-selected', active ? 'true' : 'false');
       });
+    }
+
+    if (window.matchMedia) {
+      const systemThemeMq = window.matchMedia('(prefers-color-scheme: light)');
+      const onSystemTheme = () => {
+        if (currentTheme === 'system') applyTheme('system');
+      };
+      if (systemThemeMq.addEventListener) systemThemeMq.addEventListener('change', onSystemTheme);
+      else if (systemThemeMq.addListener) systemThemeMq.addListener(onSystemTheme);
     }
 
     function applyFonts(appearance) {
@@ -3142,6 +3178,15 @@
           addModelModal.hide();
           return;
         }
+        if (!document.getElementById('exposeConfirmModal').classList.contains('is-hidden')) {
+          exposeModal.hide();
+          document.getElementById('networkExposeToggle').checked = !!networkState?.expose;
+          return;
+        }
+        if (!document.getElementById('lanScopeConfirmModal').classList.contains('is-hidden')) {
+          lanScopeModal.cancel();
+          return;
+        }
       }
     });
 
@@ -3156,6 +3201,14 @@
     const exposeModal = {
       show() { document.getElementById('exposeConfirmModal').classList.remove('is-hidden'); },
       hide() { document.getElementById('exposeConfirmModal').classList.add('is-hidden'); },
+    };
+    const lanScopeModal = {
+      show() { document.getElementById('lanScopeConfirmModal').classList.remove('is-hidden'); },
+      hide() { document.getElementById('lanScopeConfirmModal').classList.add('is-hidden'); },
+      cancel() {
+        this.hide();
+        document.getElementById('networkListenScope').value = networkState?.listen_scope || 'tailscale';
+      },
     };
 
     document.getElementById('networkExposeToggle').addEventListener('change', (event) => {
@@ -3182,16 +3235,26 @@
         showNetworkError(error);
       }
     });
+    document.getElementById('btnCancelLanScope').addEventListener('click', () => lanScopeModal.cancel());
+    document.getElementById('lanScopeConfirmModal').addEventListener('click', (event) => {
+      if (event.target.id === 'lanScopeConfirmModal') lanScopeModal.cancel();
+    });
+    document.getElementById('btnConfirmLanScope').addEventListener('click', async () => {
+      try {
+        await postNetwork({ listen_scope: 'all' });
+        lanScopeModal.hide();
+      } catch (error) {
+        lanScopeModal.cancel();
+        showNetworkError(error);
+      }
+    });
     document.getElementById('networkListenScope').addEventListener('change', (event) => {
       const listen_scope = event.target.value;
       if (listen_scope === 'all') {
-        const ok = window.confirm(
-          'Bind on all interfaces (0.0.0.0)? Anyone on your LAN who has an API key can use the model. Prefer Tailscale only when you can.'
-        );
-        if (!ok) {
-          event.target.value = networkState?.listen_scope || 'tailscale';
-          return;
-        }
+        // Native window.confirm is unreliable in the desktop webview — use an in-app modal.
+        event.target.value = networkState?.listen_scope || 'tailscale';
+        lanScopeModal.show();
+        return;
       }
       const body = { listen_scope };
       if (listen_scope === 'custom') {

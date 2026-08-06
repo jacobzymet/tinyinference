@@ -172,7 +172,7 @@ async fn set_ui_theme(
     Json(body): Json<ThemeRequest>,
 ) -> Result<Json<AppState>, ApiError> {
     let theme = crate::config::UiTheme::parse(&body.theme).ok_or_else(|| {
-        ApiError::bad_request("theme must be \"dark\" or \"light\"".into())
+        ApiError::bad_request("theme must be \"dark\", \"light\", or \"system\"".into())
     })?;
     with_app(app, |app| app.set_ui_theme(theme))
 }
@@ -184,7 +184,7 @@ async fn set_ui_appearance(
     let theme = match body.theme.as_deref() {
         None => None,
         Some(value) => Some(crate::config::UiTheme::parse(value).ok_or_else(|| {
-            ApiError::bad_request("theme must be \"dark\" or \"light\"".into())
+            ApiError::bad_request("theme must be \"dark\", \"light\", or \"system\"".into())
         })?),
     };
     let font_scale = match body.font_scale.as_deref() {
