@@ -1150,6 +1150,19 @@
       flex: 1 1 12rem;
       min-width: 0;
     }
+    .field-with-action {
+      display: flex;
+      align-items: stretch;
+      gap: 0.4rem;
+    }
+    .field-with-action .field-input {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .field-with-action .btn {
+      flex: 0 0 auto;
+      align-self: stretch;
+    }
     .network-token-row .network-mono {
       flex: 1 1 12rem;
       padding: 0.4rem 0.5rem;
@@ -1936,7 +1949,10 @@
       </div>
       <div id="addModelHfFields">
         <label class="field-label" for="addModelValueHf">Repository</label>
-        <input class="field-input" id="addModelValueHf" type="text" placeholder="owner/model or Hugging Face URL" autocomplete="off" spellcheck="false">
+        <div class="field-with-action">
+          <input class="field-input" id="addModelValueHf" type="text" placeholder="owner/model or Hugging Face URL" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn btn-ghost" id="btnPasteModelHf" title="Paste from clipboard">Paste</button>
+        </div>
         <div class="setting-hint">Paste owner/model, a quant tag like owner/model:Q4_K_M, or a huggingface.co link.</div>
         <label class="field-check">
           <input type="checkbox" id="addModelDownload" checked>
@@ -2138,8 +2154,10 @@
           const input = addModelKind === 'hugging_face'
             ? document.getElementById('addModelValueHf')
             : document.getElementById('addModelValueLocal');
-          input?.focus();
-          input?.select();
+          if (!input) return;
+          input.focus();
+          // Only select when prefilled — select-all can break paste in WebView2.
+          if (input.value) input.select();
         }, 40);
       },
       hide() {
@@ -4176,6 +4194,76 @@
     document.getElementById('addModelValueLocal').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); confirmAddModel(); }
     });
+    document.getElementById('btnPasteModelHf').addEventListener('click', async () => {
+      const input = document.getElementById('addModelValueHf');
+      const text = await readClipboardText();
+      if (text == null) {
+        showAddModelError(new Error('Could not read the clipboard. Try Ctrl+V, or paste into Notepad first then copy again.'));
+        return;
+      }
+      insertIntoEditable(input, text.trim());
+      document.getElementById('addModelError').classList.add('is-hidden');
+      input.focus();
+    });
+
+    /** WebView2 sometimes drops native paste into inputs — force-insert from clipboard. */
+    function isTextEditable(el) {
+      if (!el || el.disabled || el.readOnly) return false;
+      if (el.tagName === 'TEXTAREA') return true;
+      if (el.tagName !== 'INPUT') return false;
+      const type = (el.type || 'text').toLowerCase();
+      return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'color', 'range', 'hidden'].includes(type);
+    }
+
+    function insertIntoEditable(el, text) {
+      if (!el || typeof text !== 'string') return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const value = String(el.value ?? '');
+      el.value = value.slice(0, start) + text + value.slice(end);
+      const pos = start + text.length;
+      try { el.setSelectionRange(pos, pos); } catch (_) {}
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    async function readClipboardText() {
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          return await navigator.clipboard.readText();
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    document.addEventListener('paste', (event) => {
+      const el = event.target;
+      if (!isTextEditable(el)) return;
+      const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+      if (typeof text !== 'string') return;
+      // Force-insert — default paste is unreliable in the desktop webview.
+      event.preventDefault();
+      insertIntoEditable(el, text);
+    }, true);
+
+    // Backup when Ctrl/Cmd+V never raises a paste event (seen in some WebView2 builds).
+    document.addEventListener('keydown', (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'v') return;
+      if (event.altKey || event.shiftKey) return;
+      const el = event.target;
+      if (!isTextEditable(el)) return;
+      let sawPaste = false;
+      const mark = () => { sawPaste = true; };
+      el.addEventListener('paste', mark, { capture: true, once: true });
+      setTimeout(() => {
+        el.removeEventListener('paste', mark, true);
+        if (sawPaste) return;
+        void readClipboardText().then((text) => {
+          if (text == null) return;
+          insertIntoEditable(el, text);
+        });
+      }, 0);
+    }, true);
     document.getElementById('btnCancelDownload').addEventListener('click', async () => {
       try {
         clearModelsError();

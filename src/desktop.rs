@@ -19,6 +19,8 @@ use tao::{
     window::{Icon, WindowBuilder},
 };
 use wry::{NewWindowResponse, WebViewBuilder};
+#[cfg(windows)]
+use wry::WebViewBuilderExtWindows;
 
 use crate::{app::App, system::open_in_browser};
 
@@ -106,8 +108,9 @@ pub fn run(url: &str, app: Arc<Mutex<App>>) -> Result<()> {
     let nav_base = base.clone();
     let popup_base = base.clone();
 
-    let webview = WebViewBuilder::new()
+    let mut builder = WebViewBuilder::new()
         .with_url(url)
+        // Auto-allow clipboard-read permission (async Clipboard API).
         .with_clipboard(true)
         .with_navigation_handler(move |target| {
             if is_control_panel(&target, &nav_base) {
@@ -122,7 +125,15 @@ pub fn run(url: &str, app: Arc<Mutex<App>>) -> Result<()> {
                 hand_off(&target);
             }
             NewWindowResponse::Deny
-        })
+        });
+
+    #[cfg(windows)]
+    {
+        // Keep right-click Paste available; accelerator keys stay on for editing.
+        builder = builder.with_default_context_menus(true);
+    }
+
+    let webview = builder
         .build(&window)
         .context("could not create the control panel webview")?;
 
