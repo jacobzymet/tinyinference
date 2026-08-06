@@ -168,12 +168,14 @@ fn agent_system_block(skills: &AgentSkills) -> String {
         "<tool_call>".into(),
         r#"{"name":"SKILL_NAME","arguments":{...}}"#.into(),
         "</tool_call>".into(),
-        "Do not invent skill results. Wait for a <tool_result> message, then answer the user.".into(),
+        "Do not invent skill results. Wait for a <tool_result> message.".into(),
+        "You may call skills multiple times in sequence: after each <tool_result>, either emit another tool_call (for a follow-up search or different query) or reply normally with no tool_call.".into(),
+        "Prefer a follow-up tool_call when the first result is incomplete, stale, or misses what the user asked.".into(),
         "If you can answer without a skill, reply normally with no tool_call.".into(),
     ];
     if skills.web_search {
         lines.push(
-            "Available skill: web_search — search the public web via DuckDuckGo. Arguments: {\"query\":\"search terms\"}."
+            "Available skill: web_search — search the public web via DuckDuckGo. Arguments: {\"query\":\"search terms\"}. You can run several searches one after another when that helps."
                 .into(),
         );
     }
