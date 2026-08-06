@@ -928,6 +928,44 @@
     #modelsLaunchHint {
       margin: 0;
     }
+    #dashSpecsPanel.is-chat-linked #localModelBlock {
+      opacity: 0.72;
+      margin-top: var(--space-md);
+      padding-top: var(--space-md);
+      border-top: 1px solid var(--color-border, color-mix(in oklab, var(--color-fg) 12%, transparent));
+    }
+    #dashSpecsPanel.is-chat-linked #linkedSourceBlock {
+      opacity: 1;
+    }
+    .share-steps {
+      list-style: none;
+      margin: var(--space-sm) 0 0;
+      padding: 0;
+      display: grid;
+      gap: 0.35rem;
+      font-size: var(--text-sm);
+      color: var(--color-muted);
+    }
+    .share-steps li {
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+    }
+    .share-steps .step-n {
+      font-variant-numeric: tabular-nums;
+      color: var(--color-muted);
+      min-width: 1.1rem;
+    }
+    .share-steps li.is-done {
+      color: var(--color-ok, var(--color-fg));
+    }
+    .share-steps li.is-current {
+      color: var(--color-fg);
+      font-weight: 600;
+    }
+    .share-steps li.is-todo {
+      opacity: 0.7;
+    }
     @media (max-width: 40rem) {
       .model-card {
         grid-template-columns: 1fr;
@@ -1460,18 +1498,18 @@
     <div class="main">
       <header class="toolbar">
         <div class="toolbar-model">
-          <span class="eyebrow">Active model</span>
+          <span class="eyebrow" id="toolbarModelEyebrow">This PC</span>
           <div id="toolbarModel">—</div>
         </div>
         <div class="toolbar-actions">
           <span id="linkedBadge" class="status-chip linked-chip status-stopped is-hidden" title="Chat inference source">local</span>
-          <span id="statusBadge" class="status-chip status-stopped">
+          <span id="statusBadge" class="status-chip status-stopped" title="Local llama-server on this PC">
             <canvas id="statusBadgeOrb" class="status-chip-orb is-hidden" width="12" height="12" aria-hidden="true"></canvas>
             <span id="statusBadgeLabel">stopped</span>
           </span>
-          <button type="button" id="btnRestart" class="btn btn-ghost">Restart</button>
-          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden" title="Pick another model on the Models tab, then start it beside the ones already running">Start another model</button>
-          <button type="button" id="btnStartStop" class="btn btn-primary">Start</button>
+          <button type="button" id="btnRestart" class="btn btn-ghost" title="Restart the focused local llama-server">Restart</button>
+          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden" title="Go to Models, pick a different model, then start it beside the ones already running">Choose another model…</button>
+          <button type="button" id="btnStartStop" class="btn btn-primary" title="Start or stop llama-server on this PC">Start</button>
         </div>
       </header>
 
@@ -1514,8 +1552,8 @@
           </div>
           <div id="localModelBlock">
             <div id="localModelEyebrow" class="eyebrow is-hidden">
-              <span>This PC</span>
-              <span class="source-tag">local</span>
+              <span>This PC · local server</span>
+              <span class="source-tag">not chat</span>
             </div>
             <h2 id="modelLabel" class="model-title">—</h2>
             <dl class="spec-list">
@@ -1583,11 +1621,11 @@
         </div>
 
         <div class="panel active-model-card">
-          <div class="eyebrow">Next launch</div>
+          <div class="eyebrow">Selected to start</div>
           <h3 class="model-title" id="modelsActiveLabel">—</h3>
           <div id="modelsActiveMeta" class="model-card-meta"></div>
           <div class="size-panel">
-            <div class="eyebrow">Mapped file size</div>
+            <div class="eyebrow">Ready?</div>
             <div id="mappedSizeValue" class="size-value is-muted">—</div>
             <div id="mappedSizeDetail" class="setting-hint">—</div>
           </div>
@@ -1703,6 +1741,7 @@
             <input type="checkbox" id="networkExposeToggle">
             <label for="networkExposeToggle">Share LLM API</label>
           </div>
+          <ol id="networkShareSteps" class="share-steps is-hidden" aria-label="Share setup steps"></ol>
           <div id="networkScopeBlock" class="is-hidden">
             <label class="field-label" for="networkListenScope">Listen on</label>
             <select class="field-select" id="networkListenScope">
@@ -1858,7 +1897,7 @@
   <div id="exposeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="exposeConfirmTitle">
     <div class="dialog">
       <h2 id="exposeConfirmTitle">Share the LLM API?</h2>
-      <p>Only the model inference API is exposed — not the control panel, chat, or llama web UI. A local TLS proxy serves callers (self-signed cert; clients will warn until they trust it) and shows them in Connected now. Callers need an API key. Default bind is Tailscale only. Restart the model after enabling.</p>
+      <p>Only the model inference API is exposed — not the control panel, chat, or llama web UI. Callers use HTTPS with a self-signed cert (clients will warn until they trust it) and need an API key. Default bind is Tailscale only. Restart the model after enabling. Connected now lists who is calling.</p>
       <div class="dialog-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelExpose">Cancel</button>
         <button type="button" class="btn btn-primary" id="btnConfirmExpose">Continue</button>
@@ -2308,23 +2347,55 @@
       const chip = document.getElementById('networkStatusChip');
       const remoteSaved = !!(next.remote_saved || (next.remote_base && next.remote_base.trim()));
       const modeActive = next.inference_mode || 'local';
-      if (modeActive === 'remote' && remoteSaved) {
-        chip.textContent = next.remote_health?.ok ? 'chat → linked' : 'linked · check';
-        chip.className = next.remote_health?.ok
+      const chatLinked = modeActive === 'remote' && remoteSaved;
+      const sharePart = next.restart_required
+        ? 'restart model'
+        : (next.listening_exposed ? 'sharing' : (next.expose ? 'share on' : ''));
+      const linkName = next.remote_name || next.remote_label || 'linked';
+      const chatPart = chatLinked
+        ? (next.remote_health?.ok ? ('chat → ' + linkName) : 'linked · check')
+        : (remoteSaved ? 'link saved' : '');
+      if (sharePart && chatPart) {
+        chip.textContent = sharePart + ' · ' + chatPart;
+        chip.className = (next.listening_exposed && next.remote_health?.ok)
           ? 'status-chip status-ready'
           : 'status-chip status-starting';
-      } else if (next.listening_exposed) {
-        chip.textContent = next.restart_required ? 'restart LLM' : 'sharing';
-        chip.className = next.restart_required ? 'status-chip status-starting' : 'status-chip status-ready';
-      } else if (next.expose) {
-        chip.textContent = next.restart_required ? 'restart LLM' : 'share on';
-        chip.className = 'status-chip status-starting';
-      } else if (remoteSaved) {
-        chip.textContent = 'link saved';
-        chip.className = 'status-chip status-starting';
+      } else if (chatPart) {
+        chip.textContent = chatPart;
+        chip.className = (chatLinked && next.remote_health?.ok)
+          ? 'status-chip status-ready'
+          : 'status-chip status-starting';
+      } else if (sharePart) {
+        chip.textContent = sharePart;
+        chip.className = next.listening_exposed && !next.restart_required
+          ? 'status-chip status-ready'
+          : 'status-chip status-starting';
       } else {
         chip.textContent = 'local only';
         chip.className = 'status-chip status-stopped';
+      }
+
+      const steps = document.getElementById('networkShareSteps');
+      if (steps) {
+        if (!next.expose) {
+          steps.classList.add('is-hidden');
+          steps.innerHTML = '';
+        } else {
+          steps.classList.remove('is-hidden');
+          const step1Done = true;
+          const step2Done = !!next.listening_exposed && !next.restart_required;
+          const step2Current = !step2Done;
+          const step3Done = !!next.listening_exposed && !next.restart_required;
+          const cls = (done, current) => done ? 'is-done' : (current ? 'is-current' : 'is-todo');
+          steps.innerHTML = `
+            <li class="${cls(step1Done, false)}"><span class="step-n">1</span><span>Share on</span></li>
+            <li class="${cls(step2Done, step2Current)}"><span class="step-n">2</span><span>${
+              next.restart_required ? 'Restart the model' : (next.listening_exposed ? 'Model listening' : 'Start the model')
+            }</span></li>
+            <li class="${cls(step3Done, false)}"><span class="step-n">3</span><span>${
+              step3Done ? 'Endpoints live below' : 'Endpoints appear when listening'
+            }</span></li>`;
+        }
       }
 
       const toggle = document.getElementById('networkExposeToggle');
@@ -2334,10 +2405,10 @@
       document.getElementById('networkShareBlock').classList.toggle('is-hidden', !next.expose);
       const llamaHint = document.getElementById('networkLlamaHint');
       if (next.expose && next.listening_exposed) {
-        llamaHint.textContent = 'Model stays on this PC (loopback). Share proxy serves the public HTTPS endpoints below.';
+        llamaHint.textContent = 'llama-server is listening with HTTPS + API keys. Endpoints below are what other devices link to.';
         llamaHint.classList.remove('is-hidden');
       } else if (next.expose) {
-        llamaHint.textContent = 'Start the model server after changing who can reach this.';
+        llamaHint.textContent = 'Share is on — start or restart the model so Endpoints become reachable.';
         llamaHint.classList.remove('is-hidden');
       } else {
         llamaHint.textContent = '';
@@ -2754,9 +2825,13 @@
       }
       block.classList.remove('is-hidden');
       block.classList.toggle('is-active-source', !viaRemote);
-      const nextHint = servers.length > 1
-        ? 'Multiple local models are live. Focus picks which one Chat / the dashboard use; Stop ends only that instance.'
-        : 'To run a different model at the same time: Models → select it → Start alongside.';
+      const nextHint = viaRemote
+        ? (servers.length > 1
+          ? 'Chat is using a linked device. Focus only changes which local server the dashboard shows; Stop ends that local instance.'
+          : 'Chat is using a linked device. This row is the local server on this PC — not what Chat talks to.')
+        : (servers.length > 1
+          ? 'Multiple local models are live. Focus picks which one Chat and the dashboard use; Stop ends only that instance.'
+          : 'To run a different model at the same time: Models → select it → Start alongside.');
       if (hint && hint.textContent !== nextHint) hint.textContent = nextHint;
       // Stable signature — skip DOM rewrite on poll ticks so Focus/Stop stay clickable.
       const signature = servers.map((server) => [
@@ -2769,13 +2844,17 @@
       ].join('\x1f')).join('\x1e');
       if (list.dataset.signature === signature) return;
       list.dataset.signature = signature;
+      const focusLabel = viaRemote ? 'Focus dash' : 'Focus';
+      const focusTitle = viaRemote
+        ? 'Shows this local server on the dashboard. Chat still uses the linked device until you switch to This PC.'
+        : 'Use this local server for Chat and the dashboard.';
       list.innerHTML = servers.map((server) => `
         <li class="${server.active ? 'is-active' : ''}">
           <div class="network-meta">
             <strong>${escapeHtml(server.model)}</strong>
             <span>local · :${server.port} · ${escapeHtml(server.status_label)}${server.active ? ' · focused' : ''}${viaRemote ? ' · chat uses linked' : ''}</span>
           </div>
-          <button type="button" class="btn btn-ghost" data-server-action="select" data-server-id="${escapeHtml(server.id)}" ${server.active ? 'disabled' : ''}>Focus</button>
+          <button type="button" class="btn btn-ghost" data-server-action="select" data-server-id="${escapeHtml(server.id)}" title="${escapeHtml(focusTitle)}" ${server.active ? 'disabled' : ''}>${focusLabel}</button>
           <button type="button" class="btn btn-ghost" data-server-action="stop" data-server-id="${escapeHtml(server.id)}">Stop</button>
         </li>`).join('');
     }
@@ -2859,10 +2938,10 @@
           useLinked.textContent = 'In use for chat';
         } else if (count > 1) {
           useLinked.disabled = false;
-          useLinked.textContent = 'Choose in Devices';
+          useLinked.textContent = 'Choose which link…';
         } else if (!net.remote_ok && !models.length) {
           useLinked.disabled = false;
-          useLinked.textContent = 'Fix in Devices';
+          useLinked.textContent = 'Fix link on Devices';
         } else {
           useLinked.disabled = false;
           useLinked.textContent = 'Use for chat';
@@ -2870,7 +2949,10 @@
       }
       if (useLocal) {
         useLocal.disabled = !via;
-        useLocal.textContent = 'Use this PC';
+        useLocal.textContent = via ? 'Chat on this PC' : 'Use this PC';
+        useLocal.title = via
+          ? 'Route Chat back to the local llama-server on this PC'
+          : 'Chat already uses this PC';
       }
     }
 
@@ -2928,7 +3010,7 @@
             </div>
           </div>
           <div class="model-card-actions">
-            <a class="btn btn-primary" href="/chat">Open Chat</a>
+            <a class="btn btn-ghost" href="/chat" title="Opens Chat — pick this name in the model selector">${via ? 'Open in Chat' : 'Open Chat'}</a>
           </div>
         </article>
       `).join('');
@@ -2945,14 +3027,21 @@
         return;
       }
       badge.classList.remove('is-hidden');
+      const shareBit = net.listening_exposed
+        ? 'sharing'
+        : (net.expose ? 'share on' : '');
       if (via) {
         const label = net.remote_name || net.remote_model || net.remote_label || 'linked';
-        badge.textContent = net.remote_ok ? ('chat → ' + label) : 'linked · unreachable';
+        const chatBit = net.remote_ok ? ('chat → ' + label) : 'linked · unreachable';
+        badge.textContent = shareBit ? (shareBit + ' · ' + chatBit) : chatBit;
         badge.className = 'status-chip linked-chip ' + (net.remote_ok ? 'status-ready' : 'status-failed');
-        badge.title = 'Chat is routed to a linked LLM';
+        badge.title = shareBit
+          ? 'This PC is sharing, and Chat is routed to a linked LLM'
+          : 'Chat is routed to a linked LLM';
       } else if (saved) {
         const count = net.remote_count || 1;
-        badge.textContent = count > 1 ? (count + ' links') : 'link saved';
+        const linkBit = count > 1 ? (count + ' links') : 'link saved';
+        badge.textContent = shareBit ? (shareBit + ' · ' + linkBit) : linkBit;
         badge.className = 'status-chip linked-chip status-starting';
         badge.title = 'Linked LLMs are saved; chat still uses this PC';
       } else if (net.listening_exposed) {
@@ -3003,14 +3092,22 @@
       const startStop = document.getElementById('btnStartStop');
       const startAnother = document.getElementById('btnStartAnother');
       const count = next.running_server_count || (next.running ? 1 : 0);
-      startStop.textContent = next.running ? 'Stop' : 'Start';
-      startStop.className = next.running ? 'btn btn-danger' : 'btn btn-primary';
-      startAnother.classList.toggle('is-hidden', count < 1);
-      startAnother.disabled = false;
-      startAnother.textContent = 'Start another model';
-
       const net = next.network || {};
       const viaRemote = !!net.via_remote;
+      startStop.textContent = next.running ? 'Stop' : 'Start';
+      if (viaRemote) {
+        startStop.className = next.running ? 'btn btn-ghost' : 'btn btn-ghost';
+        startStop.title = 'Controls this PC’s local llama-server — Chat is using a linked device';
+      } else {
+        startStop.className = next.running ? 'btn btn-danger' : 'btn btn-primary';
+        startStop.title = next.running
+          ? 'Stop the focused local llama-server'
+          : 'Start llama-server on this PC with the selected model';
+      }
+      startAnother.classList.toggle('is-hidden', count < 1);
+      startAnother.disabled = false;
+      startAnother.textContent = 'Choose another model…';
+
       const localEyebrow = document.getElementById('localModelEyebrow');
       // Specs are always this PC’s llama — linked identity lives in linkedSourceBlock.
       document.getElementById('modelLabel').textContent = next.model || '—';
@@ -3020,8 +3117,13 @@
       const specsPanel = document.getElementById('dashSpecsPanel');
       if (specsPanel) {
         specsPanel.classList.toggle('is-active-source', viaRemote);
+        specsPanel.classList.toggle('is-chat-linked', viaRemote);
       }
+      const toolbarEyebrow = document.getElementById('toolbarModelEyebrow');
       const toolbarModel = document.getElementById('toolbarModel');
+      if (toolbarEyebrow) {
+        toolbarEyebrow.textContent = viaRemote ? 'Chat source' : 'This PC';
+      }
       if (toolbarModel) {
         if (viaRemote) {
           toolbarModel.textContent = (net.remote_model || 'Linked LLM') + ' · via ' + (net.remote_name || net.remote_label || 'peer');
@@ -3030,6 +3132,14 @@
         } else {
           toolbarModel.textContent = next.model || '—';
         }
+      }
+      if (badge) {
+        badge.title = viaRemote
+          ? ('Local llama-server: ' + next.status_label + ' (Chat uses linked)')
+          : ('Local llama-server: ' + next.status_label);
+      }
+      if (badgeLabel && viaRemote) {
+        badgeLabel.textContent = 'local · ' + next.status_label;
       }
       renderLinkedBadge(next);
       renderLinkedSource(next);
@@ -3041,9 +3151,27 @@
           : next.mapped_size.display + ' · ' + next.mapped_size.detail;
 
       const sizeValue = document.getElementById('mappedSizeValue');
-      sizeValue.textContent = next.mapped_size.display;
-      sizeValue.classList.toggle('is-muted', next.mapped_size.gib == null);
-      document.getElementById('mappedSizeDetail').textContent = next.mapped_size.detail;
+      const sizeDetail = document.getElementById('mappedSizeDetail');
+      const selectedLib = libraryModels(next).find((model) => model.selected);
+      if (!next.has_active_model) {
+        sizeValue.textContent = 'No model selected';
+        sizeValue.classList.add('is-muted');
+        sizeDetail.textContent = 'Add or select a model from your library.';
+      } else if (selectedLib?.downloading) {
+        sizeValue.textContent = 'Downloading…';
+        sizeValue.classList.remove('is-muted');
+        sizeDetail.textContent = next.library_download?.progress || 'Fetching weights into the local cache.';
+      } else if (selectedLib && !selectedLib.on_disk) {
+        sizeValue.textContent = 'Needs download';
+        sizeValue.classList.remove('is-muted');
+        sizeDetail.textContent = (next.mapped_size.display || 'Size unknown')
+          + ' · download from the library card before starting.';
+      } else {
+        sizeValue.textContent = 'On disk · ' + (next.mapped_size.display || '—');
+        sizeValue.classList.toggle('is-muted', next.mapped_size.gib == null);
+        sizeDetail.textContent = next.mapped_size.detail
+          || 'Ready to start with the current Configure preset.';
+      }
       document.getElementById('ramLine').textContent =
         next.machine.available_gib.toFixed(1) + ' GiB available · ' + next.machine.total_gib.toFixed(1) + ' GiB total';
       document.getElementById('runtimeLine').textContent = next.machine.runtime_summary;
@@ -3059,6 +3187,21 @@
       openUi.href = next.endpoint;
       openUi.classList.toggle('is-disabled', !next.running);
       openUi.setAttribute('aria-disabled', next.running ? 'false' : 'true');
+      const chatDash = document.getElementById('chatCtaDash');
+      if (chatDash) {
+        // Linked block already has the primary Open Chat when chat is remote.
+        chatDash.classList.toggle('is-hidden', viaRemote);
+      }
+      const copyEndpoint = document.getElementById('btnCopyEndpoint');
+      const copyCommand = document.getElementById('btnCopyCommand');
+      if (copyEndpoint) {
+        copyEndpoint.title = viaRemote
+          ? 'Copies this PC’s local /v1 URL (not the linked Chat source)'
+          : 'Copy OpenAI-compatible /v1 URL';
+      }
+      if (copyCommand) {
+        copyCommand.title = 'Copy the local llama-server launch command';
+      }
 
       const downloadBlock = document.getElementById('downloadBlock');
       if (next.download) {
@@ -3117,7 +3260,7 @@
       if (model.size_display) {
         pills.push(`<span class="model-pill" data-size-pill>${escapeHtml(model.size_display)}</span>`);
       }
-      if (model.selected) pills.push('<span class="model-pill is-accent">Next launch</span>');
+      if (model.selected) pills.push('<span class="model-pill is-accent">Selected to start</span>');
       if (next && runningServers(next).some((server) => server.model === model.label)) {
         pills.push('<span class="model-pill is-ok">Running</span>');
       }
@@ -3318,12 +3461,9 @@
           actions.push(`<button type="button" class="btn btn-primary" data-action="download" data-id="${escapeHtml(id)}">Download</button>`);
         }
         if (!model.selected) {
-          const selectLabel = (next.running || (next.running_server_count || 0) > 0)
-            ? 'Select to start'
-            : 'Select';
-          actions.push(`<button type="button" class="btn btn-ghost" data-action="use" data-id="${escapeHtml(id)}">${selectLabel}</button>`);
+          actions.push(`<button type="button" class="btn btn-ghost" data-action="use" data-id="${escapeHtml(id)}">Select</button>`);
         } else {
-          actions.push('<button type="button" class="btn btn-ghost" disabled>Next launch</button>');
+          actions.push('<button type="button" class="btn btn-ghost" disabled>Selected</button>');
         }
         actions.push(`<button type="button" class="btn btn-ghost" data-action="delete" data-id="${escapeHtml(id)}" ${model.deletable ? '' : 'disabled'}>Remove</button>`);
       }
@@ -3804,7 +3944,7 @@
         { label: 'Go to Stats', hint: '6', run: () => showStage('stats') },
         { label: 'Add model', hint: '', run: () => { showStage('models'); addModelModal.show(); } },
         { label: state?.running ? 'Stop llama-server' : 'Start llama-server', hint: 'S', run: () => document.getElementById('btnStartStop').click() },
-        { label: 'Start another model', hint: '', run: () => document.getElementById('btnStartAnother').click() },
+        { label: 'Choose another model…', hint: '', run: () => document.getElementById('btnStartAnother').click() },
         { label: 'Restart llama-server', hint: 'R', run: () => document.getElementById('btnRestart').click() },
         { label: 'Copy /v1 URL', hint: '', run: () => document.getElementById('btnCopyEndpoint').click() },
         { label: 'Copy launch command', hint: '', run: () => document.getElementById('btnCopyCommand').click() },

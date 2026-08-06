@@ -1,0 +1,104 @@
+name: Release
+
+# Builds one self-contained binary per OS (HTML/JS/assets are compiled in).
+# Trigger: push a version tag (v0.3.1) or run manually from the Actions tab.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: tinyinference-windows-x86_64.exe
+            features: desktop
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: tinyinference-macos-aarch64
+            features: desktop
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: tinyinference-macos-x86_64
+            features: desktop
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: tinyinference-linux-x86_64
+            features: desktop
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: tinyinference-linux-x86_64-headless
+            features: ""
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux desktop deps
+        if: runner.os == 'Linux' && matrix.features == 'desktop'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libgtk-3-dev librsvg2-dev patchelf
+
+      - name: Build release
+        shell: bash
+        run: |
+          set -euo pipefail
+          FEATURE_ARGS=()
+          if [[ -z "${{ matrix.features }}" ]]; then
+            FEATURE_ARGS+=(--no-default-features)
+          else
+            FEATURE_ARGS+=(--features "${{ matrix.features }}")
+          fi
+          cargo build --release --locked --target "${{ matrix.target }}" "${FEATURE_ARGS[@]}"
+          mkdir -p dist
+          BIN="target/${{ matrix.target }}/release/tinyinference"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            BIN="${BIN}.exe"
+          fi
+          cp "$BIN" "dist/${{ matrix.artifact }}"
+          if [[ "${{ runner.os }}" != "Windows" ]]; then
+            chmod +x "dist/${{ matrix.artifact }}"
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

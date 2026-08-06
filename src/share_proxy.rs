@@ -243,67 +243,343 @@ fn list_established_peers(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, Str
     }
     #[cfg(windows)]
     {
-        list_peers_netstat(local_ports)
+        list_peers_windows(local_ports)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        list_peers_netstat(local_ports)
+        list_peers_macos(local_ports)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        list_peers_linux(local_ports)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = local_ports;
+        Err("connected-client listing is not supported on this OS".into())
     }
 }
 
-fn list_peers_netstat(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
+#[cfg(windows)]
+fn list_peers_windows(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
     let output = Command::new("netstat")
         .args(["-ano", "-p", "TCP"])
         .output()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("netstat: {error}"))?;
     if !output.status.success() && output.stdout.is_empty() {
         return Err("netstat failed".into());
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_windows_netstat(
+        &String::from_utf8_lossy(&output.stdout),
+        local_ports,
+    ))
+}
+
+#[cfg(windows)]
+fn parse_windows_netstat(text: &str, local_ports: &[u16]) -> Vec<(IpAddr, u16)> {
     let wanted: std::collections::HashSet<u16> = local_ports.iter().copied().collect();
     let mut peers = Vec::new();
     for line in text.lines() {
         let line = line.trim();
-        if !line.starts_with("TCP") {
+        if !line.to_ascii_uppercase().starts_with("TCP") {
             continue;
         }
         let cols: Vec<&str> = line.split_whitespace().collect();
         if cols.len() < 4 {
             continue;
         }
-        let state = cols[3];
-        if !state.eq_ignore_ascii_case("ESTABLISHED") {
+        if !cols[3].eq_ignore_ascii_case("ESTABLISHED") {
             continue;
         }
-        let Some((local_ip, local_port)) = split_ip_port(cols[1]) else {
+        let Some((_, local_port)) = split_endpoint(cols[1]) else {
             continue;
         };
         if !wanted.contains(&local_port) {
             continue;
         }
-        let Some((remote_ip, _)) = split_ip_port(cols[2]) else {
+        let Some((remote_ip, _)) = split_endpoint(cols[2]) else {
             continue;
         };
         if remote_ip.is_unspecified() || remote_ip.is_loopback() {
             continue;
         }
-        // Ignore our own listen-side weirdness; require a real peer.
-        let _ = local_ip;
         peers.push((remote_ip, local_port));
     }
-    peers.sort_by_key(|(ip, port)| (ip.to_string(), *port));
-    peers.dedup();
-    Ok(peers)
+    finish_peers(peers)
 }
 
-fn split_ip_port(value: &str) -> Option<(IpAddr, u16)> {
-    // netstat uses 10.0.0.1:8080 or [fe80::1]:8080
+/// Prefer `lsof` (clear `host:port->peer:port` lines); fall back to BSD `netstat`.
+#[cfg(target_os = "macos")]
+fn list_peers_macos(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
+    match list_peers_lsof(local_ports) {
+        Ok(peers) => Ok(peers),
+        Err(lsof_err) => list_peers_bsd_netstat(local_ports)
+            .map_err(|netstat_err| format!("lsof: {lsof_err}; netstat: {netstat_err}")),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn list_peers_linux(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
+    match list_peers_ss(local_ports) {
+        Ok(peers) => Ok(peers),
+        Err(ss_err) => list_peers_linux_netstat(local_ports)
+            .map_err(|netstat_err| format!("ss: {ss_err}; netstat: {netstat_err}")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn list_peers_lsof(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
+    let output = Command::new("lsof")
+        .args(["-nP", "-iTCP", "-sTCP:ESTABLISHED"])
+        .output()
+        .map_err(|error| error.to_string())?;
+    // lsof exits 1 when there are no matching sockets — still parse stdout.
+    if output.stdout.is_empty() && !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(if stderr.trim().is_empty() {
+            "no output".into()
+        } else {
+            stderr.trim().to_string()
+        });
+    }
+    Ok(parse_lsof(
+        &String::from_utf8_lossy(&output.stdout),
+        local_ports,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn parse_lsof(text: &str, local_ports: &[u16]) -> Vec<(IpAddr, u16)> {
+    let wanted: std::collections::HashSet<u16> = local_ports.iter().copied().collect();
+    let mut peers = Vec::new();
+    for line in text.lines() {
+        // NAME column looks like: 10.0.0.187:8080->10.0.0.151:52344 (ESTABLISHED)
+        let Some(name) = line.split_whitespace().last() else {
+            continue;
+        };
+        let name = name
+            .strip_suffix("(ESTABLISHED)")
+            .unwrap_or(name)
+            .trim();
+        let Some((local, remote)) = name.split_once("->") else {
+            continue;
+        };
+        let Some((_, local_port)) = split_endpoint(local) else {
+            continue;
+        };
+        if !wanted.contains(&local_port) {
+            continue;
+        }
+        let Some((remote_ip, _)) = split_endpoint(remote) else {
+            continue;
+        };
+        if remote_ip.is_unspecified() || remote_ip.is_loopback() {
+            continue;
+        }
+        peers.push((remote_ip, local_port));
+    }
+    finish_peers(peers)
+}
+
+#[cfg(target_os = "macos")]
+fn list_peers_bsd_netstat(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
+    let output = Command::new("netstat")
+        .args(["-an", "-p", "tcp"])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.stdout.is_empty() && !output.status.success() {
+        // Older macOS: -p may be unsupported; try plain -an.
+        let fallback = Command::new("netstat")
+            .args(["-an"])
+            .output()
+            .map_err(|error| error.to_string())?;
+        if fallback.stdout.is_empty() && !fallback.status.success() {
+            return Err("failed".into());
+        }
+        return Ok(parse_bsd_netstat(
+            &String::from_utf8_lossy(&fallback.stdout),
+            local_ports,
+        ));
+    }
+    Ok(parse_bsd_netstat(
+        &String::from_utf8_lossy(&output.stdout),
+        local_ports,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn parse_bsd_netstat(text: &str, local_ports: &[u16]) -> Vec<(IpAddr, u16)> {
+    let wanted: std::collections::HashSet<u16> = local_ports.iter().copied().collect();
+    let mut peers = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let lower = line.to_ascii_lowercase();
+        if !(lower.starts_with("tcp") || lower.starts_with("tcp4") || lower.starts_with("tcp6")) {
+            continue;
+        }
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 6 {
+            continue;
+        }
+        // Proto Recv-Q Send-Q Local Address Foreign Address (state)
+        let state = cols[cols.len() - 1];
+        if !state.eq_ignore_ascii_case("ESTABLISHED") {
+            continue;
+        }
+        let local = cols[3];
+        let remote = cols[4];
+        let Some((_, local_port)) = split_endpoint(local) else {
+            continue;
+        };
+        if !wanted.contains(&local_port) {
+            continue;
+        }
+        let Some((remote_ip, _)) = split_endpoint(remote) else {
+            continue;
+        };
+        if remote_ip.is_unspecified() || remote_ip.is_loopback() {
+            continue;
+        }
+        peers.push((remote_ip, local_port));
+    }
+    finish_peers(peers)
+}
+
+#[cfg(target_os = "linux")]
+fn list_peers_ss(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
+    let output = Command::new("ss")
+        .args(["-Htn", "state", "established"])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.stdout.is_empty() && !output.status.success() {
+        return Err("failed".into());
+    }
+    Ok(parse_ss(
+        &String::from_utf8_lossy(&output.stdout),
+        local_ports,
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_ss(text: &str, local_ports: &[u16]) -> Vec<(IpAddr, u16)> {
+    let wanted: std::collections::HashSet<u16> = local_ports.iter().copied().collect();
+    let mut peers = Vec::new();
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        // Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port
+        // or with -H: State Recv-Q Send-Q Local Peer
+        if cols.len() < 5 {
+            continue;
+        }
+        let (local, remote) = if cols[0].eq_ignore_ascii_case("tcp") {
+            if cols.len() < 6 {
+                continue;
+            }
+            (cols[4], cols[5])
+        } else {
+            (cols[3], cols[4])
+        };
+        let Some((_, local_port)) = split_endpoint(local) else {
+            continue;
+        };
+        if !wanted.contains(&local_port) {
+            continue;
+        }
+        let Some((remote_ip, _)) = split_endpoint(remote) else {
+            continue;
+        };
+        if remote_ip.is_unspecified() || remote_ip.is_loopback() {
+            continue;
+        }
+        peers.push((remote_ip, local_port));
+    }
+    finish_peers(peers)
+}
+
+#[cfg(target_os = "linux")]
+fn list_peers_linux_netstat(local_ports: &[u16]) -> Result<Vec<(IpAddr, u16)>, String> {
+    let output = Command::new("netstat")
+        .args(["-tn"])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.stdout.is_empty() && !output.status.success() {
+        return Err("failed".into());
+    }
+    // Linux netstat uses the Windows-like host:port shape.
+    Ok(parse_windows_netstat_shape(
+        &String::from_utf8_lossy(&output.stdout),
+        local_ports,
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_windows_netstat_shape(text: &str, local_ports: &[u16]) -> Vec<(IpAddr, u16)> {
+    let wanted: std::collections::HashSet<u16> = local_ports.iter().copied().collect();
+    let mut peers = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.to_ascii_lowercase().starts_with("tcp") {
+            continue;
+        }
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 6 {
+            continue;
+        }
+        if !cols[5].eq_ignore_ascii_case("ESTABLISHED") {
+            continue;
+        }
+        let Some((_, local_port)) = split_endpoint(cols[3]) else {
+            continue;
+        };
+        if !wanted.contains(&local_port) {
+            continue;
+        }
+        let Some((remote_ip, _)) = split_endpoint(cols[4]) else {
+            continue;
+        };
+        if remote_ip.is_unspecified() || remote_ip.is_loopback() {
+            continue;
+        }
+        peers.push((remote_ip, local_port));
+    }
+    finish_peers(peers)
+}
+
+fn finish_peers(mut peers: Vec<(IpAddr, u16)>) -> Vec<(IpAddr, u16)> {
+    peers.sort_by_key(|(ip, port)| (ip.to_string(), *port));
+    peers.dedup();
+    peers
+}
+
+/// Parse `10.0.0.1:8080`, `[fe80::1]:8080`, or BSD `10.0.0.1.8080` / `fe80::1.8080`.
+fn split_endpoint(value: &str) -> Option<(IpAddr, u16)> {
+    let value = value.trim().trim_end_matches(['*', '/']);
+    if value.is_empty() || value.starts_with('*') {
+        return None;
+    }
     if let Some(rest) = value.strip_prefix('[') {
         let (ip, port) = rest.split_once("]:")?;
         return Some((ip.parse().ok()?, port.parse().ok()?));
     }
-    let (ip, port) = value.rsplit_once(':')?;
-    Some((ip.parse().ok()?, port.parse().ok()?))
+    // host:port (IPv4 or bracket-free — IPv6 without brackets is uncommon here)
+    if let Some((host, port)) = value.rsplit_once(':') {
+        if !host.contains(':') {
+            if let (Ok(ip), Ok(port)) = (host.parse::<IpAddr>(), port.parse::<u16>()) {
+                return Some((ip, port));
+            }
+        }
+    }
+    // BSD netstat: a.b.c.d.port or v6addr.port
+    if let Some((host, port)) = value.rsplit_once('.') {
+        if let (Ok(ip), Ok(port)) = (host.parse::<IpAddr>(), port.parse::<u16>()) {
+            return Some((ip, port));
+        }
+    }
+    None
+}
+
+fn split_ip_port(value: &str) -> Option<(IpAddr, u16)> {
+    split_endpoint(value)
 }
 
 fn unix_secs(at: Instant) -> u64 {
@@ -320,9 +596,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn split_endpoint_parses_colon_v4() {
+        let (ip, port) = split_endpoint("10.0.0.151:52344").unwrap();
+        assert_eq!(ip.to_string(), "10.0.0.151");
+        assert_eq!(port, 52344);
+    }
+
+    #[test]
+    fn split_endpoint_parses_bsd_dotted_v4() {
+        let (ip, port) = split_endpoint("10.0.0.187.8080").unwrap();
+        assert_eq!(ip.to_string(), "10.0.0.187");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn split_endpoint_parses_bracket_v6() {
+        let (ip, port) = split_endpoint("[fe80::1]:8080").unwrap();
+        assert_eq!(ip.to_string(), "fe80::1");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
     fn split_ip_port_parses_v4() {
         let (ip, port) = split_ip_port("10.0.0.151:52344").unwrap();
         assert_eq!(ip.to_string(), "10.0.0.151");
         assert_eq!(port, 52344);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_netstat_extracts_peer() {
+        let text = "\
+  TCP    10.0.0.187:8080    10.0.0.151:52344    ESTABLISHED    1234
+  TCP    0.0.0.0:8080       0.0.0.0:0           LISTENING      1234
+";
+        let peers = parse_windows_netstat(text, &[8080]);
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].0.to_string(), "10.0.0.151");
+        assert_eq!(peers[0].1, 8080);
     }
 }

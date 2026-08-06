@@ -1761,6 +1761,7 @@ impl IntoResponse for ApiError {
     }
 }
 
+// Compile-time embed: the release binary ships alone — no HTML/JS/PNG sidecars.
 const INDEX_HTML: &str = include_str!("index.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 const ORB_JS: &str = include_str!("orb.js");

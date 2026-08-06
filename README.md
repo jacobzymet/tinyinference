@@ -93,24 +93,52 @@ cargo build --release --no-default-features
 
 ## Build
 
-Build an optimized executable:
+The release binary is **self-contained**: control-panel HTML, chat HTML, `orb.js`,
+and icons are compiled into the executable (`include_str!` / `include_bytes!` in
+`src/web.rs`). You ship one file — nothing else from this repo needs to sit
+beside it (you still need `llama-server` on the machine).
+
+### This machine
+
+```powershell
+# Windows
+.\scripts\build-release.ps1
+.\dist\tinyinference-windows-x86_64.exe
+```
+
+```sh
+# macOS / Linux
+./scripts/build-release.sh
+./dist/tinyinference-macos-aarch64   # or linux-x86_64, etc.
+```
+
+Or plain Cargo:
 
 ```powershell
 cargo build --release
 ```
 
-Run it on Windows:
+### Windows + macOS + Linux
 
-```powershell
-.\target\release\tinyinference.exe
-```
+Cross-building every OS from one laptop is unreliable (macOS especially needs a
+Mac). The **Release** GitHub Action builds all of them:
 
-On macOS or Linux, use:
+| Artifact | Notes |
+| --- | --- |
+| `tinyinference-windows-x86_64.exe` | Desktop window (WebView2) |
+| `tinyinference-macos-aarch64` | Apple Silicon |
+| `tinyinference-macos-x86_64` | Intel Mac |
+| `tinyinference-linux-x86_64` | Desktop (WebKitGTK) |
+| `tinyinference-linux-x86_64-headless` | No window deps (`--no-default-features`) |
 
 ```sh
-./target/release/tinyinference
-```
+# Manual run (uploads artifacts; tagging also publishes a GitHub Release)
+gh workflow run release.yml
 
+# Or push a version tag
+git tag v0.3.1
+git push origin v0.3.1
+```
 ## Configuration
 
 Open the **Models** tab to manage your model library. Open **Configure** for the
