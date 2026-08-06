@@ -11,6 +11,8 @@ use anyhow::{Context, Result, bail};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
+use crate::network::NetworkConfig;
+
 pub const DEFAULT_MODEL: &str = "ggml-org/gpt-oss-120b-GGUF";
 pub const DEFAULT_UI_HOST: &str = "127.0.0.1";
 pub const DEFAULT_UI_PORT: u16 = 3920;
@@ -47,6 +49,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub model: ModelConfig,
     pub runtime: RuntimeConfig,
+    pub network: NetworkConfig,
     pub recent_models: Vec<ModelSource>,
 }
 
@@ -296,8 +299,8 @@ impl Config {
 
     /// Resolve the UI listen address before the web server starts.
     ///
-    /// Priority: `--bind` CLI flag, then `TINYINFERENCE_BIND`, then `[ui]` in
-    /// the config file, then the built-in default.
+    /// Priority: `--bind` CLI flag, then `TINYINFERENCE_BIND`, then
+    /// `[network].expose` → `0.0.0.0:port`, then `[ui]` in the config file.
     pub fn resolve_ui_bind(cli_bind: Option<SocketAddr>, config: &Self) -> Result<SocketAddr> {
         Self::resolve_ui_bind_with_env(cli_bind, std::env::var("TINYINFERENCE_BIND").ok(), config)
     }
@@ -317,7 +320,19 @@ impl Config {
                     .with_context(|| format!("invalid TINYINFERENCE_BIND value: {raw}"));
             }
         }
+        if config.network.expose {
+            return parse_ui_addr("0.0.0.0", config.ui.port);
+        }
         config.ui_addr()
+    }
+
+    /// Desired UI bind after applying expose (ignores CLI/env overrides).
+    pub fn desired_ui_bind(&self) -> Result<SocketAddr> {
+        if self.network.expose {
+            parse_ui_addr("0.0.0.0", self.ui.port)
+        } else {
+            self.ui_addr()
+        }
     }
 
     pub fn model_label(&self) -> String {
@@ -763,6 +778,22 @@ mod tests {
         assert_eq!(
             Config::resolve_ui_bind_with_env(None, None, &config).unwrap(),
             "127.0.0.1:4000".parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn resolve_ui_bind_exposes_all_interfaces_when_enabled() {
+        let mut config = Config::default();
+        config.ui.port = 3920;
+        config.network.expose = true;
+        assert_eq!(
+            Config::resolve_ui_bind_with_env(None, None, &config).unwrap(),
+            "0.0.0.0:3920".parse().unwrap()
+        );
+        let cli = "127.0.0.1:3920".parse().unwrap();
+        assert_eq!(
+            Config::resolve_ui_bind_with_env(Some(cli), None, &config).unwrap(),
+            cli
         );
     }
 

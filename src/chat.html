@@ -1797,6 +1797,21 @@
     /* ================================================================
      * Chat
      * ================================================================ */
+    (function persistAccessToken() {
+      const params = new URLSearchParams(location.search);
+      const token = params.get('token');
+      if (!token) return;
+      sessionStorage.setItem('tinyinference_token', token);
+      params.delete('token');
+      const query = params.toString();
+      history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
+    })();
+
+    function accessHeaders() {
+      const token = sessionStorage.getItem('tinyinference_token');
+      return token ? { Authorization: 'Bearer ' + token } : {};
+    }
+
     const STORAGE_KEY = 'tinyinference.chat.v1';
     const SETTINGS_KEY = 'tinyinference.chat.settings.v1';
     const DEFAULT_SETTINGS = {
@@ -3254,23 +3269,46 @@
     }
 
     function updateServerChip(data) {
-      serverChip.className = 'status-chip status-' + data.status;
-      serverChip.textContent = data.status_label;
-      serverReady = data.status === 'ready';
+      const network = data.network || {};
+      const viaRemote = !!network.via_remote;
+      const remoteOk = !!network.remote_ok;
+      const modelName = viaRemote
+        ? (network.remote_model || data.model || 'remote model')
+        : data.model;
+      const statusLabel = viaRemote
+        ? (remoteOk ? (network.remote_status || 'ready') : 'unreachable')
+        : data.status_label;
+      const statusClass = viaRemote
+        ? (remoteOk ? 'ready' : 'failed')
+        : data.status;
+
+      serverChip.className = 'status-chip status-' + statusClass;
+      serverChip.textContent = viaRemote
+        ? (remoteOk ? 'via ' + (network.remote_label || 'peer') : 'remote unreachable')
+        : statusLabel;
+      serverReady = viaRemote ? remoteOk : data.status === 'ready';
+
       const project = inProjectChat() ? getProject(activeProjectId) : null;
+      const viaSuffix = viaRemote && network.remote_label
+        ? ' · via ' + network.remote_label
+        : '';
       if (!serverReady) {
-        modelHintEl.textContent = project && !activeId
-          ? 'Shared instructions and memory apply · model is ' + data.status_label + '.'
-          : 'Model server is ' + data.status_label + '.';
-        composerHint.textContent = 'Start the model on the control panel to chat.';
+        modelHintEl.textContent = viaRemote
+          ? ('Linked device is ' + statusLabel + '.')
+          : (project && !activeId
+            ? 'Shared instructions and memory apply · model is ' + data.status_label + '.'
+            : 'Model server is ' + data.status_label + '.');
+        composerHint.textContent = viaRemote
+          ? 'Check the Network tab: remote URL, token, and that the peer model is started.'
+          : 'Start the model on the control panel to chat.';
         composerHint.classList.add('is-warn');
       } else if (project && !activeId) {
-        modelHintEl.textContent = 'Shared instructions & memory apply · ' + data.model;
+        modelHintEl.textContent = 'Shared instructions & memory apply · ' + modelName + viaSuffix;
         updateComposerHint();
       } else {
         modelHintEl.textContent = project
-          ? 'Chatting with ' + data.model + ' · Project: ' + project.name
-          : 'Chatting with ' + data.model;
+          ? 'Chatting with ' + modelName + ' · Project: ' + project.name + viaSuffix
+          : 'Chatting with ' + modelName + viaSuffix;
         updateComposerHint();
       }
       updateSendEnabled();
@@ -3278,7 +3316,7 @@
 
     async function pollState() {
       try {
-        const response = await fetch('/api/state');
+        const response = await fetch('/api/state', { headers: accessHeaders() });
         if (!response.ok) return;
         updateServerChip(await response.json());
       } catch {
@@ -3483,7 +3521,10 @@
       try {
         const response = await fetch('/api/chat/completions', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            ...accessHeaders(),
+          },
           body: JSON.stringify(requestBody),
           signal: controller.signal,
         });

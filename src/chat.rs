@@ -33,47 +33,81 @@ pub fn stream_completion(api_base: &str, mut payload: serde_json::Value) -> Chat
                 .entry("model")
                 .or_insert_with(|| serde_json::json!("local"));
         }
+        proxy_sse_post(&url, None, &payload, &tx, "llama-server");
+    });
+    ReceiverStream::new(rx)
+}
 
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(REQUEST_TIMEOUT))
-            .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .new_agent();
+/// Proxy a chat/agent request to another tinyinference instance's
+/// `/api/chat/completions` endpoint (keeps the peer's agent loop authoritative).
+pub fn stream_remote_completion(
+    remote_url: &str,
+    token: &str,
+    payload: serde_json::Value,
+) -> ChatStream {
+    let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+    let url = remote_url.to_string();
+    let token = token.trim().to_string();
+    thread::spawn(move || {
+        let auth = if token.is_empty() {
+            None
+        } else {
+            Some(format!("Bearer {token}"))
+        };
+        proxy_sse_post(&url, auth.as_deref(), &payload, &tx, "remote tinyinference");
+    });
+    ReceiverStream::new(rx)
+}
 
-        match agent.post(&url).send_json(&payload) {
-            Ok(mut response) => {
-                if response.status() != 200 {
-                    let status = response.status();
-                    let body = response.body_mut().read_to_string().unwrap_or_default();
-                    let _ = tx.blocking_send(Ok(sse_error(&format!(
-                        "llama-server responded with {status}: {body}"
-                    ))));
-                    return;
-                }
-                let mut reader = response.body_mut().as_reader();
-                let mut buffer = [0u8; 8192];
-                loop {
-                    match reader.read(&mut buffer) {
-                        Ok(0) => break,
-                        Ok(read) => {
-                            if tx.blocking_send(Ok(buffer[..read].to_vec())).is_err() {
-                                // Client disconnected; stop reading from llama-server.
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            let _ = tx.blocking_send(Ok(sse_error(&error.to_string())));
+fn proxy_sse_post(
+    url: &str,
+    authorization: Option<&str>,
+    payload: &serde_json::Value,
+    tx: &mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+    upstream_label: &str,
+) {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(REQUEST_TIMEOUT))
+        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .new_agent();
+
+    let mut request = agent.post(url);
+    if let Some(header) = authorization {
+        request = request.header("Authorization", header);
+    }
+
+    match request.send_json(payload) {
+        Ok(mut response) => {
+            if response.status() != 200 {
+                let status = response.status();
+                let body = response.body_mut().read_to_string().unwrap_or_default();
+                let _ = tx.blocking_send(Ok(sse_error(&format!(
+                    "{upstream_label} responded with {status}: {body}"
+                ))));
+                return;
+            }
+            let mut reader = response.body_mut().as_reader();
+            let mut buffer = [0u8; 8192];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        if tx.blocking_send(Ok(buffer[..read].to_vec())).is_err() {
                             break;
                         }
                     }
+                    Err(error) => {
+                        let _ = tx.blocking_send(Ok(sse_error(&error.to_string())));
+                        break;
+                    }
                 }
             }
-            Err(error) => {
-                let _ = tx.blocking_send(Ok(sse_error(&error.to_string())));
-            }
         }
-    });
-    ReceiverStream::new(rx)
+        Err(error) => {
+            let _ = tx.blocking_send(Ok(sse_error(&error.to_string())));
+        }
+    }
 }
 
 pub(crate) fn sse_error(message: &str) -> Vec<u8> {

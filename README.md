@@ -176,12 +176,15 @@ the browser clipboard API, with a system clipboard fallback via `clip.exe` on
 Windows, `pbcopy` on macOS, and `wl-copy`, `xclip`, or `xsel` on Linux.
 
 The tinyinference server binds to `127.0.0.1:3920` by default (override with
-`--bind`, `TINYINFERENCE_BIND`, or `[ui]` in the config). It has no
-authentication: anything that can reach it can drive the model, read the logs,
-and change the configuration — running it in a window does not hide it from the
-network. The managed `llama-server` binds to `127.0.0.1:8080` by default and is
-likewise unauthenticated. Configure authentication and firewalling before
-exposing either to a network.
+`--bind`, `TINYINFERENCE_BIND`, or `[ui]` in the config). Use the **Network**
+tab to opt in to LAN / Tailscale sharing: that rebinds the control panel and
+chat to `0.0.0.0` (restart required), generates an access token, and leaves the
+managed `llama-server` on loopback. When exposed, `/api/*` requests from
+non-loopback clients must send `Authorization: Bearer <token>` (or
+`X-Tinyinference-Token`). Share links include `?token=` so a phone browser can
+store it once. There is still no login account — anyone with the URL and token
+can chat and change settings. You can also link another tinyinference instance
+(manual URL or mDNS on the same LAN) so local chat runs inference on that peer.
 
 ## How low-RAM operation works
 

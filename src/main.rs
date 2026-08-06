@@ -78,6 +78,7 @@ fn main() -> Result<()> {
     };
 
     let mut app = App::new(config, config_path);
+    app.set_listen_addr(bind);
     if cli.start {
         app.start();
     }

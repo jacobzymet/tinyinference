@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    net::SocketAddr,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -13,6 +14,9 @@ use crate::{
     },
     fetch::{self, FetchEvent},
     hub,
+    network::{
+        self, DiscoveredPeer, HealthCache, InferenceMode, NetworkDiscovery, RemoteHealth, ShareUrl,
+    },
     server::{
         CommandSpec, PendingProbe, ProbeResult, ServerEvent, ServerMetrics, ServerProcess,
         SlotsSnapshot, parse_log_throughput, probe_async,
@@ -21,6 +25,22 @@ use crate::{
 };
 
 const MAX_LOG_LINES: usize = 2_000;
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct NetworkUpdate {
+    pub expose: Option<bool>,
+    pub regenerate_token: Option<bool>,
+    pub inference_mode: Option<String>,
+    pub remote_base: Option<String>,
+    pub remote_token: Option<String>,
+    pub device_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NetworkUpdateResult {
+    pub restart_required: bool,
+    pub access_token: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerEntry {
@@ -572,6 +592,10 @@ pub struct App {
     /// so a second launch can surface the running instance instead of starting
     /// a rival server. Boxed rather than typed so `app` stays windowing-agnostic.
     focus_hook: Option<Box<dyn Fn() + Send + Sync>>,
+    /// Address the HTTP server actually bound at process start.
+    listen_addr: Option<SocketAddr>,
+    discovery: NetworkDiscovery,
+    remote_health: HealthCache,
 }
 
 impl App {
@@ -615,6 +639,9 @@ impl App {
             last_slots_at: None,
             last_slots_decoded: None,
             live_generated_tps: None,
+            listen_addr: None,
+            discovery: NetworkDiscovery::new(),
+            remote_health: HealthCache::default(),
             last_throughput_at: None,
             discovered_models: Vec::new(),
             pending_discover: Some(cache::discover_models_async()),
@@ -647,6 +674,150 @@ impl App {
             }
             None => false,
         }
+    }
+
+    pub fn set_listen_addr(&mut self, addr: SocketAddr) {
+        self.listen_addr = Some(addr);
+        self.sync_mdns_advertise();
+    }
+
+    pub fn listen_addr(&self) -> Option<SocketAddr> {
+        self.listen_addr
+    }
+
+    pub fn listening_exposed(&self) -> bool {
+        self.listen_addr
+            .is_some_and(|addr| !addr.ip().is_loopback())
+    }
+
+    pub fn network_restart_required(&self) -> bool {
+        match self.config.desired_ui_bind() {
+            Ok(desired) => self.listen_addr.is_some_and(|bound| {
+                let desired_exposed = !desired.ip().is_loopback();
+                let bound_exposed = !bound.ip().is_loopback();
+                desired_exposed != bound_exposed || desired.port() != bound.port()
+            }),
+            Err(_) => false,
+        }
+    }
+
+    pub fn sync_mdns_advertise(&self) {
+        // Advertise only when config wants expose AND we are actually listening
+        // on a non-loopback address (post-restart).
+        let expose = self.config.network.expose && self.listening_exposed();
+        let port = self
+            .listen_addr
+            .map(|addr| addr.port())
+            .unwrap_or(self.config.ui.port);
+        self.discovery.sync_advertise(
+            expose,
+            &self.config.network.resolved_device_name(),
+            port,
+        );
+    }
+
+    pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
+        let self_name = self.config.network.resolved_device_name();
+        let port = self
+            .listen_addr
+            .map(|a| a.port())
+            .unwrap_or(self.config.ui.port);
+        self.discovery
+            .discovered_peers()
+            .into_iter()
+            .filter(|peer| !(peer.name.eq_ignore_ascii_case(&self_name) && peer.port == port))
+            .collect()
+    }
+
+    pub fn network_share_urls(&self) -> Vec<ShareUrl> {
+        let port = self.config.ui.port;
+        let token = self.config.network.access_token.as_str();
+        let mut urls = network::lan_share_urls(port, token);
+        urls.extend(network::tailscale_urls(port, token));
+        urls
+    }
+
+    pub fn remote_health(&self) -> Option<RemoteHealth> {
+        let base = self.config.network.remote_base.trim();
+        if base.is_empty() {
+            return None;
+        }
+        Some(
+            self.remote_health
+                .probe(base, self.config.network.remote_token.trim()),
+        )
+    }
+
+    /// Cached peer health only — safe for high-frequency `/api/state` polls.
+    pub fn remote_health_cached(&self) -> Option<RemoteHealth> {
+        let base = self.config.network.remote_base.trim();
+        if base.is_empty() {
+            return None;
+        }
+        self.remote_health
+            .peek(base, self.config.network.remote_token.trim())
+    }
+
+    pub fn apply_network_update(
+        &mut self,
+        update: NetworkUpdate,
+    ) -> Result<NetworkUpdateResult, String> {
+        let mut restart_required = false;
+        let mut token_revealed: Option<String> = None;
+
+        if let Some(expose) = update.expose {
+            if expose != self.config.network.expose {
+                self.config.network.expose = expose;
+                if expose {
+                    self.config.ui.host = "0.0.0.0".into();
+                    if self.config.network.ensure_token() {
+                        token_revealed = Some(self.config.network.access_token.clone());
+                    }
+                } else {
+                    self.config.ui.host = crate::config::DEFAULT_UI_HOST.into();
+                }
+                restart_required = true;
+            }
+        }
+
+        if update.regenerate_token.unwrap_or(false) {
+            self.config.network.regenerate_token();
+            token_revealed = Some(self.config.network.access_token.clone());
+        }
+
+        if let Some(mode) = update.inference_mode.as_deref() {
+            let Some(parsed) = InferenceMode::parse(mode) else {
+                return Err("inference_mode must be \"local\" or \"remote\"".into());
+            };
+            self.config.network.inference_mode = parsed;
+        }
+
+        if let Some(base) = update.remote_base {
+            self.config.network.remote_base = base.trim().trim_end_matches('/').to_string();
+        }
+
+        if let Some(token) = update.remote_token {
+            self.config.network.remote_token = token;
+        }
+
+        if let Some(name) = update.device_name {
+            self.config.network.device_name = name.trim().to_string();
+        }
+
+        self.config
+            .save(&self.config_path)
+            .map_err(|error| format!("could not save config: {error:#}"))?;
+        self.sync_mdns_advertise();
+        self.push_log(format!(
+            "network updated (expose={}, mode={})",
+            self.config.network.expose,
+            self.config.network.inference_mode.as_str()
+        ));
+
+        Ok(NetworkUpdateResult {
+            restart_required: restart_required || self.network_restart_required(),
+            access_token: token_revealed,
+        })
     }
 
     pub fn displayed_config(&self) -> &Config {

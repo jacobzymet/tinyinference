@@ -20,6 +20,9 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.9"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
 wry = { version = "0.55", optional = true }
+mdns-sd = "0.20.3"
+local-ip-address = "0.6.13"
+getrandom = "0.4.3"
 
 [dev-dependencies]
 tempfile = "3.23"

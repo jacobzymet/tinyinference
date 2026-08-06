@@ -736,6 +736,53 @@
       }
       .model-card-actions { justify-content: flex-start; }
     }
+    .network-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .network-list li {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem 0.6rem;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid var(--color-rule);
+      border-radius: var(--radius-panel);
+      background: var(--color-graphite-2);
+    }
+    .network-list .network-meta {
+      flex: 1 1 10rem;
+      min-width: 0;
+    }
+    .network-list .network-meta strong {
+      display: block;
+      color: var(--color-ink);
+      font-size: var(--text-sm);
+    }
+    .network-list .network-meta span,
+    .network-mono {
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      color: var(--color-ink-2);
+      word-break: break-all;
+    }
+    .network-token-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .network-token-row .network-mono {
+      flex: 1 1 12rem;
+      padding: 0.4rem 0.5rem;
+      border: 1px solid var(--color-rule);
+      border-radius: var(--radius-input);
+      background: var(--color-graphite);
+    }
     .segmented {
       display: inline-flex;
       border: 1px solid var(--color-rule);
@@ -873,6 +920,7 @@
         <li><button type="button" class="is-active" data-stage="dashboard" role="tab" aria-selected="true">Dash</button></li>
         <li><button type="button" data-stage="models" role="tab" aria-selected="false">Models</button></li>
         <li><button type="button" data-stage="configure" role="tab" aria-selected="false">Config</button></li>
+        <li><button type="button" data-stage="network" role="tab" aria-selected="false">Network</button></li>
         <li><button type="button" data-stage="logs" role="tab" aria-selected="false">Logs</button></li>
         <li><button type="button" data-stage="stats" role="tab" aria-selected="false">Stats</button></li>
       </ul>
@@ -1040,6 +1088,71 @@
       </div>
     </section>
 
+    <section id="network" class="stage-panel is-hidden reveal" data-stage-panel>
+      <div class="stage-head">
+        <h2>Network</h2>
+        <div class="mast-actions">
+          <span id="networkStatusChip" class="status-chip status-stopped">local only</span>
+        </div>
+      </div>
+      <div class="stack" style="gap:var(--space-md)">
+        <div class="panel stack-md">
+          <div class="eyebrow">This device</div>
+          <div class="field-switch">
+            <input type="checkbox" id="networkExposeToggle">
+            <label for="networkExposeToggle">Expose on LAN / Tailscale</label>
+          </div>
+          <p class="setting-hint">Shares the control panel and chat only. llama-server stays on loopback. Anyone with the URL and access token can chat and change settings.</p>
+          <div id="networkRestartBanner" class="preset-warning is-hidden" role="status">Restart tinyinference to apply the new listen address.</div>
+          <div id="networkShareBlock" class="stack-md is-hidden">
+            <div>
+              <div class="field-label">Access token</div>
+              <div class="network-token-row">
+                <code id="networkTokenDisplay" class="network-mono">—</code>
+                <button type="button" class="btn btn-ghost" id="btnCopyToken">Copy</button>
+                <button type="button" class="btn btn-ghost" id="btnRegenToken">Regenerate</button>
+              </div>
+              <p id="networkTokenHint" class="setting-hint">Token is shown once after enable or regenerate. Store it safely.</p>
+            </div>
+            <div>
+              <div class="field-label">Share links</div>
+              <ul id="networkShareList" class="network-list"></ul>
+            </div>
+          </div>
+          <p id="networkLlamaHint" class="setting-hint">Managed llama-server bind: loopback only.</p>
+        </div>
+
+        <div class="panel stack-md">
+          <div class="eyebrow">Linked device</div>
+          <p class="setting-hint">Run chat on this PC using another tinyinference instance’s model.</p>
+          <div class="segmented" role="tablist" aria-label="Inference mode">
+            <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
+            <button type="button" id="modeRemoteBtn" data-mode="remote">Linked device</button>
+          </div>
+          <div id="networkRemoteFields" class="stack-md is-hidden">
+            <div>
+              <label class="field-label" for="networkRemoteBase">Remote URL</label>
+              <input class="field-input" id="networkRemoteBase" type="url" placeholder="http://100.x.x.x:3920" autocomplete="off" spellcheck="false">
+            </div>
+            <div>
+              <label class="field-label" for="networkRemoteToken">Remote access token</label>
+              <input class="field-input" id="networkRemoteToken" type="password" placeholder="Bearer token from the other device" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="mast-actions" style="justify-content:flex-start">
+              <button type="button" class="btn btn-primary" id="btnSaveRemoteLink">Link</button>
+            </div>
+            <p id="networkRemoteHealth" class="setting-hint">Not linked.</p>
+          </div>
+          <div>
+            <div class="field-label">Discovered on LAN</div>
+            <ul id="networkPeerList" class="network-list"></ul>
+            <p id="networkPeerEmpty" class="setting-hint">No peers yet. Both devices need to be on the same LAN with expose enabled (after restart).</p>
+          </div>
+          <p id="networkError" class="text-error is-hidden"></p>
+        </div>
+      </div>
+    </section>
+
     <section id="logs" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
         <h2>Logs</h2>
@@ -1086,6 +1199,17 @@
     </div>
   </div>
 
+  <div id="exposeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="exposeConfirmTitle">
+    <div class="dialog">
+      <h2 id="exposeConfirmTitle">Expose on the network?</h2>
+      <p>There is no login. Anyone on the network who has the share URL and access token can open chat and control this server. llama-server itself stays on this machine’s loopback. You will need to restart tinyinference after enabling.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" id="btnCancelExpose">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btnConfirmExpose">Expose</button>
+      </div>
+    </div>
+  </div>
+
   <div id="addModelModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="addModelTitle">
     <div class="dialog" style="width:min(28rem,100%)">
       <h2 id="addModelTitle">Add a model</h2>
@@ -1124,7 +1248,26 @@
 
 <script src="/orb.js"></script>
 <script>
+    (function persistAccessToken() {
+      const params = new URLSearchParams(location.search);
+      const token = params.get('token');
+      if (!token) return;
+      sessionStorage.setItem('tinyinference_token', token);
+      params.delete('token');
+      const query = params.toString();
+      history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
+    })();
+
+    function accessHeaders() {
+      const token = sessionStorage.getItem('tinyinference_token');
+      return token ? { Authorization: 'Bearer ' + token } : {};
+    }
+
     let state = null;
+    let networkState = null;
+    let revealedToken = null;
+    let lastShareSignature = '';
+    let lastPeerSignature = '';
     let settingsDirty = false;
     let prompted = false;
     let activeStage = 'dashboard';
@@ -1219,9 +1362,14 @@
     }
 
     async function api(path, options = {}) {
+      const { headers: extraHeaders, ...rest } = options;
       const response = await fetch(path, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...accessHeaders(),
+          ...(extraHeaders || {}),
+        },
+        ...rest,
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Request failed');
@@ -1258,6 +1406,162 @@
         btn.classList.toggle('is-active', on);
         btn.setAttribute('aria-selected', on ? 'true' : 'false');
       });
+      if (stage === 'network') refreshNetwork();
+    }
+
+    function showNetworkError(error) {
+      const el = document.getElementById('networkError');
+      el.textContent = error.message || String(error);
+      el.classList.remove('is-hidden');
+    }
+
+    function clearNetworkError() {
+      document.getElementById('networkError').classList.add('is-hidden');
+    }
+
+    function applyNetworkState(next, revealed) {
+      networkState = next;
+      if (revealed) {
+        revealedToken = revealed;
+        sessionStorage.setItem('tinyinference_token', revealed);
+      }
+      const chip = document.getElementById('networkStatusChip');
+      if (next.listening_exposed) {
+        chip.textContent = 'exposed';
+        chip.className = 'status-chip status-ready';
+      } else if (next.expose) {
+        chip.textContent = 'restart needed';
+        chip.className = 'status-chip status-starting';
+      } else {
+        chip.textContent = 'local only';
+        chip.className = 'status-chip status-stopped';
+      }
+
+      const toggle = document.getElementById('networkExposeToggle');
+      toggle.checked = !!next.expose;
+      document.getElementById('networkRestartBanner').classList.toggle('is-hidden', !next.restart_required);
+      document.getElementById('networkShareBlock').classList.toggle('is-hidden', !next.expose);
+      document.getElementById('networkLlamaHint').textContent = next.llama_binds_loopback
+        ? 'Managed llama-server bind: loopback only.'
+        : 'Warning: llama-server host is not loopback — that is separate from this expose toggle.';
+
+      const tokenDisplay = document.getElementById('networkTokenDisplay');
+      const tokenHint = document.getElementById('networkTokenHint');
+      if (revealedToken) {
+        tokenDisplay.textContent = revealedToken;
+        tokenHint.textContent = 'Copy this token now — it will be masked after reload.';
+      } else if (next.access_token_masked) {
+        tokenDisplay.textContent = next.access_token_masked;
+        tokenHint.textContent = 'Token is masked. Regenerate if you need the full value again.';
+      } else {
+        tokenDisplay.textContent = '—';
+        tokenHint.textContent = 'Token is created when expose is enabled.';
+      }
+
+      const shareList = document.getElementById('networkShareList');
+      const shareSignature = JSON.stringify(next.share_urls || []);
+      if (shareSignature !== lastShareSignature) {
+        lastShareSignature = shareSignature;
+        if (!next.share_urls || next.share_urls.length === 0) {
+          shareList.innerHTML = '<li><div class="network-meta"><strong>No LAN / Tailscale address found</strong><span>Connect to a network or start Tailscale, then refresh.</span></div></li>';
+        } else {
+          shareList.innerHTML = next.share_urls.map((item) => `
+            <li>
+              <div class="network-meta">
+                <strong>${escapeHtml(item.label)}</strong>
+                <span>${escapeHtml(item.chat)}</span>
+              </div>
+              <button type="button" class="btn btn-ghost" data-copy="${escapeHtml(item.control)}">Copy control</button>
+              <button type="button" class="btn btn-ghost" data-copy="${escapeHtml(item.chat)}">Copy chat</button>
+            </li>`).join('');
+        }
+      }
+
+      const mode = next.inference_mode || 'local';
+      document.getElementById('modeLocalBtn').classList.toggle('is-active', mode === 'local');
+      document.getElementById('modeRemoteBtn').classList.toggle('is-active', mode === 'remote');
+      document.getElementById('networkRemoteFields').classList.toggle('is-hidden', mode !== 'remote');
+      const baseInput = document.getElementById('networkRemoteBase');
+      if (document.activeElement !== baseInput) baseInput.value = next.remote_base || '';
+      const tokenInput = document.getElementById('networkRemoteToken');
+      if (document.activeElement !== tokenInput && !tokenInput.value) {
+        tokenInput.placeholder = next.remote_token_set
+          ? ('saved · ' + (next.remote_token_masked || '••••'))
+          : 'Bearer token from the other device';
+      }
+
+      const health = document.getElementById('networkRemoteHealth');
+      if (mode !== 'remote') {
+        health.textContent = 'Using this PC’s model.';
+      } else if (!next.remote_base) {
+        health.textContent = 'Enter a remote URL to link.';
+      } else if (next.remote_health?.ok) {
+        health.textContent = 'Linked · ' + (next.remote_health.model || 'model') +
+          ' · ' + (next.remote_health.status || 'ok');
+      } else {
+        health.textContent = 'Unreachable · ' + (next.remote_health?.error || 'check URL and token');
+      }
+
+      const peers = next.peers || [];
+      const peerList = document.getElementById('networkPeerList');
+      const empty = document.getElementById('networkPeerEmpty');
+      empty.classList.toggle('is-hidden', peers.length > 0);
+      const peerSignature = JSON.stringify(peers.map((p) => [p.name, p.base_url]));
+      if (peerSignature !== lastPeerSignature) {
+        lastPeerSignature = peerSignature;
+        peerList.innerHTML = peers.map((peer) => `
+          <li>
+            <div class="network-meta">
+              <strong>${escapeHtml(peer.name)}</strong>
+              <span>${escapeHtml(peer.base_url)}</span>
+            </div>
+            <button type="button" class="btn btn-primary" data-link-base="${escapeHtml(peer.base_url)}">Link</button>
+          </li>`).join('');
+      }
+    }
+
+    async function refreshNetwork() {
+      try {
+        const next = await api('/api/network');
+        applyNetworkState(next);
+      } catch (error) {
+        showNetworkError(error);
+      }
+    }
+
+    async function postNetwork(body) {
+      clearNetworkError();
+      const result = await api('/api/network', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      if (result.state) applyState(result.state);
+      applyNetworkState(result.network, result.access_token || null);
+      return result;
+    }
+
+    async function copyText(value) {
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch {
+        // ignore — some hosts block clipboard
+      }
+    }
+
+    async function linkDiscoveredPeer(base) {
+      document.getElementById('networkRemoteBase').value = base;
+      document.getElementById('modeRemoteBtn').click();
+      const token = document.getElementById('networkRemoteToken').value.trim();
+      try {
+        await postNetwork({
+          inference_mode: 'remote',
+          remote_base: base,
+          remote_token: token || undefined,
+        });
+      } catch (error) {
+        showNetworkError(error);
+      }
     }
 
     function setTps(el, value, label) {
@@ -1933,8 +2237,9 @@
         { label: 'Go to Dashboard', hint: '1', run: () => showStage('dashboard') },
         { label: 'Go to Models', hint: '2', run: () => showStage('models') },
         { label: 'Go to Configure', hint: '3', run: () => showStage('configure') },
-        { label: 'Go to Logs', hint: '4', run: () => showStage('logs') },
-        { label: 'Go to Stats', hint: '5', run: () => showStage('stats') },
+        { label: 'Go to Network', hint: '4', run: () => showStage('network') },
+        { label: 'Go to Logs', hint: '5', run: () => showStage('logs') },
+        { label: 'Go to Stats', hint: '6', run: () => showStage('stats') },
         { label: 'Add model', hint: '', run: () => { showStage('models'); addModelModal.show(); } },
         { label: state?.running ? 'Stop llama-server' : 'Start llama-server', hint: 'S', run: () => document.getElementById('btnStartStop').click() },
         { label: 'Restart llama-server', hint: 'R', run: () => document.getElementById('btnRestart').click() },
@@ -2181,10 +2486,75 @@
       if (canvas) mountOrb(canvas, 20);
     });
 
+    const exposeModal = {
+      show() { document.getElementById('exposeConfirmModal').classList.remove('is-hidden'); },
+      hide() { document.getElementById('exposeConfirmModal').classList.add('is-hidden'); },
+    };
+
+    document.getElementById('networkExposeToggle').addEventListener('change', (event) => {
+      if (event.target.checked) {
+        event.target.checked = false;
+        exposeModal.show();
+        return;
+      }
+      postNetwork({ expose: false }).catch((error) => {
+        event.target.checked = true;
+        showNetworkError(error);
+      });
+    });
+    document.getElementById('btnCancelExpose').addEventListener('click', () => {
+      exposeModal.hide();
+      document.getElementById('networkExposeToggle').checked = !!networkState?.expose;
+    });
+    document.getElementById('btnConfirmExpose').addEventListener('click', async () => {
+      try {
+        await postNetwork({ expose: true });
+        exposeModal.hide();
+      } catch (error) {
+        showNetworkError(error);
+      }
+    });
+    document.getElementById('networkShareList').addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-copy]');
+      if (!btn || !document.getElementById('networkShareList').contains(btn)) return;
+      copyText(btn.getAttribute('data-copy') || '');
+    });
+    document.getElementById('networkPeerList').addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-link-base]');
+      if (!btn || !document.getElementById('networkPeerList').contains(btn)) return;
+      linkDiscoveredPeer(btn.getAttribute('data-link-base') || '');
+    });
+    document.getElementById('btnCopyToken').addEventListener('click', () => {
+      if (revealedToken) copyText(revealedToken);
+    });
+    document.getElementById('btnRegenToken').addEventListener('click', () => {
+      postNetwork({ regenerate_token: true }).catch(showNetworkError);
+    });
+    document.getElementById('modeLocalBtn').addEventListener('click', () => {
+      postNetwork({ inference_mode: 'local' }).catch(showNetworkError);
+    });
+    document.getElementById('modeRemoteBtn').addEventListener('click', () => {
+      postNetwork({ inference_mode: 'remote' }).catch(showNetworkError);
+    });
+    document.getElementById('btnSaveRemoteLink').addEventListener('click', () => {
+      const remote_base = document.getElementById('networkRemoteBase').value.trim();
+      const remote_token = document.getElementById('networkRemoteToken').value.trim();
+      postNetwork({
+        inference_mode: 'remote',
+        remote_base,
+        remote_token: remote_token || undefined,
+      }).then(() => {
+        document.getElementById('networkRemoteToken').value = '';
+      }).catch(showNetworkError);
+    });
+
     document.querySelectorAll('.reveal').forEach((el) => el.classList.add('is-in'));
     showStage('dashboard');
     refresh();
-    setInterval(refresh, 250);
+    setInterval(() => {
+      refresh();
+      if (activeStage === 'network') refreshNetwork();
+    }, 250);
   </script>
 </body>
 </html>

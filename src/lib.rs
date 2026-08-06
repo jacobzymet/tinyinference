@@ -7,6 +7,7 @@ pub mod config;
 pub mod desktop;
 pub mod fetch;
 pub mod hub;
+pub mod network;
 pub mod server;
 pub mod system;
 pub mod web;

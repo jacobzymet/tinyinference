@@ -1,4 +1,5 @@
 use std::{
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -6,8 +7,9 @@ use std::{
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path, State},
-    http::{StatusCode, header},
+    extract::{ConnectInfo, Path, State},
+    http::{Request, StatusCode, header},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
@@ -16,9 +18,13 @@ use tokio::net::TcpListener;
 
 use crate::{
     agent::{self, AgentRequest},
-    app::{App, Download, LibraryFetch, ServerStatus, SettingField},
+    app::{App, Download, LibraryFetch, NetworkUpdate, ServerStatus, SettingField},
     chat,
     config::RuntimePreset,
+    network::{
+        DiscoveredPeer, InferenceMode, RemoteHealth, ShareUrl, extract_request_token,
+        is_loopback_addr, mask_token, token_matches,
+    },
     server::ServerProcess,
 };
 
@@ -40,15 +46,10 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         }
     });
 
-    let router = Router::new()
-        .route("/", get(index))
-        .route("/chat", get(chat_page))
-        .route("/orb.js", get(orb_script))
-        .route("/ti.png", get(app_icon_png))
-        .route("/ti-transparent-bg-white.png", get(ui_mark))
-        .route("/favicon.ico", get(app_icon_png))
+    let api = Router::new()
         .route("/api/chat/completions", post(chat_completions))
         .route("/api/state", get(state))
+        .route("/api/network", get(network_state).post(update_network))
         .route("/api/start", post(start))
         .route("/api/stop", post(stop))
         .route("/api/restart", post(restart))
@@ -71,12 +72,65 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/dismiss-prompt", post(dismiss_prompt))
         .route("/api/configure-server", post(configure_server))
         .route("/api/focus", post(focus))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&app),
+            access_token_middleware,
+        ));
+
+    let router = Router::new()
+        .route("/", get(index))
+        .route("/chat", get(chat_page))
+        .route("/orb.js", get(orb_script))
+        .route("/ti.png", get(app_icon_png))
+        .route("/ti-transparent-bg-white.png", get(ui_mark))
+        .route("/favicon.ico", get(app_icon_png))
+        .merge(api)
         .with_state(app);
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     Ok(())
+}
+
+async fn access_token_middleware(
+    State(app): State<SharedApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let (required, expected) = {
+        let Ok(app) = app.lock() else {
+            return ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: "application state is unavailable".into(),
+            }
+            .into_response();
+        };
+        let network = &app.config.network;
+        (
+            network.inbound_auth_required(),
+            network.access_token.clone(),
+        )
+    };
+
+    if !required || is_loopback_addr(addr) {
+        return next.run(request).await;
+    }
+
+    let provided = extract_request_token(request.headers());
+    match provided {
+        Some(token) if token_matches(&expected, &token) => next.run(request).await,
+        _ => ApiError {
+            status: StatusCode::UNAUTHORIZED,
+            message: "access token required (Authorization: Bearer … or X-Tinyinference-Token)"
+                .into(),
+        }
+        .into_response(),
+    }
 }
 
 async fn shutdown_signal() {
@@ -138,32 +192,52 @@ async fn chat_completions(
     State(app): State<SharedApp>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, ApiError> {
-    let api_base = {
+    let remote = {
         let app = app.lock().map_err(|_| ApiError::lock())?;
-        if app.status != ServerStatus::Ready {
-            return Err(ApiError::bad_request(
-                "The model server is not ready. Start it from the dashboard first.".into(),
-            ));
+        let network = &app.config.network;
+        if network.inference_mode == InferenceMode::Remote {
+            let Some(url) = network.remote_chat_url() else {
+                return Err(ApiError::bad_request(
+                    "Remote inference is selected but no remote URL is configured.".into(),
+                ));
+            };
+            Some((url, network.remote_token.clone()))
+        } else {
+            None
         }
-        app.displayed_config().api_endpoint()
     };
 
-    // Agent mode runs a tool loop server-side; plain chat still streams through.
-    // Strip tinyinference-only fields before proxying to llama-server.
-    let stream = match serde_json::from_value::<AgentRequest>(body.clone()) {
-        Ok(request) if request.agent && request.skills.any_enabled() => {
-            if request.messages.is_empty() {
-                return Err(ApiError::bad_request("messages must not be empty".into()));
+    let stream = if let Some((url, token)) = remote {
+        // Peer runs agent + local llama; forward the request as-is.
+        chat::stream_remote_completion(&url, &token, body)
+    } else {
+        let api_base = {
+            let app = app.lock().map_err(|_| ApiError::lock())?;
+            if app.status != ServerStatus::Ready {
+                return Err(ApiError::bad_request(
+                    "The model server is not ready. Start it from the dashboard first.".into(),
+                ));
             }
-            agent::stream_agent(&api_base, request)
-        }
-        _ => {
-            let mut upstream = body;
-            if let Some(object) = upstream.as_object_mut() {
-                object.remove("agent");
-                object.remove("skills");
+            app.displayed_config().api_endpoint()
+        };
+
+        // Agent mode runs a tool loop server-side; plain chat still streams through.
+        // Strip tinyinference-only fields before proxying to llama-server.
+        match serde_json::from_value::<AgentRequest>(body.clone()) {
+            Ok(request) if request.agent && request.skills.any_enabled() => {
+                if request.messages.is_empty() {
+                    return Err(ApiError::bad_request("messages must not be empty".into()));
+                }
+                agent::stream_agent(&api_base, request)
             }
-            chat::stream_completion(&api_base, upstream)
+            _ => {
+                let mut upstream = body;
+                if let Some(object) = upstream.as_object_mut() {
+                    object.remove("agent");
+                    object.remove("skills");
+                }
+                chat::stream_completion(&api_base, upstream)
+            }
         }
     };
 
@@ -174,6 +248,27 @@ async fn chat_completions(
         .body(Body::from_stream(stream))
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     Ok(response)
+}
+
+async fn network_state(State(app): State<SharedApp>) -> Result<Json<NetworkState>, ApiError> {
+    let app = app.lock().map_err(|_| ApiError::lock())?;
+    Ok(Json(NetworkState::from_app(&app)))
+}
+
+async fn update_network(
+    State(app): State<SharedApp>,
+    Json(update): Json<NetworkUpdate>,
+) -> Result<Json<NetworkMutationResponse>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    let result = app
+        .apply_network_update(update)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(NetworkMutationResponse {
+        restart_required: result.restart_required,
+        access_token: result.access_token,
+        network: NetworkState::from_app(&app),
+        state: AppState::from_app(&app),
+    }))
 }
 
 async fn state(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
@@ -445,6 +540,109 @@ struct AppState {
     presets: Vec<PresetState>,
     active_preset: Option<&'static str>,
     logs: Vec<String>,
+    network: NetworkSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct NetworkSummary {
+    expose: bool,
+    listening_exposed: bool,
+    restart_required: bool,
+    inference_mode: &'static str,
+    remote_base: String,
+    remote_label: String,
+    via_remote: bool,
+    remote_ok: bool,
+    remote_model: Option<String>,
+    remote_status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct NetworkState {
+    expose: bool,
+    listening_exposed: bool,
+    restart_required: bool,
+    access_token_set: bool,
+    access_token_masked: String,
+    device_name: String,
+    inference_mode: &'static str,
+    remote_base: String,
+    remote_token_set: bool,
+    remote_token_masked: String,
+    share_urls: Vec<ShareUrl>,
+    peers: Vec<DiscoveredPeer>,
+    remote_health: Option<RemoteHealth>,
+    llama_binds_loopback: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct NetworkMutationResponse {
+    restart_required: bool,
+    access_token: Option<String>,
+    network: NetworkState,
+    state: AppState,
+}
+
+impl NetworkState {
+    fn from_app(app: &App) -> Self {
+        let network = &app.config.network;
+        let host = app.config.effective_host();
+        let llama_loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+        Self {
+            expose: network.expose,
+            listening_exposed: app.listening_exposed(),
+            restart_required: app.network_restart_required(),
+            access_token_set: !network.access_token.trim().is_empty(),
+            access_token_masked: mask_token(&network.access_token),
+            device_name: network.resolved_device_name(),
+            inference_mode: network.inference_mode.as_str(),
+            remote_base: network.remote_base.clone(),
+            remote_token_set: !network.remote_token.trim().is_empty(),
+            remote_token_masked: mask_token(&network.remote_token),
+            share_urls: app.network_share_urls(),
+            peers: app.discovered_peers(),
+            remote_health: app.remote_health(),
+            llama_binds_loopback: llama_loopback,
+        }
+    }
+}
+
+impl NetworkSummary {
+    fn from_app(app: &App) -> Self {
+        let network = &app.config.network;
+        let via_remote = network.inference_mode == InferenceMode::Remote
+            && !network.remote_base.trim().is_empty();
+        let remote_label = if via_remote {
+            network
+                .remote_base
+                .trim()
+                .trim_start_matches("http://")
+                .trim_start_matches("https://")
+                .trim_end_matches('/')
+                .to_string()
+        } else {
+            String::new()
+        };
+        // Prefer a fresh/cached probe without blocking state polls on the network.
+        let health = if via_remote {
+            app.remote_health_cached()
+        } else {
+            None
+        };
+        Self {
+            expose: network.expose,
+            listening_exposed: app.listening_exposed(),
+            restart_required: app.network_restart_required(),
+            inference_mode: network.inference_mode.as_str(),
+            remote_base: network.remote_base.clone(),
+            remote_label,
+            via_remote,
+            // Until Network tab probes, treat a configured remote as ready enough to send.
+            remote_ok: health.as_ref().map(|h| h.ok).unwrap_or(via_remote),
+            remote_model: health.as_ref().and_then(|h| h.model.clone()),
+            remote_status: health.as_ref().and_then(|h| h.status.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -722,6 +920,7 @@ impl AppState {
             presets,
             active_preset,
             logs: app.logs.iter().cloned().collect(),
+            network: NetworkSummary::from_app(app),
         }
     }
 }
