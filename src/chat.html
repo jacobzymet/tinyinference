@@ -173,22 +173,120 @@
     }
     .sidebar-head { padding: 0 var(--space-2xs) var(--space-3xs); }
 
+    .sidebar-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .sidebar-nav {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in oklch, var(--color-muted) 40%, transparent) transparent;
+    }
+    .sidebar-section {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      margin-bottom: 0.15rem;
+    }
     .sidebar-label {
       font-size: var(--text-xs);
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--color-muted);
       padding: 0 var(--space-2xs);
-      margin: var(--space-2xs) 0 0;
+      margin: var(--space-xs) 0 0.15rem;
     }
+    .sidebar-section > .sidebar-label:first-child,
+    .sidebar-nav > .sidebar-label:first-child { margin-top: 0.15rem; }
+    .sidebar-link {
+      appearance: none;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      border: 0;
+      background: transparent;
+      color: var(--color-ink-2);
+      border-radius: var(--radius-input);
+      padding: 0.4rem 0.5rem;
+      font: inherit;
+      font-size: var(--text-sm);
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: background var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+    }
+    .sidebar-link:hover {
+      background: var(--color-paper-2);
+      color: var(--color-ink);
+    }
+    .sidebar-link.is-active {
+      background: color-mix(in oklch, var(--color-accent) 14%, var(--color-paper-2));
+      color: var(--color-ink);
+    }
+    .chat-shell.is-in-project .chat-sidebar {
+      box-shadow: inset 2px 0 0 var(--color-accent);
+    }
+    .sidebar-project-context {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin-bottom: 0.25rem;
+      padding: 0.45rem;
+      border-radius: 10px;
+      background: color-mix(in oklch, var(--color-accent) 10%, var(--color-paper-2));
+      border: 1px solid color-mix(in oklch, var(--color-accent) 28%, var(--color-rule));
+    }
+    .sidebar-project-context.is-hidden { display: none !important; }
+    .sidebar-project-kicker {
+      margin: 0;
+      padding: 0 0.15rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      color: var(--color-accent);
+    }
+    .sidebar-project-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+    .sidebar-project-chip-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--color-ink);
+    }
+    .sidebar-leave-project {
+      appearance: none;
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--color-muted);
+      font: inherit;
+      font-size: var(--text-xs);
+      text-align: left;
+      padding: 0.2rem 0.15rem 0;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .sidebar-leave-project:hover { color: var(--color-ink); }
 
     .convo-list {
-      flex: 1 1 auto;
-      overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 1px;
-      margin-top: calc(-1 * var(--space-2xs));
     }
     .convo-empty-hint {
       color: var(--color-muted);
@@ -219,7 +317,9 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .convo-delete {
+    .convo-delete,
+    .convo-move,
+    .project-settings-btn {
       flex: 0 0 auto;
       appearance: none;
       border: none;
@@ -233,8 +333,51 @@
       opacity: 0;
       transition: opacity var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
     }
-    .convo-item:hover .convo-delete, .convo-delete:focus-visible { opacity: 1; }
+    .convo-move { font-size: var(--text-sm); padding: 0 0.25rem; }
+    .project-settings-btn { font-size: var(--text-sm); opacity: 1; }
+    .convo-item:hover .convo-delete,
+    .convo-item:hover .convo-move,
+    .convo-delete:focus-visible,
+    .convo-move:focus-visible,
+    .project-settings-btn:focus-visible { opacity: 1; }
     .convo-delete:hover { color: var(--color-danger); }
+    .convo-move:hover,
+    .project-settings-btn:hover { color: var(--color-accent); }
+    .convo-menu {
+      position: fixed;
+      z-index: 45;
+      min-width: 10rem;
+      max-width: 14rem;
+      background: var(--color-paper-2);
+      border: 1px solid var(--color-rule-2);
+      border-radius: 8px;
+      box-shadow: 0 10px 28px oklch(0% 0 0 / 0.35);
+      padding: 0.25rem;
+    }
+    .convo-menu button {
+      width: 100%;
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--color-ink);
+      text-align: left;
+      font: inherit;
+      font-size: var(--text-sm);
+      padding: 0.4rem 0.5rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .convo-menu button:hover {
+      background: color-mix(in oklch, var(--color-accent) 14%, var(--color-paper));
+    }
+    .convo-menu-label {
+      padding: 0.3rem 0.5rem 0.2rem;
+      font-size: var(--text-xs);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      font-family: var(--font-mono);
+    }
 
     .sidebar-footer {
       display: flex;
@@ -261,11 +404,30 @@
 
     /* ---------- main ---------- */
     .chat-main {
+      position: relative;
       flex: 1 1 auto;
       min-width: 0;
       display: flex;
       flex-direction: column;
       height: 100vh;
+      background: var(--color-paper);
+      overflow: hidden;
+    }
+    .chat-starfield {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .chat-starfield canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .chat-main > *:not(.chat-starfield) {
+      position: relative;
+      z-index: 1;
     }
     .chat-topbar {
       flex: 0 0 auto;
@@ -279,6 +441,45 @@
     }
     .chat-topbar.has-thread { border-bottom-color: var(--color-rule); }
     .btn-toggle-sidebar { display: none; }
+    .chat-topbar-context {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .chat-topbar-context.is-hidden { display: none !important; }
+    .topbar-project-pill {
+      appearance: none;
+      flex: 0 1 auto;
+      max-width: 12rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      border: 1px solid color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 14%, var(--color-paper-2));
+      color: var(--color-ink);
+      border-radius: 999px;
+      padding: 0.2rem 0.65rem 0.2rem 0.45rem;
+      font: inherit;
+      font-size: var(--text-xs);
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .topbar-project-pill:hover {
+      border-color: color-mix(in oklch, var(--color-accent) 60%, var(--color-rule));
+    }
+    .topbar-project-pill::before {
+      content: "";
+      width: 0.4rem;
+      height: 0.4rem;
+      border-radius: 999px;
+      background: var(--color-accent);
+      flex: 0 0 auto;
+    }
     .chat-topbar-title {
       flex: 1 1 auto;
       min-width: 0;
@@ -287,6 +488,9 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .chat-shell.is-in-project .chat-topbar.has-thread {
+      border-bottom-color: color-mix(in oklch, var(--color-accent) 35%, var(--color-rule));
     }
 
     .chat-viewport { flex: 1 1 auto; overflow-y: auto; }
@@ -309,12 +513,26 @@
       /* optical centering — sit a little above true middle */
       padding-bottom: clamp(1rem, 8vh, 4.5rem);
     }
+    .empty-eyebrow {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--color-accent);
+      text-align: center;
+    }
+    .empty-eyebrow.is-hidden { display: none !important; }
     .empty-greeting { font-size: var(--text-display); text-align: center; }
+    .chat-shell.is-in-project .empty-greeting {
+      font-size: clamp(1.35rem, 1.2vw + 1rem, 1.85rem);
+    }
     .empty-sub {
       margin: 0 0 var(--space-md);
       color: var(--color-muted);
       font-size: var(--text-sm);
       text-align: center;
+      max-width: 28rem;
     }
     .orb-mark { display: block; margin-bottom: var(--space-2xs); }
 
@@ -605,6 +823,48 @@
     .dialog-close:hover {
       color: var(--color-ink);
       background: color-mix(in oklch, var(--color-paper) 70%, transparent);
+    }
+    .dialog.project-dialog {
+      position: relative;
+      width: min(40rem, calc(100vw - 2rem));
+      height: min(36rem, calc(100vh - 2rem));
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      overflow: hidden;
+      background: var(--color-paper-2);
+      border: 1px solid var(--color-rule);
+      border-radius: 16px;
+      box-shadow: 0 24px 64px oklch(0% 0 0 / 0.45);
+    }
+    .project-dialog-main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      flex: 1 1 auto;
+      background: var(--color-paper);
+    }
+    .project-dialog .settings-scroll {
+      flex: 1 1 auto;
+      padding: 1.35rem 3rem 1.25rem 1.75rem;
+    }
+    .project-dialog .dialog-actions {
+      justify-content: flex-end;
+    }
+    .project-dialog-danger {
+      margin-right: auto;
+      color: var(--color-danger);
+      border-color: color-mix(in oklch, var(--color-danger) 35%, var(--color-rule));
+    }
+    .project-dialog-danger:hover {
+      border-color: var(--color-danger);
+      color: var(--color-danger);
+    }
+    @media (max-width: 640px) {
+      .dialog.project-dialog {
+        height: min(90vh, 40rem);
+      }
     }
     .settings-nav {
       display: flex;
@@ -1088,6 +1348,207 @@
       color: var(--color-muted);
     }
 
+    /* ---------- projects page ---------- */
+    .projects-view {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: auto;
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, color-mix(in oklch, var(--color-accent) 12%, transparent), transparent 55%);
+    }
+    .projects-view.is-hidden { display: none !important; }
+    .projects-inner {
+      width: 100%;
+      max-width: 64rem;
+      margin: 0 auto;
+      padding: clamp(1.5rem, 4vw, 2.75rem) clamp(1.25rem, 4vw, 2.5rem) 3rem;
+    }
+    .projects-top {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.75rem;
+    }
+    .projects-title {
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 3vw + 1rem, 2.75rem);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      color: var(--color-ink);
+      margin: 0;
+      line-height: 1.1;
+    }
+    .projects-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+    .projects-search {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: var(--color-paper-2);
+      border: 1px solid var(--color-rule-2);
+      border-radius: 999px;
+      padding: 0.35rem 0.75rem;
+      min-width: 11rem;
+    }
+    .projects-search:focus-within {
+      border-color: color-mix(in oklch, var(--color-accent) 55%, var(--color-rule-2));
+    }
+    .projects-search svg {
+      width: 0.95rem;
+      height: 0.95rem;
+      color: var(--color-muted);
+      flex: 0 0 auto;
+    }
+    .projects-search input {
+      border: 0;
+      background: transparent;
+      color: var(--color-ink);
+      font: inherit;
+      font-size: var(--text-sm);
+      outline: none;
+      width: 100%;
+      min-width: 0;
+    }
+    .projects-search input::placeholder { color: var(--color-muted); }
+    .projects-sort {
+      appearance: none;
+      border: 1px solid var(--color-rule-2);
+      background: var(--color-paper-2);
+      color: var(--color-ink-2);
+      border-radius: 999px;
+      padding: 0.4rem 1.8rem 0.4rem 0.85rem;
+      font: inherit;
+      font-size: var(--text-sm);
+      cursor: pointer;
+      background-image: linear-gradient(45deg, transparent 50%, var(--color-muted) 50%),
+        linear-gradient(135deg, var(--color-muted) 50%, transparent 50%);
+      background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+    }
+    .projects-sort:hover { border-color: var(--color-accent); color: var(--color-ink); }
+    .btn-new-project {
+      border-radius: 999px;
+      padding: 0.45rem 1rem;
+      font-weight: 600;
+    }
+    .projects-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr));
+      gap: 0.85rem;
+    }
+    .project-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 9.5rem;
+      border-radius: 14px;
+      border: 1px solid var(--color-rule);
+      background: var(--color-paper-2);
+      transition:
+        border-color var(--dur-short) var(--ease-out),
+        background var(--dur-short) var(--ease-out),
+        transform var(--dur-short) var(--ease-out);
+    }
+    .project-card:hover {
+      border-color: color-mix(in oklch, var(--color-accent) 45%, var(--color-rule));
+      background: color-mix(in oklch, var(--color-accent) 6%, var(--color-paper-2));
+      transform: translateY(-1px);
+    }
+    .project-card-body {
+      appearance: none;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.55rem;
+      text-align: left;
+      width: 100%;
+      min-height: 9.5rem;
+      padding: 1.1rem 2.4rem 0.95rem 1.15rem;
+      border: 0;
+      border-radius: 14px;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+    .project-card-title {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: var(--text-lg);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--color-ink);
+      line-height: 1.25;
+    }
+    .project-card-gear {
+      position: absolute;
+      top: 0.7rem;
+      right: 0.65rem;
+      z-index: 1;
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--color-muted);
+      cursor: pointer;
+      padding: 0.25rem;
+      border-radius: 6px;
+      line-height: 1;
+      font-size: 0.95rem;
+      opacity: 0;
+      transition: opacity var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+    }
+    .project-card:hover .project-card-gear,
+    .project-card-gear:focus-visible { opacity: 1; }
+    .project-card-gear:hover { color: var(--color-accent); }
+    .project-card-blurb {
+      margin: 0;
+      flex: 1 1 auto;
+      font-size: var(--text-sm);
+      line-height: 1.45;
+      color: var(--color-muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .project-card-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-top: auto;
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+      font-family: var(--font-mono);
+      letter-spacing: 0.02em;
+    }
+    .projects-empty {
+      grid-column: 1 / -1;
+      padding: 3rem 1rem;
+      text-align: center;
+      color: var(--color-muted);
+    }
+    .projects-empty strong {
+      display: block;
+      color: var(--color-ink);
+      font-family: var(--font-display);
+      font-size: var(--text-xl);
+      margin-bottom: 0.35rem;
+    }
+    .chat-shell.is-projects .chat-composer-dock,
+    .chat-shell.is-projects .chat-topbar { display: none; }
+    .chat-shell.is-projects .chat-viewport { display: none; }
+
     @media (max-width: 820px) {
       .btn-toggle-sidebar { display: inline-flex; }
       .chat-sidebar {
@@ -1116,9 +1577,18 @@
           <span class="wordmark-text">tiny<span>inference</span></span>
         </a>
       </div>
-      <button type="button" class="btn btn-primary" id="btnNewChat">New chat</button>
-      <p class="sidebar-label">Recents</p>
-      <nav class="convo-list" id="convoList" aria-label="Conversations"></nav>
+      <div class="sidebar-actions">
+        <button type="button" class="btn btn-primary" id="btnNewChat">New chat</button>
+      </div>
+      <div class="sidebar-nav" id="sidebarNav">
+        <div class="sidebar-section" aria-label="Workspace">
+          <p class="sidebar-label">Workspace</p>
+          <button type="button" class="sidebar-link" id="btnProjectsNav">Projects</button>
+        </div>
+        <div id="sidebarProjectContext" class="sidebar-project-context is-hidden"></div>
+        <p class="sidebar-label" id="sidebarConvoLabel">Recents</p>
+        <nav class="convo-list" id="convoList" aria-label="Conversations"></nav>
+      </div>
       <div class="sidebar-footer">
         <div class="sidebar-footer-row">
           <span>Server</span>
@@ -1129,15 +1599,40 @@
     </aside>
 
     <main class="chat-main">
+      <div class="chat-starfield" aria-hidden="true">
+        <canvas id="starfieldCanvas"></canvas>
+      </div>
       <header class="chat-topbar" id="chatTopbar">
         <button type="button" class="btn btn-ghost btn-icon btn-toggle-sidebar" id="btnToggleSidebar" aria-label="Toggle sidebar">☰</button>
+        <div class="chat-topbar-context is-hidden" id="topbarProject"></div>
         <div class="chat-topbar-title" id="convoTitle"></div>
       </header>
+
+      <div class="projects-view is-hidden" id="projectsView">
+        <div class="projects-inner">
+          <div class="projects-top">
+            <h1 class="projects-title">Projects</h1>
+            <div class="projects-toolbar">
+              <label class="projects-search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input type="search" id="projectsSearch" placeholder="Search projects" autocomplete="off">
+              </label>
+              <select class="projects-sort" id="projectsSort" aria-label="Sort projects">
+                <option value="updated">Sort by last updated</option>
+                <option value="name">Sort by name</option>
+              </select>
+              <button type="button" class="btn btn-primary btn-new-project" id="btnNewProject">New project</button>
+            </div>
+          </div>
+          <div class="projects-grid" id="projectsGrid"></div>
+        </div>
+      </div>
 
       <div class="chat-viewport" id="chatViewport">
         <div class="empty-state" id="emptyState">
           <div class="empty-state-inner" id="emptyStateInner">
             <canvas class="orb-mark" id="orbMark" role="img" aria-label="tinyinference"></canvas>
+            <p class="empty-eyebrow is-hidden" id="emptyEyebrow">Project</p>
             <h1 class="empty-greeting" id="greeting">Hello</h1>
             <p class="empty-sub" id="modelHint">—</p>
             <!-- #composerCard is relocated here while the thread is empty -->
@@ -1265,6 +1760,38 @@
     </div>
   </div>
 
+  <div id="projectModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
+    <div class="dialog project-dialog">
+      <button type="button" class="dialog-close" id="btnProjectClose" aria-label="Close">×</button>
+      <div class="project-dialog-main">
+        <div class="settings-scroll">
+          <h2 class="settings-pane-title" id="projectModalTitle">Project</h2>
+          <p class="settings-pane-lede">Shared instructions and memory for every chat in this project.</p>
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="field-label" for="projectName">Name</label>
+              <input class="field-input" id="projectName" type="text" maxlength="80" placeholder="e.g. Job search">
+            </div>
+            <div class="settings-row-stack">
+              <label class="field-label" for="projectInstructions">Instructions</label>
+              <textarea class="field-textarea" id="projectInstructions" placeholder="How the model should behave in this project…"></textarea>
+            </div>
+            <div class="settings-row-stack">
+              <label class="field-label" for="projectMemory">Memory</label>
+              <textarea class="field-textarea" id="projectMemory" style="min-height:9rem" placeholder="Durable notes the model can update. Editable anytime."></textarea>
+              <p class="field-hint">Shown to the model on every turn. The model may replace this via a &lt;memory_update&gt; block.</p>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="btn btn-ghost project-dialog-danger" id="btnProjectDelete">Delete project</button>
+          <button type="button" class="btn btn-ghost" id="btnProjectCancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btnProjectSave">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/orb.js"></script>
   <script>
     /* ================================================================
@@ -1296,6 +1823,17 @@
     const composerMentions = document.getElementById('composerMentions');
     const mentionMenu = document.getElementById('mentionMenu');
     const settingsModal = document.getElementById('settingsModal');
+    const projectModal = document.getElementById('projectModal');
+    const projectsView = document.getElementById('projectsView');
+    const projectsGrid = document.getElementById('projectsGrid');
+    const projectsSearch = document.getElementById('projectsSearch');
+    const projectsSort = document.getElementById('projectsSort');
+    const btnProjectsNav = document.getElementById('btnProjectsNav');
+    const sidebarProjectContext = document.getElementById('sidebarProjectContext');
+    const sidebarConvoLabel = document.getElementById('sidebarConvoLabel');
+    const topbarProject = document.getElementById('topbarProject');
+    const emptyEyebrow = document.getElementById('emptyEyebrow');
+    const btnNewChat = document.getElementById('btnNewChat');
     const btnSend = document.getElementById('btnSend');
     const btnStop = document.getElementById('btnStop');
     const btnAgent = document.getElementById('btnAgent');
@@ -1315,32 +1853,95 @@
     const modelHintEl = document.getElementById('modelHint');
     const serverChip = document.getElementById('serverChip');
 
-    let conversations = loadConversations();
-    // null = draft: nothing is written to storage until the first message is sent,
-    // so opening the page does not litter the sidebar with empty conversations.
-    let activeId = null;
-    let serverReady = false;
-    let sending = false;
-    let controller = null;
-
-    function loadConversations() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
+    function newId(prefix) {
+      return crypto.randomUUID
+        ? crypto.randomUUID()
+        : prefix + Date.now() + Math.random().toString(16).slice(2);
     }
 
-    function saveConversations() {
+    function normalizeProject(project) {
+      return {
+        id: project.id || newId('p'),
+        name: typeof project.name === 'string' && project.name.trim()
+          ? project.name.trim()
+          : 'Untitled project',
+        instructions: typeof project.instructions === 'string' ? project.instructions : '',
+        memory: typeof project.memory === 'string' ? project.memory : '',
+        createdAt: typeof project.createdAt === 'number' ? project.createdAt : Date.now(),
+        updatedAt: typeof project.updatedAt === 'number' ? project.updatedAt : Date.now(),
+      };
+    }
+
+    function normalizeConversation(convo) {
+      return {
+        id: convo.id || newId('c'),
+        title: typeof convo.title === 'string' ? convo.title : 'New chat',
+        messages: Array.isArray(convo.messages) ? convo.messages : [],
+        updatedAt: typeof convo.updatedAt === 'number' ? convo.updatedAt : Date.now(),
+        projectId: typeof convo.projectId === 'string' ? convo.projectId : null,
+      };
+    }
+
+    function loadStore() {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return { projects: [], conversations: [] };
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return {
+            projects: [],
+            conversations: parsed.map(normalizeConversation),
+          };
+        }
+        if (parsed && typeof parsed === 'object') {
+          return {
+            projects: Array.isArray(parsed.projects)
+              ? parsed.projects.map(normalizeProject)
+              : [],
+            conversations: Array.isArray(parsed.conversations)
+              ? parsed.conversations.map(normalizeConversation)
+              : [],
+          };
+        }
+      } catch {
+        // fall through
+      }
+      return { projects: [], conversations: [] };
+    }
+
+    function saveStore() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          version: 2,
+          projects,
+          conversations,
+        }));
       } catch {
         // localStorage unavailable (private browsing / quota) — history just won't persist.
       }
     }
+
+    function saveConversations() {
+      saveStore();
+    }
+
+    const initialStore = loadStore();
+    let projects = initialStore.projects;
+    let conversations = initialStore.conversations;
+    saveStore(); // persist legacy → v2 migration immediately
+
+    // null = draft: nothing is written to storage until the first message is sent,
+    // so opening the page does not litter the sidebar with empty conversations.
+    let activeId = null;
+    /** Project context for drafts / New chat. null = general Recents. */
+    let activeProjectId = null;
+    /** 'chat' | 'projects' */
+    let mainView = 'chat';
+    let editingProjectId = null;
+    let openConvoMenu = null;
+    let serverReady = false;
+    let sending = false;
+    let controller = null;
 
     function loadSettings() {
       try {
@@ -1387,7 +1988,19 @@
         : 'Agent mode off — toggle on, or type @agent for one message';
     }
 
-    function buildSystemPrompt() {
+    function getProject(id) {
+      if (!id) return null;
+      return projects.find((project) => project.id === id) || null;
+    }
+
+    /** Project for the active conversation, else the sidebar project context. */
+    function currentProjectId() {
+      const convo = conversations.find((item) => item.id === activeId);
+      if (convo && convo.projectId) return convo.projectId;
+      return activeProjectId;
+    }
+
+    function buildSystemPrompt(projectIdOverride) {
       const parts = [];
       const name = settings.name.trim();
       const about = settings.about.trim();
@@ -1395,8 +2008,60 @@
       if (name) parts.push('The user\'s name is ' + name + '.');
       if (about) parts.push('About the user:\n' + about);
       if (instructions) parts.push('Follow these instructions:\n' + instructions);
+
+      const project = getProject(
+        projectIdOverride !== undefined ? projectIdOverride : currentProjectId()
+      );
+      if (project) {
+        const projectInstructions = project.instructions.trim();
+        if (projectInstructions) {
+          parts.push('Project "' + project.name + '" instructions:\n' + projectInstructions);
+        }
+        const memory = project.memory.trim();
+        parts.push(
+          'Project memory for "' + project.name + '" — durable notes shared by every chat in this project.\n' +
+          'When you learn a lasting fact worth remembering later, emit a FULL replacement of the memory using exactly this form (and do not mention the tag to the user):\n' +
+          '<memory_update>\n…updated memory text…\n</memory_update>\n' +
+          'If nothing new belongs in memory, do not emit that tag.\n' +
+          'Current memory:\n' + (memory || '(empty)')
+        );
+      }
+
       if (parts.length === 0) return null;
       return 'You are a helpful assistant.\n\n' + parts.join('\n\n');
+    }
+
+    /**
+     * Pull <memory_update> blocks out of assistant text.
+     * While streaming, hide an unclosed opener so the XML never flashes in the UI.
+     */
+    function applyMemoryUpdateProtocol(text, { streaming = false } = {}) {
+      let cleaned = text || '';
+      let memory = null;
+      const re = /<memory_update>\s*([\s\S]*?)\s*<\/memory_update>/gi;
+      cleaned = cleaned.replace(re, (_, body) => {
+        memory = String(body || '').trim();
+        return '';
+      });
+      if (streaming) {
+        const lower = cleaned.toLowerCase();
+        const open = lower.lastIndexOf('<memory_update>');
+        if (open !== -1) cleaned = cleaned.slice(0, open);
+      }
+      cleaned = cleaned.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n').trimEnd();
+      return { cleaned, memory };
+    }
+
+    function persistProjectMemory(projectId, memoryText) {
+      const project = getProject(projectId);
+      if (!project) return;
+      project.memory = memoryText;
+      project.updatedAt = Date.now();
+      saveStore();
+      if (editingProjectId === projectId && !projectModal.classList.contains('is-hidden')) {
+        document.getElementById('projectMemory').value = memoryText;
+      }
+      if (mainView === 'projects') renderProjectsPage();
     }
 
     /** Detect @agent ping; returns { text, agentOnce }. */
@@ -1675,10 +2340,85 @@
       return '';
     }
 
+    function inProjectChat() {
+      return mainView === 'chat' && !!getProject(activeProjectId);
+    }
+
+    function leaveProject() {
+      activeProjectId = null;
+      activeId = null;
+      showChatView();
+      showEmptyState();
+      syncProjectChrome();
+      renderSidebar();
+      composerInput.focus();
+    }
+
+    /** Keep chrome (shell class, topbar, empty state, composer) in sync with project context. */
+    function syncProjectChrome() {
+      const project = inProjectChat() ? getProject(activeProjectId) : null;
+      chatShell.classList.toggle('is-in-project', !!project);
+
+      btnNewChat.textContent = project ? 'New chat in project' : 'New chat';
+      btnNewChat.title = project
+        ? 'Start a new chat inside ' + project.name
+        : 'Start a new chat';
+
+      if (project && !activeId) {
+        emptyEyebrow.textContent = 'Project';
+        emptyEyebrow.classList.remove('is-hidden');
+        greetingEl.textContent = project.name;
+      } else if (!activeId) {
+        emptyEyebrow.classList.add('is-hidden');
+        const base = greetingForNow();
+        const name = settings.name.trim();
+        greetingEl.textContent = name ? base + ', ' + name : base;
+      } else {
+        emptyEyebrow.classList.add('is-hidden');
+      }
+
+      topbarProject.innerHTML = '';
+      if (project) {
+        topbarProject.classList.remove('is-hidden');
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'topbar-project-pill';
+        pill.textContent = project.name;
+        pill.title = 'Project settings';
+        pill.addEventListener('click', () => openProjectSettings(project.id));
+        topbarProject.appendChild(pill);
+        if (!activeId) {
+          convoTitleEl.textContent = 'New chat';
+        }
+      } else {
+        topbarProject.classList.add('is-hidden');
+        if (!activeId) convoTitleEl.textContent = '';
+      }
+
+      composerInput.placeholder = project
+        ? 'Message in ' + project.name + '… Type @ to mention'
+        : 'How can I help you today? Type @ to mention';
+
+      updateComposerHint();
+      // Refresh model line without waiting for the next poll.
+      if (serverReady) {
+        const suffix = project ? ' · Project: ' + project.name : '';
+        const current = modelHintEl.textContent || '';
+        if (current.startsWith('Chatting with ')) {
+          const model = current.replace(/^Chatting with /, '').split(' · ')[0];
+          modelHintEl.textContent = project && !activeId
+            ? 'Shared instructions & memory apply · ' + model
+            : 'Chatting with ' + model + suffix;
+        } else if (project && !activeId) {
+          modelHintEl.textContent = 'Shared instructions and memory apply to chats in this project.';
+        }
+      } else if (project && !activeId) {
+        modelHintEl.textContent = 'Shared instructions and memory apply · start the model to chat.';
+      }
+    }
+
     function updateGreeting() {
-      const base = greetingForNow();
-      const name = settings.name.trim();
-      greetingEl.textContent = name ? base + ', ' + name : base;
+      syncProjectChrome();
     }
 
     function updateComposerHint() {
@@ -1687,11 +2427,306 @@
       const sendHint = settings.enterSends
         ? 'Shift+Enter for a new line'
         : 'Ctrl+Enter to send';
-      composerHint.textContent = sendHint + ' · type @ to mention agent one-off';
+      const project = inProjectChat() ? getProject(activeProjectId) : null;
+      composerHint.textContent = project
+        ? sendHint + ' · chatting in ' + project.name
+        : sendHint + ' · type @ to mention agent one-off';
     }
 
-    function byRecency() {
-      return [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+    function byRecency(list = conversations) {
+      return [...list].sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+
+    function uncategorizedConversations() {
+      return byRecency(conversations.filter((convo) => !convo.projectId));
+    }
+
+    function conversationsForProject(projectId) {
+      return byRecency(conversations.filter((convo) => convo.projectId === projectId));
+    }
+
+    function closeConvoMenu() {
+      if (openConvoMenu) {
+        openConvoMenu.remove();
+        openConvoMenu = null;
+      }
+    }
+
+    function createConvoItem(convo, { nested = false } = {}) {
+      const item = document.createElement('div');
+      item.className = 'convo-item' + (convo.id === activeId ? ' is-active' : '');
+      if (nested) item.classList.add('is-nested');
+      const title = document.createElement('span');
+      title.className = 'convo-title';
+      title.textContent = convo.title || 'New chat';
+      const move = document.createElement('button');
+      move.type = 'button';
+      move.className = 'convo-move';
+      move.setAttribute('aria-label', 'Move conversation');
+      move.title = 'Move';
+      move.textContent = '⇄';
+      move.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openMoveMenu(move, convo);
+      });
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'convo-delete';
+      del.setAttribute('aria-label', 'Delete conversation');
+      del.textContent = '×';
+      del.addEventListener('click', (event) => {
+        event.stopPropagation();
+        deleteConversation(convo.id);
+      });
+      item.appendChild(title);
+      item.appendChild(move);
+      item.appendChild(del);
+      item.addEventListener('click', () => selectConversation(convo.id));
+      return item;
+    }
+
+    function openMoveMenu(anchor, convo) {
+      closeConvoMenu();
+      const menu = document.createElement('div');
+      menu.className = 'convo-menu';
+      const label = document.createElement('div');
+      label.className = 'convo-menu-label';
+      label.textContent = 'Move to';
+      menu.appendChild(label);
+
+      if (convo.projectId) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = 'Recents (no project)';
+        remove.addEventListener('click', (event) => {
+          event.stopPropagation();
+          moveConversation(convo.id, null);
+          closeConvoMenu();
+        });
+        menu.appendChild(remove);
+      }
+
+      const targets = projects.filter((project) => project.id !== convo.projectId);
+      if (targets.length === 0 && !convo.projectId) {
+        const empty = document.createElement('button');
+        empty.type = 'button';
+        empty.textContent = 'No projects yet';
+        empty.disabled = true;
+        menu.appendChild(empty);
+      }
+      for (const project of targets) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = project.name;
+        btn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          moveConversation(convo.id, project.id);
+          closeConvoMenu();
+        });
+        menu.appendChild(btn);
+      }
+
+      document.body.appendChild(menu);
+      openConvoMenu = menu;
+      const rect = anchor.getBoundingClientRect();
+      const top = Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 8);
+      const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
+      menu.style.top = Math.max(8, top) + 'px';
+      menu.style.left = Math.max(8, left) + 'px';
+    }
+
+    function moveConversation(convoId, projectId) {
+      const convo = conversations.find((item) => item.id === convoId);
+      if (!convo) return;
+      convo.projectId = projectId;
+      convo.updatedAt = Date.now();
+      if (projectId) {
+        activeProjectId = projectId;
+      }
+      saveStore();
+      renderSidebar();
+      if (mainView === 'projects') renderProjectsPage();
+      updateGreeting();
+    }
+
+    function formatProjectDate(ts) {
+      try {
+        return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      } catch {
+        return '';
+      }
+    }
+
+    function projectCardBlurb(project) {
+      const instructions = project.instructions.trim();
+      if (instructions) return instructions;
+      const memory = project.memory.trim();
+      if (memory) return memory;
+      return 'No instructions yet. Open the project to start chatting, or edit settings to add context.';
+    }
+
+    function showProjectsView() {
+      mainView = 'projects';
+      cancelMessageEdit();
+      closeConvoMenu();
+      chatShell.classList.add('is-projects');
+      chatShell.classList.remove('is-in-project');
+      projectsView.classList.remove('is-hidden');
+      btnProjectsNav.classList.add('is-active');
+      renderProjectsPage();
+      renderSidebar();
+      chatShell.classList.remove('sidebar-open');
+    }
+
+    function showChatView() {
+      mainView = 'chat';
+      chatShell.classList.remove('is-projects');
+      projectsView.classList.add('is-hidden');
+      btnProjectsNav.classList.remove('is-active');
+      syncProjectChrome();
+      renderSidebar();
+    }
+
+    function renderProjectsPage() {
+      const query = (projectsSearch.value || '').trim().toLowerCase();
+      const sort = projectsSort.value || 'updated';
+      let list = [...projects];
+      if (query) {
+        list = list.filter((project) => {
+          const hay = (project.name + '\n' + project.instructions + '\n' + project.memory).toLowerCase();
+          return hay.includes(query);
+        });
+      }
+      if (sort === 'name') {
+        list.sort((a, b) => a.name.localeCompare(b.name));
+      } else {
+        list.sort((a, b) => b.updatedAt - a.updatedAt);
+      }
+
+      projectsGrid.innerHTML = '';
+      if (list.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'projects-empty';
+        empty.innerHTML = query
+          ? '<strong>No matches</strong>Try a different search.'
+          : '<strong>No projects yet</strong>Create one to keep chats, instructions, and memory together.';
+        projectsGrid.appendChild(empty);
+        return;
+      }
+
+      for (const project of list) {
+        const card = document.createElement('div');
+        card.className = 'project-card';
+        const chatCount = conversationsForProject(project.id).length;
+
+        const body = document.createElement('button');
+        body.type = 'button';
+        body.className = 'project-card-body';
+        body.innerHTML =
+          '<h2 class="project-card-title"></h2>' +
+          '<p class="project-card-blurb"></p>' +
+          '<div class="project-card-meta"><span></span><span></span></div>';
+        body.querySelector('.project-card-title').textContent = project.name;
+        body.querySelector('.project-card-blurb').textContent = projectCardBlurb(project);
+        const meta = body.querySelectorAll('.project-card-meta span');
+        meta[0].textContent = formatProjectDate(project.updatedAt);
+        meta[1].textContent = chatCount === 1 ? '1 chat' : chatCount + ' chats';
+        body.addEventListener('click', () => openProject(project.id));
+
+        const gear = document.createElement('button');
+        gear.type = 'button';
+        gear.className = 'project-card-gear';
+        gear.setAttribute('aria-label', 'Project settings');
+        gear.title = 'Settings';
+        gear.textContent = '⚙';
+        gear.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openProjectSettings(project.id);
+        });
+
+        card.appendChild(body);
+        card.appendChild(gear);
+        projectsGrid.appendChild(card);
+      }
+    }
+
+    function createProject() {
+      const project = normalizeProject({
+        id: newId('p'),
+        name: 'New project',
+        instructions: '',
+        memory: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      projects.unshift(project);
+      saveStore();
+      showProjectsView();
+      openProjectSettings(project.id);
+    }
+
+    function openProjectSettings(projectId) {
+      const project = getProject(projectId);
+      if (!project) return;
+      editingProjectId = projectId;
+      document.getElementById('projectName').value = project.name;
+      document.getElementById('projectInstructions').value = project.instructions;
+      document.getElementById('projectMemory').value = project.memory;
+      projectModal.classList.remove('is-hidden');
+      document.getElementById('projectName').focus();
+    }
+
+    function closeProjectSettings() {
+      projectModal.classList.add('is-hidden');
+      editingProjectId = null;
+    }
+
+    function commitProjectSettings() {
+      const project = getProject(editingProjectId);
+      if (!project) return;
+      const name = document.getElementById('projectName').value.trim() || 'Untitled project';
+      project.name = name;
+      project.instructions = document.getElementById('projectInstructions').value;
+      project.memory = document.getElementById('projectMemory').value;
+      project.updatedAt = Date.now();
+      saveStore();
+      closeProjectSettings();
+      renderSidebar();
+      if (mainView === 'projects') renderProjectsPage();
+      updateGreeting();
+    }
+
+    function deleteProject(projectId) {
+      const project = getProject(projectId);
+      if (!project) return;
+      if (!confirm('Delete project "' + project.name + '"? Chats move back to Recents.')) return;
+      conversations.forEach((convo) => {
+        if (convo.projectId === projectId) convo.projectId = null;
+      });
+      projects = projects.filter((item) => item.id !== projectId);
+      if (activeProjectId === projectId) activeProjectId = null;
+      saveStore();
+      closeProjectSettings();
+      renderSidebar();
+      if (mainView === 'projects') renderProjectsPage();
+      else {
+        showChatView();
+        startDraft();
+      }
+      updateGreeting();
+    }
+
+    function openProject(projectId) {
+      const project = getProject(projectId);
+      if (!project) return;
+      activeProjectId = projectId;
+      cancelMessageEdit();
+      activeId = null;
+      showChatView();
+      showEmptyState();
+      renderSidebar();
+      chatShell.classList.remove('sidebar-open');
+      composerInput.focus();
     }
 
     function escapeHtml(text) {
@@ -1815,11 +2850,11 @@
       emptyState.classList.remove('is-hidden');
       threadWrap.classList.add('is-hidden');
       chatTopbar.classList.remove('has-thread');
-      convoTitleEl.textContent = '';
       // Drop the previous thread's nodes — sendMessage appends to whatever is
       // here, so leaving them would splice the old conversation into the new one.
       chatThread.innerHTML = '';
       emptyStateInner.appendChild(composerCard);
+      syncProjectChrome();
     }
 
     function showThread(convo) {
@@ -1828,6 +2863,7 @@
       chatTopbar.classList.add('has-thread');
       convoTitleEl.textContent = convo.title || 'New chat';
       composerDock.appendChild(composerCard);
+      syncProjectChrome();
     }
 
     const COPY_ICON =
@@ -2027,35 +3063,68 @@
     }
 
     function renderSidebar() {
+      closeConvoMenu();
       const list = document.getElementById('convoList');
       list.innerHTML = '';
-      const sorted = byRecency();
-      if (sorted.length === 0) {
-        const hint = document.createElement('p');
-        hint.className = 'convo-empty-hint';
-        hint.textContent = 'No conversations yet.';
-        list.appendChild(hint);
+      sidebarProjectContext.innerHTML = '';
+      sidebarProjectContext.classList.add('is-hidden');
+      btnProjectsNav.classList.toggle('is-active', mainView === 'projects');
+
+      const project = getProject(activeProjectId);
+      if (project && mainView === 'chat') {
+        sidebarProjectContext.classList.remove('is-hidden');
+        const kicker = document.createElement('p');
+        kicker.className = 'sidebar-project-kicker';
+        kicker.textContent = 'In project';
+        const chip = document.createElement('div');
+        chip.className = 'sidebar-project-chip';
+        const name = document.createElement('span');
+        name.className = 'sidebar-project-chip-name';
+        name.textContent = project.name;
+        name.title = project.name;
+        const settingsBtn = document.createElement('button');
+        settingsBtn.type = 'button';
+        settingsBtn.className = 'project-settings-btn';
+        settingsBtn.setAttribute('aria-label', 'Project settings');
+        settingsBtn.title = 'Project settings';
+        settingsBtn.textContent = '⚙';
+        settingsBtn.addEventListener('click', () => openProjectSettings(project.id));
+        chip.appendChild(name);
+        chip.appendChild(settingsBtn);
+        const leave = document.createElement('button');
+        leave.type = 'button';
+        leave.className = 'sidebar-leave-project';
+        leave.textContent = '← Back to general chats';
+        leave.addEventListener('click', leaveProject);
+        sidebarProjectContext.appendChild(kicker);
+        sidebarProjectContext.appendChild(chip);
+        sidebarProjectContext.appendChild(leave);
+        sidebarConvoLabel.textContent = 'Project chats';
+        const projectConvos = conversationsForProject(project.id);
+        if (projectConvos.length === 0) {
+          const hint = document.createElement('p');
+          hint.className = 'convo-empty-hint';
+          hint.textContent = 'No chats yet — send a message to start.';
+          list.appendChild(hint);
+        } else {
+          for (const convo of projectConvos) {
+            list.appendChild(createConvoItem(convo));
+          }
+        }
         return;
       }
-      for (const convo of sorted) {
-        const item = document.createElement('div');
-        item.className = 'convo-item' + (convo.id === activeId ? ' is-active' : '');
-        const title = document.createElement('span');
-        title.className = 'convo-title';
-        title.textContent = convo.title || 'New chat';
-        const del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'convo-delete';
-        del.setAttribute('aria-label', 'Delete conversation');
-        del.textContent = '×';
-        del.addEventListener('click', (event) => {
-          event.stopPropagation();
-          deleteConversation(convo.id);
-        });
-        item.appendChild(title);
-        item.appendChild(del);
-        item.addEventListener('click', () => selectConversation(convo.id));
-        list.appendChild(item);
+
+      sidebarConvoLabel.textContent = 'Recents';
+      const recent = uncategorizedConversations();
+      if (recent.length === 0) {
+        const hint = document.createElement('p');
+        hint.className = 'convo-empty-hint';
+        hint.textContent = projects.length ? 'No general chats yet.' : 'No conversations yet.';
+        list.appendChild(hint);
+      } else {
+        for (const convo of recent) {
+          list.appendChild(createConvoItem(convo));
+        }
       }
     }
 
@@ -2063,6 +3132,8 @@
       const convo = conversations.find((item) => item.id === id);
       if (!convo) return;
       activeId = id;
+      activeProjectId = convo.projectId || null;
+      showChatView();
       renderSidebar();
       showThread(convo);
       renderThread(convo);
@@ -2074,6 +3145,7 @@
     function startDraft() {
       cancelMessageEdit();
       activeId = null;
+      showChatView();
       renderSidebar();
       showEmptyState();
       chatShell.classList.remove('sidebar-open');
@@ -2185,14 +3257,21 @@
       serverChip.className = 'status-chip status-' + data.status;
       serverChip.textContent = data.status_label;
       serverReady = data.status === 'ready';
-      modelHintEl.textContent = serverReady
-        ? 'Chatting with ' + data.model
-        : 'Model server is ' + data.status_label + '.';
-      if (serverReady) {
-        updateComposerHint();
-      } else {
+      const project = inProjectChat() ? getProject(activeProjectId) : null;
+      if (!serverReady) {
+        modelHintEl.textContent = project && !activeId
+          ? 'Shared instructions and memory apply · model is ' + data.status_label + '.'
+          : 'Model server is ' + data.status_label + '.';
         composerHint.textContent = 'Start the model on the control panel to chat.';
         composerHint.classList.add('is-warn');
+      } else if (project && !activeId) {
+        modelHintEl.textContent = 'Shared instructions & memory apply · ' + data.model;
+        updateComposerHint();
+      } else {
+        modelHintEl.textContent = project
+          ? 'Chatting with ' + data.model + ' · Project: ' + project.name
+          : 'Chatting with ' + data.model;
+        updateComposerHint();
       }
       updateSendEnabled();
     }
@@ -2211,6 +3290,7 @@
       const typed = composerInput.value.trim();
       if (!typed || sending || !serverReady) return;
       cancelMessageEdit();
+      showChatView();
 
       const mentioned = parseAgentMention(typed);
       const text = mentioned.text;
@@ -2221,8 +3301,14 @@
 
       let convo = conversations.find((item) => item.id === activeId);
       if (!convo) {
-        const id = crypto.randomUUID ? crypto.randomUUID() : 'c' + Date.now() + Math.random().toString(16).slice(2);
-        convo = { id, title: 'New chat', messages: [], updatedAt: Date.now() };
+        const id = newId('c');
+        convo = {
+          id,
+          title: 'New chat',
+          messages: [],
+          updatedAt: Date.now(),
+          projectId: activeProjectId || null,
+        };
         conversations.push(convo);
         activeId = id;
       }
@@ -2293,22 +3379,28 @@
       let agentSteps = []; // { name, detail, result, live }
       const renderAgentTrace = () => agentSteps.map((step) => agentStepHtml(step)).join('');
       const paintBubble = (replyText, streaming) => {
+        const { cleaned, memory } = applyMemoryUpdateProtocol(replyText, { streaming });
+        if (memory != null && convo.projectId) {
+          persistProjectMemory(convo.projectId, memory);
+        }
         if (agentSteps.length > 0) {
           traceEl.innerHTML = renderAgentTrace();
           traceEl.classList.remove('is-hidden');
         }
-        if (replyText) {
-          answerEl.innerHTML = renderAssistantHtml(replyText, { streaming });
+        if (cleaned) {
+          answerEl.innerHTML = renderAssistantHtml(cleaned, { streaming });
+        } else if (!streaming) {
+          answerEl.innerHTML = '';
         }
         // Agent mode: keep the live orb visible for the whole run.
         // Normal chat: hide it once tokens start arriving.
         if (useAgent) {
           statusEl.classList.remove('is-hidden');
-        } else if (replyText) {
+        } else if (cleaned) {
           statusEl.classList.add('is-hidden');
           thinkingOrb.stop();
         }
-        assistantRow.dataset.raw = replyText;
+        assistantRow.dataset.raw = cleaned;
         scrollToBottom();
       };
       const typer = createStreamTyper((replyText, streaming) => {
@@ -2375,7 +3467,7 @@
         const last = apiMessages[apiMessages.length - 1];
         if (last.role === 'user') last.content = text;
       }
-      const systemPrompt = buildSystemPrompt();
+      const systemPrompt = buildSystemPrompt(convo.projectId);
       if (systemPrompt) {
         apiMessages.unshift({ role: 'system', content: systemPrompt });
       }
@@ -2446,7 +3538,14 @@
 
       // Snap any remaining buffered characters — never delay finish for the effect.
       typer.flush();
-      const assistantText = typer.target;
+      const extracted = applyMemoryUpdateProtocol(typer.target, { streaming: false });
+      if (extracted.memory != null && convo.projectId) {
+        persistProjectMemory(convo.projectId, extracted.memory);
+      }
+      let assistantText = extracted.cleaned;
+      if (!assistantText && extracted.memory != null && !errorMessage) {
+        assistantText = 'Updated project memory.';
+      }
 
       thinkingOrb.stop();
       agentSteps.forEach((step) => { step.live = false; });
@@ -2474,7 +3573,12 @@
       if (assistantText) {
         convo.messages.push({ role: 'assistant', content: assistantText });
         assistantRow.dataset.msgIndex = String(convo.messages.length - 1);
+        assistantRow.dataset.raw = assistantText;
         convo.updatedAt = Date.now();
+        if (convo.projectId) {
+          const project = getProject(convo.projectId);
+          if (project) project.updatedAt = Date.now();
+        }
         saveConversations();
         renderSidebar();
       }
@@ -2493,22 +3597,51 @@
       settings.agentMode = !settings.agentMode;
       saveSettings({ ...settings });
     });
-    document.getElementById('btnNewChat').addEventListener('click', startDraft);
+    document.getElementById('btnNewChat').addEventListener('click', () => {
+      // New chat stays in the current project context when one is active.
+      startDraft();
+    });
+    btnProjectsNav.addEventListener('click', showProjectsView);
+    document.getElementById('btnNewProject').addEventListener('click', createProject);
+    projectsSearch.addEventListener('input', renderProjectsPage);
+    projectsSort.addEventListener('change', renderProjectsPage);
     document.getElementById('btnToggleSidebar').addEventListener('click', () => chatShell.classList.toggle('sidebar-open'));
     document.getElementById('sidebarBackdrop').addEventListener('click', () => chatShell.classList.remove('sidebar-open'));
     document.getElementById('btnSettings').addEventListener('click', openSettings);
     document.getElementById('btnSettingsCancel').addEventListener('click', closeSettings);
     document.getElementById('btnSettingsClose').addEventListener('click', closeSettings);
     document.getElementById('btnSettingsSave').addEventListener('click', commitSettings);
+    document.getElementById('btnProjectCancel').addEventListener('click', closeProjectSettings);
+    document.getElementById('btnProjectClose').addEventListener('click', closeProjectSettings);
+    document.getElementById('btnProjectSave').addEventListener('click', commitProjectSettings);
+    document.getElementById('btnProjectDelete').addEventListener('click', () => {
+      if (editingProjectId) deleteProject(editingProjectId);
+    });
     document.querySelectorAll('.settings-nav-btn').forEach((btn) => {
       btn.addEventListener('click', () => showSettingsPane(btn.dataset.settingsPane));
     });
     settingsModal.addEventListener('click', (event) => {
       if (event.target === settingsModal) closeSettings();
     });
+    projectModal.addEventListener('click', (event) => {
+      if (event.target === projectModal) closeProjectSettings();
+    });
+    document.addEventListener('click', (event) => {
+      if (openConvoMenu && !openConvoMenu.contains(event.target) && !event.target.closest('.convo-move')) {
+        closeConvoMenu();
+      }
+    });
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !settingsModal.classList.contains('is-hidden')) {
-        closeSettings();
+      if (event.key === 'Escape') {
+        if (!projectModal.classList.contains('is-hidden')) {
+          closeProjectSettings();
+          return;
+        }
+        if (!settingsModal.classList.contains('is-hidden')) {
+          closeSettings();
+          return;
+        }
+        closeConvoMenu();
       }
     });
 
@@ -2569,13 +3702,62 @@
       }
     });
 
+    function mountStarfield(canvas) {
+      if (!canvas) return;
+      const host = canvas.parentElement;
+      if (!host) return;
+
+      function rand(seed) {
+        let t = seed + 0x6d2b79f5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      }
+
+      function paint() {
+        const width = host.clientWidth || 1;
+        const height = host.clientHeight || 1;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.max(1, Math.floor(width * dpr));
+        canvas.height = Math.max(1, Math.floor(height * dpr));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        // Dense field of tiny dim dots; seeded so resize doesn't reshuffle wildly.
+        const count = Math.round((width * height) / 2200);
+        for (let i = 0; i < count; i++) {
+          const x = rand(i * 1289 + 17) * width;
+          const y = rand(i * 2657 + 91) * height;
+          const size = rand(i * 409 + 3) < 0.82 ? 0.55 : 0.95;
+          const alpha = 0.1 + rand(i * 733 + 11) * 0.28;
+          ctx.beginPath();
+          ctx.fillStyle = 'rgba(245, 248, 255, ' + alpha.toFixed(3) + ')';
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      paint();
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(paint);
+        observer.observe(host);
+      } else {
+        window.addEventListener('resize', paint);
+      }
+    }
+
     updateGreeting();
     syncAgentButton();
     mountOrb(document.getElementById('orbMark'), 64);
+    mountStarfield(document.getElementById('starfieldCanvas'));
 
     const mostRecent = byRecency()[0];
     if (mostRecent && mostRecent.messages.length > 0) {
       activeId = mostRecent.id;
+      activeProjectId = mostRecent.projectId || null;
+      showChatView();
       renderSidebar();
       showThread(mostRecent);
       renderThread(mostRecent);

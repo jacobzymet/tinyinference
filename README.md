@@ -1,4 +1,4 @@
-# tinyinference
+# <img src="assets/ti.png" alt="" width="42" align="top"> tinyinference
 
 A minimal, lightweight Rust desktop app for launching and managing `llama-server` with GGUF models.
 
