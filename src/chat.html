@@ -1951,21 +1951,6 @@
     /* ================================================================
      * Chat
      * ================================================================ */
-    (function persistAccessToken() {
-      const params = new URLSearchParams(location.search);
-      const token = params.get('token');
-      if (!token) return;
-      sessionStorage.setItem('tinyinference_token', token);
-      params.delete('token');
-      const query = params.toString();
-      history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
-    })();
-
-    function accessHeaders() {
-      const token = sessionStorage.getItem('tinyinference_token');
-      return token ? { Authorization: 'Bearer ' + token } : {};
-    }
-
     const STORAGE_KEY = 'tinyinference.chat.v1';
     const SETTINGS_KEY = 'tinyinference.chat.settings.v1';
     const THINKING_EFFORTS = ['auto', 'off', 'low', 'medium', 'high', 'max'];
@@ -3613,7 +3598,7 @@
 
     async function pollState() {
       try {
-        const response = await fetch('/api/state', { headers: accessHeaders() });
+        const response = await fetch('/api/state');
         if (!response.ok) return;
         updateServerChip(await response.json());
       } catch {
@@ -3824,7 +3809,6 @@
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            ...accessHeaders(),
           },
           body: JSON.stringify(requestBody),
           signal: controller.signal,

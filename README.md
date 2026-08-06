@@ -177,13 +177,17 @@ Windows, `pbcopy` on macOS, and `wl-copy`, `xclip`, or `xsel` on Linux.
 The tinyinference control panel binds to `127.0.0.1:3920` by default (override with
 `--bind`, `TINYINFERENCE_BIND`, or `[ui]` in the config) and stays private. Use the
 **Network sharing** tab to expose only the managed `llama-server` OpenAI-compatible
-API on Tailscale only (`100.x`, default), LAN (all interfaces), or a specific
-address. The control panel and chat always stay on loopback. Clients authenticate
-with an API key (`Authorization: Bearer …`). Sharing is plain HTTP (not TLS) —
-prefer Tailscale. Restart the model server after changing share settings or keys
-so llama-server picks them up. You can also point local chat at a remote
-OpenAI-compatible base URL (another tinyinference with Share LLM API, or any
-llama-server) via Linked LLM.
+inference API on Tailscale only (`100.x`, default), LAN (all interfaces), or a
+specific address. The control panel and chat always stay on loopback. While
+sharing, tinyinference disables the llama web UI, `/slots`, and `/metrics`,
+enables API keys, and serves **HTTPS with a self-signed certificate** stored
+under your config directory (`tls/cert.pem` and `tls/key.pem`). Clients must
+trust that certificate (browser/OS warning is expected) and send
+`Authorization: Bearer …`. Your `llama-server` build needs OpenSSL support
+(`LLAMA_OPENSSL=ON`). Note: llama.cpp still serves `/health` and `/models`
+without a key; completions and most other routes require the API key. Prefer
+Tailscale. Restart the model after changing share settings or keys. You can also
+point local chat at a remote OpenAI-compatible base URL via Linked LLM.
 
 You can run more than one model at a time: **Start another** launches the
 currently configured model on the next free port. The dashboard lists running

@@ -723,6 +723,7 @@ impl App {
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
+        let _ = app.sync_share_tls();
         app
     }
 
@@ -839,7 +840,6 @@ impl App {
     }
 
     pub fn network_share_urls(&self) -> Vec<ShareUrl> {
-        let token = self.config.network.access_token.as_str();
         let network = &self.config.network;
         if !network.expose {
             return Vec::new();
@@ -853,15 +853,16 @@ impl App {
         if ports.is_empty() {
             return Vec::new();
         }
+        let scheme = self.config.scheme();
 
         let mut urls = Vec::new();
         for port in ports {
             match network.listen_scope {
                 ListenScope::All => {
-                    urls.extend(network::lan_share_urls(port, token));
-                    urls.extend(network::tailscale_urls(port, token));
+                    urls.extend(network::lan_share_urls(port, scheme));
+                    urls.extend(network::tailscale_urls(port, scheme));
                 }
-                ListenScope::Tailscale => urls.extend(network::tailscale_urls(port, token)),
+                ListenScope::Tailscale => urls.extend(network::tailscale_urls(port, scheme)),
                 ListenScope::Custom => {
                     if let Ok(ip) = bind_host.parse::<std::net::Ipv4Addr>() {
                         let kind = if network::is_tailscale_cg_nat(ip) {
@@ -874,20 +875,43 @@ impl App {
                         } else {
                             format!("Custom ({ip})")
                         };
-                        urls.push(network::share_url_for(kind, label, ip, port, token));
+                        urls.push(network::share_url_for(kind, label, ip, port, scheme));
                     } else {
                         urls.push(network::share_url_host(
                             "custom",
                             format!("Custom ({bind_host})"),
                             &bind_host,
                             port,
-                            token,
+                            scheme,
                         ));
                     }
                 }
             }
         }
         urls
+    }
+
+    /// Ensure self-signed TLS material exists when Share is on; clear when off.
+    pub fn sync_share_tls(&mut self) -> Result<(), String> {
+        if !self.config.network.expose {
+            self.config.set_share_tls(None);
+            return Ok(());
+        }
+        let config_dir = self
+            .config_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let mut extra_ips = Vec::new();
+        if let Ok(host) = self.config.network.resolve_listen_host()
+            && let Ok(ip) = host.parse::<std::net::IpAddr>()
+        {
+            extra_ips.push(ip);
+        }
+        let paths = crate::tls::ensure_self_signed(config_dir, &extra_ips)
+            .map_err(|error| format!("could not prepare share TLS certificate: {error:#}"))?;
+        self.config
+            .set_share_tls(Some((paths.cert_file, paths.key_file)));
+        Ok(())
     }
 
     pub fn listen_candidates(&self) -> Vec<ListenCandidate> {
@@ -993,18 +1017,20 @@ impl App {
 
         self.config.keep_ui_private();
         self.config.sync_llama_bind_from_network();
+        self.sync_share_tls()?;
         self.config
             .save(&self.config_path)
             .map_err(|error| format!("could not save config: {error:#}"))?;
         self.sync_mdns_advertise();
         let restart_required = self.network_restart_required();
         self.push_log(format!(
-            "network updated (expose={}, scope={}, mode={}, llama={}:{})",
+            "network updated (expose={}, scope={}, mode={}, llama={}:{}, tls={})",
             self.config.network.expose,
             self.config.network.listen_scope.as_str(),
             self.config.network.inference_mode.as_str(),
             self.config.effective_host(),
-            self.config.effective_port()
+            self.config.effective_port(),
+            self.config.uses_tls()
         ));
 
         Ok(NetworkUpdateResult {
@@ -1742,6 +1768,12 @@ impl App {
         }
         self.config.keep_ui_private();
         self.config.sync_llama_bind_from_network();
+        if let Err(error) = self.sync_share_tls() {
+            self.status = ServerStatus::Failed;
+            self.status_detail = error.clone();
+            self.push_log(format!("[start blocked] {error}"));
+            return;
+        }
         let mut launch_config = self.config.clone();
         // Additional instances get the next free port; primary keeps the configured port.
         if self.process.is_some() {

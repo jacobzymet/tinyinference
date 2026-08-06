@@ -223,11 +223,7 @@ fn stream_once(
         }
     }
 
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(REQUEST_TIMEOUT))
-        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .new_agent();
+    let agent = crate::chat::llm_http_agent(REQUEST_TIMEOUT);
 
     let mut request_builder = agent.post(&url);
     if let Some(key) = api_key.map(str::trim).filter(|key| !key.is_empty()) {

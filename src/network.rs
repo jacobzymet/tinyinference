@@ -1,8 +1,8 @@
-//! LAN / Tailscale exposure, access tokens, share URLs, and mDNS discovery.
+//! LAN / Tailscale exposure, API keys, share URLs, and mDNS discovery.
 
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -95,9 +95,15 @@ impl ListenScope {
 
     pub fn technical_detail(self) -> &'static str {
         match self {
-            Self::All => "Binds llama-server to 0.0.0.0 (all interfaces). HTTP, not TLS.",
-            Self::Tailscale => "Binds llama-server to your Tailscale IP (100.x) only. HTTP, not TLS.",
-            Self::Custom => "Binds llama-server to the address you select. HTTP, not TLS.",
+            Self::All => {
+                "Binds llama-server to 0.0.0.0 (all interfaces) with a self-signed TLS cert."
+            }
+            Self::Tailscale => {
+                "Binds llama-server to your Tailscale IP (100.x) only with a self-signed TLS cert."
+            }
+            Self::Custom => {
+                "Binds llama-server to the address you select with a self-signed TLS cert."
+            }
         }
     }
 }
@@ -318,11 +324,6 @@ impl NetworkConfig {
         sanitize_instance_name(&default_hostname())
     }
 
-    /// Control-panel `/api` stays local; auth for shared LLMs is llama `--api-key`.
-    pub fn inbound_auth_required(&self) -> bool {
-        false
-    }
-
     /// Host string llama-server should bind to (without port).
     pub fn resolve_listen_host(&self) -> Result<String, String> {
         if !self.expose {
@@ -530,21 +531,21 @@ pub fn is_tailscale_cg_nat(ip: Ipv4Addr) -> bool {
 pub struct ShareUrl {
     pub kind: &'static str,
     pub label: String,
-    /// OpenAI-compatible API base, e.g. `http://192.168.1.10:8080/v1`.
+    /// OpenAI-compatible API base, e.g. `https://192.168.1.10:8080/v1`.
     pub api_base: String,
 }
 
-pub fn lan_share_urls(port: u16, token: &str) -> Vec<ShareUrl> {
+pub fn lan_share_urls(port: u16, scheme: &str) -> Vec<ShareUrl> {
     let (lan, _) = shareable_ipv4_addrs();
     lan.into_iter()
-        .map(|ip| share_url_for("lan", format!("LAN ({ip})"), ip, port, token))
+        .map(|ip| share_url_for("lan", format!("LAN ({ip})"), ip, port, scheme))
         .collect()
 }
 
-pub fn tailscale_urls(port: u16, token: &str) -> Vec<ShareUrl> {
+pub fn tailscale_urls(port: u16, scheme: &str) -> Vec<ShareUrl> {
     let (_, ts) = shareable_ipv4_addrs();
     ts.into_iter()
-        .map(|ip| share_url_for("tailscale", format!("Tailscale ({ip})"), ip, port, token))
+        .map(|ip| share_url_for("tailscale", format!("Tailscale ({ip})"), ip, port, scheme))
         .collect()
 }
 
@@ -553,9 +554,9 @@ pub fn share_url_for(
     label: String,
     ip: Ipv4Addr,
     port: u16,
-    token: &str,
+    scheme: &str,
 ) -> ShareUrl {
-    share_url_host(kind, label, &ip.to_string(), port, token)
+    share_url_host(kind, label, &ip.to_string(), port, scheme)
 }
 
 pub fn share_url_host(
@@ -563,56 +564,15 @@ pub fn share_url_host(
     label: String,
     host: &str,
     port: u16,
-    _token: &str,
+    scheme: &str,
 ) -> ShareUrl {
     let authority = format!("{host}:{port}");
+    let scheme = if scheme == "https" { "https" } else { "http" };
     ShareUrl {
         kind,
         label,
-        api_base: format!("http://{authority}/v1"),
+        api_base: format!("{scheme}://{authority}/v1"),
     }
-}
-
-pub fn extract_request_token(headers: &axum::http::HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get(axum::http::header::AUTHORIZATION)
-        && let Ok(raw) = value.to_str()
-    {
-        let trimmed = raw.trim();
-        if let Some(rest) = trimmed.strip_prefix("Bearer ").or_else(|| trimmed.strip_prefix("bearer "))
-        {
-            let token = rest.trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
-            }
-        }
-    }
-    if let Some(value) = headers.get("x-tinyinference-token")
-        && let Ok(raw) = value.to_str()
-    {
-        let token = raw.trim();
-        if !token.is_empty() {
-            return Some(token.to_string());
-        }
-    }
-    None
-}
-
-pub fn token_matches(expected: &str, provided: &str) -> bool {
-    let expected = expected.as_bytes();
-    let provided = provided.as_bytes();
-    if expected.len() != provided.len() {
-        return false;
-    }
-    // Constant-time-ish compare for short secrets.
-    let mut diff = 0u8;
-    for (a, b) in expected.iter().zip(provided.iter()) {
-        diff |= a ^ b;
-    }
-    diff == 0
-}
-
-pub fn is_loopback_addr(addr: SocketAddr) -> bool {
-    addr.ip().is_loopback()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -855,11 +815,7 @@ fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
         base = format!("{base}/v1");
     }
     let url = format!("{base}/models");
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(2)))
-        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .new_agent();
+    let agent = crate::chat::llm_http_agent(Duration::from_secs(2));
     let mut request = agent.get(&url);
     if !token.trim().is_empty() {
         request = request.header("Authorization", &format!("Bearer {}", token.trim()));

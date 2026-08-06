@@ -54,6 +54,14 @@ fn main() -> Result<()> {
     if cli.print_command {
         let mut config = config;
         config.migrate_network_expose_to_llama();
+        if config.network.expose {
+            let dir = config_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            if let Ok(paths) = tinyinference::tls::ensure_self_signed(dir, &[]) {
+                config.set_share_tls(Some((paths.cert_file, paths.key_file)));
+            }
+        }
         println!("{}", CommandSpec::from_config(&config).display());
         return Ok(());
     }

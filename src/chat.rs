@@ -74,6 +74,20 @@ pub fn stream_remote_completion(
     ReceiverStream::new(rx)
 }
 
+/// HTTP(S) agent for llama / linked LLMs. Verification is off so self-signed
+/// share certificates from tinyinference are accepted.
+pub(crate) fn llm_http_agent(timeout: Duration) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .disable_verification(true)
+        .build();
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .tls_config(tls)
+        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .new_agent()
+}
+
 fn proxy_sse_post(
     url: &str,
     authorization: Option<&str>,
@@ -81,11 +95,7 @@ fn proxy_sse_post(
     tx: &mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
     upstream_label: &str,
 ) {
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(REQUEST_TIMEOUT))
-        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .new_agent();
+    let agent = llm_http_agent(REQUEST_TIMEOUT);
 
     let mut request = agent.post(url);
     if let Some(header) = authorization {

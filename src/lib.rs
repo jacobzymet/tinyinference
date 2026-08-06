@@ -11,4 +11,5 @@ pub mod instance;
 pub mod network;
 pub mod server;
 pub mod system;
+pub mod tls;
 pub mod web;

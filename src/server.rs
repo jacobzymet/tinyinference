@@ -133,13 +133,25 @@ impl CommandSpec {
         if !has_threads_override(&filtered_extras) {
             push_pair(&mut args, "--threads", threads.max(1).to_string());
         }
-        args.push("--metrics".into());
+        // Local-only observability. When sharing, prefer an inference-only surface.
+        if config.network.expose {
+            args.push("--no-webui".into());
+            args.push("--no-slots".into());
+        } else {
+            args.push("--metrics".into());
+        }
         push_pair(&mut args, "--host", config.effective_host());
         push_pair(
             &mut args,
             "--port",
             config.effective_port().to_string(),
         );
+        if config.uses_tls() {
+            if let (Some(cert), Some(key)) = (&config.tls_cert_file, &config.tls_key_file) {
+                push_pair(&mut args, "--ssl-cert-file", cert.as_os_str());
+                push_pair(&mut args, "--ssl-key-file", key.as_os_str());
+            }
+        }
         for key in config.llama_api_keys() {
             if !key.trim().is_empty() {
                 push_pair(&mut args, "--api-key", key);
@@ -175,6 +187,8 @@ fn filter_managed_extra_args(extra_args: &[String]) -> Vec<String> {
         "--host",
         "--port",
         "--api-key",
+        "--ssl-cert-file",
+        "--ssl-key-file",
         "--device",
         "--n-gpu-layers",
         "--fit",
@@ -201,6 +215,9 @@ fn filter_managed_extra_args(extra_args: &[String]) -> Vec<String> {
         "--no-mmproj",
         "--jinja",
         "--metrics",
+        "--no-webui",
+        "--no-ui",
+        "--no-slots",
     ];
 
     let mut out = Vec::with_capacity(extra_args.len());
@@ -616,6 +633,9 @@ fn json_u64(value: &serde_json::Value) -> Option<u64> {
 }
 
 fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, String)> {
+    if config.uses_tls() {
+        return https_get(config, path, timeout);
+    }
     let host = config.connect_host();
     let port = config.effective_port();
     let address = host
@@ -664,6 +684,33 @@ fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, Stri
         .map(|(_, body)| body)
         .unwrap_or_default()
         .to_string();
+    Some((status, body))
+}
+
+/// Probes against our own self-signed llama TLS (verification intentionally off).
+fn https_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, String)> {
+    let url = format!(
+        "{}{}",
+        config.endpoint().trim_end_matches('/'),
+        path
+    );
+    let tls = ureq::tls::TlsConfig::builder()
+        .disable_verification(true)
+        .build();
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .tls_config(tls)
+        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .new_agent();
+    let mut request = agent.get(&url);
+    let key = config.server.api_key.trim();
+    if !key.is_empty() {
+        request = request.header("Authorization", &format!("Bearer {key}"));
+    }
+    let mut response = request.call().ok()?;
+    let status = u16::from(response.status());
+    let body = response.body_mut().read_to_string().ok()?;
     Some((status, body))
 }
 
@@ -871,6 +918,9 @@ mod tests {
         config.network.listen_host = "100.64.1.2".into();
         config.network.ensure_token();
         config.sync_llama_bind_from_network();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::tls::ensure_self_signed(dir.path(), &[]).unwrap();
+        config.set_share_tls(Some((paths.cert_file, paths.key_file)));
         config.server.extra_args = vec![
             "--host".into(),
             "0.0.0.0".into(),
@@ -905,6 +955,11 @@ mod tests {
                 .any(|window| window[0] == "--flash-attn" && window[1] == "on")
         );
         assert!(actual.iter().any(|argument| *argument == "--api-key"));
+        assert!(actual.iter().any(|argument| *argument == "--no-webui"));
+        assert!(actual.iter().any(|argument| *argument == "--no-slots"));
+        assert!(!actual.iter().any(|argument| *argument == "--metrics"));
+        assert!(actual.iter().any(|argument| *argument == "--ssl-cert-file"));
+        assert!(actual.iter().any(|argument| *argument == "--ssl-key-file"));
         assert!(
             actual
                 .windows(2)

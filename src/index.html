@@ -1316,7 +1316,7 @@
       <div class="network-layout">
         <div class="panel network-section">
           <h3 class="network-section-title">Share models</h3>
-          <p class="network-section-lede">Let other devices call this PC’s OpenAI-compatible API over HTTP with an API key. Control panel and chat stay on this machine only. Prefer Tailscale only.</p>
+          <p class="network-section-lede">Let other devices call this PC’s OpenAI-compatible API over HTTPS with an API key. Uses a self-signed certificate (clients must trust it). Control panel and chat stay local. Prefer Tailscale only. Web UI / metrics / slots stay off while sharing.</p>
           <div class="field-switch">
             <input type="checkbox" id="networkExposeToggle">
             <label for="networkExposeToggle">Share LLM API</label>
@@ -1352,7 +1352,7 @@
           </div>
           <div class="panel network-section">
             <h3 class="network-section-title">Endpoints</h3>
-            <p class="network-section-lede">OpenAI-compatible base URLs for clients on your network.</p>
+            <p class="network-section-lede">OpenAI-compatible HTTPS bases. Trust the self-signed cert in your client (or OS), then send <code>Authorization: Bearer …</code>.</p>
             <ul id="networkShareList" class="network-list"></ul>
           </div>
         </div>
@@ -1437,7 +1437,7 @@
   <div id="exposeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="exposeConfirmTitle">
     <div class="dialog">
       <h2 id="exposeConfirmTitle">Share the LLM API?</h2>
-      <p>Only the model server is exposed — not the control panel or chat. Traffic is plain HTTP (not TLS). Callers need an API key. Default bind is Tailscale only; Wi‑Fi/LAN is broader and optional. Restart the model after enabling so the bind and keys apply.</p>
+      <p>Only the model inference API is exposed — not the control panel, chat, or llama web UI. Traffic uses a self-signed TLS certificate (clients will warn until they trust it). Callers need an API key. Default bind is Tailscale only. Restart the model after enabling.</p>
       <div class="dialog-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelExpose">Cancel</button>
         <button type="button" class="btn btn-primary" id="btnConfirmExpose">Continue</button>
@@ -1483,21 +1483,6 @@
 
 <script src="/orb.js"></script>
 <script>
-    (function persistAccessToken() {
-      const params = new URLSearchParams(location.search);
-      const token = params.get('token');
-      if (!token) return;
-      sessionStorage.setItem('tinyinference_token', token);
-      params.delete('token');
-      const query = params.toString();
-      history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
-    })();
-
-    function accessHeaders() {
-      const token = sessionStorage.getItem('tinyinference_token');
-      return token ? { Authorization: 'Bearer ' + token } : {};
-    }
-
     let state = null;
     let networkState = null;
     let revealedTokens = {}; // id -> full secret (session only)
@@ -1605,7 +1590,6 @@
       const response = await fetch(path, {
         headers: {
           'Content-Type': 'application/json',
-          ...accessHeaders(),
           ...(extraHeaders || {}),
         },
         ...rest,
@@ -2354,9 +2338,21 @@
       );
     }
 
+    function updatePresetHelp(presets, selectedId, custom) {
+      const help = document.getElementById('runtimePresetHelp');
+      const preset = (presets || []).find((item) => item.id === selectedId);
+      if (preset?.description) {
+        help.innerHTML = formatPresetDescription(preset.description);
+      } else if (custom || !selectedId) {
+        help.textContent = 'Current settings are custom — pick a preset to reapply a known profile.';
+      } else {
+        help.textContent = '';
+      }
+    }
+
     function updatePresetWarning(presets, selectedId) {
       const warning = document.getElementById('runtimePresetWarning');
-      const preset = presets.find((item) => item.id === selectedId);
+      const preset = (presets || []).find((item) => item.id === selectedId);
       if (preset?.warning) {
         warning.classList.remove('is-hidden');
         warning.innerHTML =
@@ -2369,24 +2365,18 @@
 
     function renderPresets(next) {
       const select = document.getElementById('runtimePreset');
-      const help = document.getElementById('runtimePresetHelp');
-      if (document.activeElement === select) return;
       const presets = next.presets || [];
       const custom = !next.active_preset;
-      select.innerHTML =
-        (custom ? '<option value="">Custom</option>' : '') +
-        presets.map((preset) =>
-          `<option value="${preset.id}" ${preset.available ? '' : 'disabled'}>${escapeHtml(preset.label)}${preset.available ? '' : ' (unavailable)'}</option>`
-        ).join('');
-      select.value = next.active_preset || '';
-      const active = presets.find((preset) => preset.id === select.value);
-      if (active) {
-        help.innerHTML = formatPresetDescription(active.description);
-      } else if (custom) {
-        help.textContent = 'Current settings are custom — pick a preset to reapply a known profile.';
-      } else {
-        help.textContent = '';
+      // Keep rebuilding options unless the user is mid-interaction in the control.
+      if (document.activeElement !== select) {
+        select.innerHTML =
+          (custom ? '<option value="">Custom</option>' : '') +
+          presets.map((preset) =>
+            `<option value="${preset.id}" ${preset.available ? '' : 'disabled'}>${escapeHtml(preset.label)}${preset.available ? '' : ' (unavailable)'}</option>`
+          ).join('');
+        select.value = next.active_preset || '';
       }
+      updatePresetHelp(presets, select.value, custom);
       updatePresetWarning(presets, select.value);
     }
 
@@ -2781,7 +2771,9 @@
     });
     document.getElementById('runtimePreset').addEventListener('change', async (event) => {
       const preset = event.target.value;
-      updatePresetWarning(state?.presets || [], preset);
+      const presets = state?.presets || [];
+      updatePresetHelp(presets, preset, !preset);
+      updatePresetWarning(presets, preset);
       if (!preset) return;
       settingsDirty = false;
       setAutosaveState('saving');

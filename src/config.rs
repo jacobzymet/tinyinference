@@ -51,6 +51,12 @@ pub struct Config {
     pub runtime: RuntimeConfig,
     pub network: NetworkConfig,
     pub recent_models: Vec<ModelSource>,
+    /// Self-signed cert for shared llama-server (not persisted in TOML).
+    #[serde(skip)]
+    pub tls_cert_file: Option<PathBuf>,
+    /// Matching private key for [`Self::tls_cert_file`].
+    #[serde(skip)]
+    pub tls_key_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -417,10 +423,22 @@ impl Config {
         loopback_host(&self.effective_host())
     }
 
+    /// True when Share is on and TLS material is attached for llama-server.
+    pub fn uses_tls(&self) -> bool {
+        self.network.expose
+            && self.tls_cert_file.as_ref().is_some_and(|p| p.as_os_str().len() > 0)
+            && self.tls_key_file.as_ref().is_some_and(|p| p.as_os_str().len() > 0)
+    }
+
+    pub fn scheme(&self) -> &'static str {
+        if self.uses_tls() { "https" } else { "http" }
+    }
+
     /// Browser-openable base URL for llama-server (never `0.0.0.0` / `::`).
     pub fn endpoint(&self) -> String {
         format!(
-            "http://{}",
+            "{}://{}",
+            self.scheme(),
             format_authority(&self.connect_host(), self.effective_port())
         )
     }
@@ -430,18 +448,34 @@ impl Config {
         let bind = self.effective_host();
         let port = self.effective_port();
         let connect = self.connect_host();
+        let scheme = self.scheme();
         if bind == "0.0.0.0" || bind == "::" {
-            format!("{bind}:{port} (open via {connect})")
+            format!("{scheme}://{bind}:{port} (open via {connect})")
         } else {
-            format_authority(&bind, port)
+            format!("{scheme}://{}", format_authority(&bind, port))
         }
     }
 
     pub fn api_endpoint(&self) -> String {
         format!(
-            "http://{}/v1",
+            "{}://{}/v1",
+            self.scheme(),
             format_authority(&self.connect_host(), self.effective_port())
         )
+    }
+
+    /// Attach or clear self-signed TLS paths used when sharing.
+    pub fn set_share_tls(&mut self, paths: Option<(PathBuf, PathBuf)>) {
+        match paths {
+            Some((cert, key)) => {
+                self.tls_cert_file = Some(cert);
+                self.tls_key_file = Some(key);
+            }
+            None => {
+                self.tls_cert_file = None;
+                self.tls_key_file = None;
+            }
+        }
     }
 
     pub fn remember_model(&mut self, source: ModelSource) {
@@ -789,7 +823,7 @@ mod tests {
         assert_eq!(config.api_endpoint(), "http://127.0.0.1:8080/v1");
         assert_eq!(
             config.listen_label(),
-            "0.0.0.0:8080 (open via 127.0.0.1)"
+            "http://0.0.0.0:8080 (open via 127.0.0.1)"
         );
         config.server.host = "::".into();
         assert_eq!(config.endpoint(), "http://[::1]:8080");

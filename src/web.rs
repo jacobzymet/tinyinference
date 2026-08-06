@@ -1,5 +1,4 @@
 use std::{
-    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -7,9 +6,8 @@ use std::{
 use axum::{
     Json, Router,
     body::Body,
-    extract::{ConnectInfo, Path, State},
-    http::{Request, StatusCode, header},
-    middleware::{self, Next},
+    extract::{Path, State},
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
@@ -26,7 +24,7 @@ use crate::{
     config::RuntimePreset,
     network::{
         ApiKeyPublic, DiscoveredPeer, InferenceMode, ListenCandidate, RemoteHealth, ShareUrl,
-        extract_request_token, is_loopback_addr, mask_token, token_matches,
+        mask_token,
     },
     server::ServerProcess,
 };
@@ -78,11 +76,7 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/copy/logs", post(copy_logs))
         .route("/api/dismiss-prompt", post(dismiss_prompt))
         .route("/api/configure-server", post(configure_server))
-        .route("/api/focus", post(focus))
-        .layer(middleware::from_fn_with_state(
-            Arc::clone(&app),
-            access_token_middleware,
-        ));
+        .route("/api/focus", post(focus));
 
     let router = Router::new()
         .route("/", get(index))
@@ -94,50 +88,10 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .merge(api)
         .with_state(app);
 
-    axum::serve(
-        listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    axum::serve(listener, router.into_make_service())
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
-}
-
-async fn access_token_middleware(
-    State(app): State<SharedApp>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    request: Request<Body>,
-    next: Next,
-) -> Response {
-    let (required, expected) = {
-        let Ok(app) = app.lock() else {
-            return ApiError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                message: "application state is unavailable".into(),
-            }
-            .into_response();
-        };
-        let network = &app.config.network;
-        (
-            network.inbound_auth_required(),
-            network.access_token.clone(),
-        )
-    };
-
-    if !required || is_loopback_addr(addr) {
-        return next.run(request).await;
-    }
-
-    let provided = extract_request_token(request.headers());
-    match provided {
-        Some(token) if token_matches(&expected, &token) => next.run(request).await,
-        _ => ApiError {
-            status: StatusCode::UNAUTHORIZED,
-            message: "access token required (Authorization: Bearer … or X-Tinyinference-Token)"
-                .into(),
-        }
-        .into_response(),
-    }
 }
 
 async fn shutdown_signal() {
