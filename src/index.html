@@ -1858,9 +1858,15 @@
       Object.keys(revealedTokens).forEach((id) => {
         if (!knownIds.has(id)) delete revealedTokens[id];
       });
-      const signature = JSON.stringify(keys) + '|' + Object.keys(revealedTokens).sort().join(',')
+      // Stable signature — do not include volatile poll noise. Skip DOM rewrites
+      // while the user is interacting with this list (otherwise Copy/Regen bounce
+      // every 250ms network refresh and become unclickable).
+      const signature = JSON.stringify(keys.map((k) => [k.id, k.name, k.secret_masked]))
+        + '|' + Object.keys(revealedTokens).sort().join(',')
         + '|' + Object.values(revealedTokens).join('|');
-      if (signature === lastApiKeySignature && document.activeElement?.classList?.contains('api-key-name-input')) {
+      const active = document.activeElement;
+      const interacting = !!(active && list.contains(active));
+      if (signature === lastApiKeySignature || interacting) {
         return;
       }
       lastApiKeySignature = signature;
