@@ -16,3 +16,6 @@ Thumbs.db
 .agents/skills/
 skills-lock.json
 .hallmark/
+
+# Site scaffold — move/track later
+/website/

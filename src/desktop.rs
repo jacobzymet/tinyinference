@@ -70,18 +70,24 @@ fn hand_off(url: &str) {
 pub enum UserEvent {
     /// A second launch asked this instance to come forward.
     Focus,
+    /// Ctrl+C / SIGTERM — shut down llama-server and leave the event loop.
+    Quit,
 }
 
 /// Open the control panel window and run the event loop until it closes.
 ///
-/// Never returns: `tao`'s event loop exits the process, so the managed
-/// `llama-server` is shut down from inside the handler rather than after.
+/// On exit, the managed `llama-server` is stopped from the close/quit handler
+/// before the event loop returns to `main`.
 pub fn run(url: &str, app: Arc<Mutex<App>>) -> Result<()> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
     // Let a second launch raise this window instead of starting a rival server.
     // The proxy is Send + Sync, so the web handler can poke it from a request.
     let proxy = event_loop.create_proxy();
+    // Axum's graceful-shutdown listens for Ctrl+C too — that only stops the
+    // HTTP server. Without this, the tao loop keeps running and further Ctrl+C
+    // is swallowed by tokio's process-global SIGINT handler (^C with no exit).
+    spawn_signal_quit(proxy.clone());
     if let Ok(mut app) = app.lock() {
         app.set_focus_hook(Box::new(move || {
             let _ = proxy.send_event(UserEvent::Focus);
@@ -127,8 +133,8 @@ pub fn run(url: &str, app: Arc<Mutex<App>>) -> Result<()> {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
-            } => {
-                // The loop exits the process, so stop llama-server here.
+            }
+            | Event::UserEvent(UserEvent::Quit) => {
                 if let Ok(mut app) = app.lock() {
                     app.shutdown();
                 }
@@ -143,6 +149,40 @@ pub fn run(url: &str, app: Arc<Mutex<App>>) -> Result<()> {
             _ => {}
         }
     })
+}
+
+/// Watch for Ctrl+C / SIGTERM on a background runtime and ask the window to quit.
+fn spawn_signal_quit(proxy: tao::event_loop::EventLoopProxy<UserEvent>) {
+    let _ = std::thread::Builder::new()
+        .name("tinyinference-signal".into())
+        .spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            rt.block_on(async {
+                #[cfg(unix)]
+                {
+                    let mut terminate = tokio::signal::unix::signal(
+                        tokio::signal::unix::SignalKind::terminate(),
+                    )
+                    .expect("failed to install SIGTERM handler");
+                    tokio::select! {
+                        result = tokio::signal::ctrl_c() => {
+                            let _ = result;
+                        }
+                        _ = terminate.recv() => {}
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+            });
+            let _ = proxy.send_event(UserEvent::Quit);
+        });
 }
 
 #[cfg(test)]

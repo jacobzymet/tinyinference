@@ -478,7 +478,23 @@ async fn stop(
     body: Option<Json<ServerIdBody>>,
 ) -> Result<Json<AppState>, ApiError> {
     let id = body.and_then(|Json(b)| b.id);
-    with_app(app, |app| app.stop_server(id.as_deref()))
+    // Kill/wait outside the app mutex so ticks and UI polls are not frozen while
+    // llama-server is reaped (can take a moment on macOS after SIGKILL).
+    let work = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        app.take_server_for_stop(id.as_deref())
+    };
+    if let Some(work) = work {
+        let outcome = tokio::task::spawn_blocking(move || work.execute())
+            .await
+            .map_err(|error| ApiError::bad_request(format!("stop task failed: {error}")))?;
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        app.apply_stop_outcome(outcome);
+        Ok(Json(AppState::from_app(&app)))
+    } else {
+        let app = app.lock().map_err(|_| ApiError::lock())?;
+        Ok(Json(AppState::from_app(&app)))
+    }
 }
 
 async fn restart(

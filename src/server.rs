@@ -382,18 +382,25 @@ impl ServerProcess {
     }
 
     fn start_spec(spec: &CommandSpec) -> Result<Self> {
-        let mut child = Command::new(&spec.program)
+        let mut command = Command::new(&spec.program);
+        command
             .args(&spec.args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "could not start {} — install llama.cpp or set the executable in Configure",
-                    spec.program.to_string_lossy()
-                )
-            })?;
+            .stderr(Stdio::piped());
+        // Own process group on Unix so Stop/Ctrl+C can signal the whole tree
+        // (llama-server helpers) without relying on the terminal foreground group.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut child = command.spawn().with_context(|| {
+            format!(
+                "could not start {} — install llama.cpp or set the executable in Configure",
+                spec.program.to_string_lossy()
+            )
+        })?;
 
         let (sender, receiver) = mpsc::channel();
         let mut readers = Vec::with_capacity(2);
@@ -425,7 +432,22 @@ impl ServerProcess {
             self.finish_output();
             return Ok(());
         }
-        self.child.kill().context("could not stop llama-server")?;
+        #[cfg(unix)]
+        {
+            // Negative pid = process group (set in start_spec). Falls back to the
+            // single child if the group kill fails.
+            let pid = self.child.id() as i32;
+            if kill_signal(-pid, SIGKILL).is_err() {
+                let _ = kill_signal(pid, SIGKILL);
+            }
+            // std::Child::kill is a second SIGKILL on the leader; ignore errors
+            // once the group signal has been delivered.
+            let _ = self.child.kill();
+        }
+        #[cfg(not(unix))]
+        {
+            self.child.kill().context("could not stop llama-server")?;
+        }
         self.child.wait().context("could not reap llama-server")?;
         self.finish_output();
         Ok(())
@@ -449,6 +471,23 @@ impl Drop for ServerProcess {
             let _ = self.child.wait();
         }
         self.finish_output();
+    }
+}
+
+#[cfg(unix)]
+const SIGKILL: i32 = 9;
+
+#[cfg(unix)]
+fn kill_signal(pid: i32, signal: i32) -> std::io::Result<()> {
+    // libc is linked by std on Unix; avoid an extra crate just for kill(2).
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let rc = unsafe { kill(pid, signal) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
 }
 

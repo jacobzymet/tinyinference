@@ -2957,13 +2957,17 @@
     });
 
     document.getElementById('btnStartStop').addEventListener('click', async () => {
-      if (state?.running) {
-        applyState(await api('/api/stop', {
-          method: 'POST',
-          body: JSON.stringify({ id: state.active_server_id || 'main' }),
-        }));
-      } else {
-        applyState(await api('/api/start', { method: 'POST' }));
+      try {
+        if (state?.running) {
+          applyState(await api('/api/stop', {
+            method: 'POST',
+            body: JSON.stringify({ id: state.active_server_id || 'main' }),
+          }));
+        } else {
+          applyState(await api('/api/start', { method: 'POST' }));
+        }
+      } catch (error) {
+        document.getElementById('statusDetail').textContent = error.message || String(error);
       }
     });
     document.getElementById('btnStartAnother').addEventListener('click', async () => {
