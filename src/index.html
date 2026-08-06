@@ -920,6 +920,14 @@
       font-size: var(--text-lg);
       margin: 0;
     }
+    .active-model-card.is-attention {
+      outline: 1px solid color-mix(in oklab, var(--color-accent) 55%, transparent);
+      outline-offset: 2px;
+      transition: outline-color 0.8s ease;
+    }
+    #modelsLaunchHint {
+      margin: 0;
+    }
     @media (max-width: 40rem) {
       .model-card {
         grid-template-columns: 1fr;
@@ -1452,7 +1460,7 @@
     <div class="main">
       <header class="toolbar">
         <div class="toolbar-model">
-          <span class="eyebrow">Selected model</span>
+          <span class="eyebrow">Active model</span>
           <div id="toolbarModel">—</div>
         </div>
         <div class="toolbar-actions">
@@ -1462,7 +1470,7 @@
             <span id="statusBadgeLabel">stopped</span>
           </span>
           <button type="button" id="btnRestart" class="btn btn-ghost">Restart</button>
-          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden">Start another</button>
+          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden" title="Pick another model on the Models tab, then start it beside the ones already running">Start another model</button>
           <button type="button" id="btnStartStop" class="btn btn-primary">Start</button>
         </div>
       </header>
@@ -1532,6 +1540,7 @@
             <span>On this PC</span>
             <span class="source-tag">local</span>
           </div>
+          <p id="runningServersHint" class="setting-hint">Each row is a live llama-server. To run a different model at the same time, pick it on Models → Start alongside.</p>
           <ul id="runningServersList" class="network-list"></ul>
         </div>
 
@@ -1574,7 +1583,7 @@
         </div>
 
         <div class="panel active-model-card">
-          <div class="eyebrow">Selected for launch</div>
+          <div class="eyebrow">Next launch</div>
           <h3 class="model-title" id="modelsActiveLabel">—</h3>
           <div id="modelsActiveMeta" class="model-card-meta"></div>
           <div class="size-panel">
@@ -1582,9 +1591,10 @@
             <div id="mappedSizeValue" class="size-value is-muted">—</div>
             <div id="mappedSizeDetail" class="setting-hint">—</div>
           </div>
+          <p id="modelsLaunchHint" class="setting-hint">Select a model from your library, then start it.</p>
           <div class="model-card-actions" style="justify-content:flex-start">
             <button type="button" class="btn btn-primary" id="btnStartFromModels">Start server</button>
-            <button type="button" class="btn btn-ghost" id="btnChangeActiveModel">Add different model</button>
+            <button type="button" class="btn btn-ghost" id="btnChangeActiveModel">Choose from library</button>
           </div>
           <p id="modelsError" class="text-error is-hidden"></p>
         </div>
@@ -1615,8 +1625,8 @@
             </div>
             <input class="field-input" id="modelFilter" type="search" placeholder="Filter…" autocomplete="off">
           </div>
-          <div class="setting-hint">
-            Models you added. Use one to select it for launch, download Hugging Face weights into the local cache, or remove a model from the library (and delete its local files).
+          <div class="setting-hint" id="modelLibraryHint">
+            Select a model to make it the next launch. If something is already running, you can start the newly selected model alongside it.
           </div>
           <div id="modelLibrary" class="model-library"></div>
           <div id="modelLibraryEmpty" class="model-empty is-hidden">
@@ -2706,20 +2716,59 @@
       else el.innerHTML = text + '<span class="unit">tok/s</span>';
     }
 
+    function runningServers(next) {
+      return next.servers || [];
+    }
+
+    function shortModelLabel(label) {
+      if (!label) return 'model';
+      const trimmed = String(label).trim();
+      const slash = trimmed.lastIndexOf('/');
+      const base = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
+      return base.length > 42 ? base.slice(0, 40) + '…' : base;
+    }
+
+    function selectedModelAlreadyRunning(next) {
+      if (!next?.has_active_model || !next.model) return false;
+      return runningServers(next).some((server) => server.model === next.model);
+    }
+
+    function focusedServerModel(next) {
+      const servers = runningServers(next);
+      return (servers.find((server) => server.active) || servers[0])?.model || null;
+    }
+
     function renderRunningServers(next) {
       const block = document.getElementById('runningServersBlock');
       const list = document.getElementById('runningServersList');
-      const servers = next.servers || [];
+      const hint = document.getElementById('runningServersHint');
+      const servers = runningServers(next);
       const net = next.network || {};
       const viaRemote = !!net.via_remote;
       if (!servers.length) {
         block.classList.add('is-hidden');
         block.classList.remove('is-active-source');
-        list.innerHTML = '';
+        if (list.innerHTML) list.innerHTML = '';
+        delete list.dataset.signature;
         return;
       }
       block.classList.remove('is-hidden');
       block.classList.toggle('is-active-source', !viaRemote);
+      const nextHint = servers.length > 1
+        ? 'Multiple local models are live. Focus picks which one Chat / the dashboard use; Stop ends only that instance.'
+        : 'To run a different model at the same time: Models → select it → Start alongside.';
+      if (hint && hint.textContent !== nextHint) hint.textContent = nextHint;
+      // Stable signature — skip DOM rewrite on poll ticks so Focus/Stop stay clickable.
+      const signature = servers.map((server) => [
+        server.id,
+        server.model,
+        server.port,
+        server.status_label,
+        server.active ? 1 : 0,
+        viaRemote ? 1 : 0,
+      ].join('\x1f')).join('\x1e');
+      if (list.dataset.signature === signature) return;
+      list.dataset.signature = signature;
       list.innerHTML = servers.map((server) => `
         <li class="${server.active ? 'is-active' : ''}">
           <div class="network-meta">
@@ -2939,7 +2988,16 @@
 
       let detail = next.status_detail;
       if (next.download) detail = next.download.summary;
-      else if (next.pending_changes) detail = 'Settings changed · restart to apply';
+      else if (next.pending_changes && next.running) {
+        const focused = focusedServerModel(next);
+        if (next.has_active_model && focused && next.model !== focused) {
+          detail = 'Different model selected · Models → Start alongside, or Restart to replace the focused server';
+        } else {
+          detail = 'Settings changed · restart to apply';
+        }
+      } else if (next.pending_changes) {
+        detail = 'Settings changed · restart to apply';
+      }
       document.getElementById('statusDetail').textContent = detail;
 
       const startStop = document.getElementById('btnStartStop');
@@ -2948,7 +3006,8 @@
       startStop.textContent = next.running ? 'Stop' : 'Start';
       startStop.className = next.running ? 'btn btn-danger' : 'btn btn-primary';
       startAnother.classList.toggle('is-hidden', count < 1);
-      startAnother.disabled = !next.has_active_model;
+      startAnother.disabled = false;
+      startAnother.textContent = 'Start another model';
 
       const net = next.network || {};
       const viaRemote = !!net.via_remote;
@@ -3050,7 +3109,7 @@
         || model.status.toLowerCase().includes(q);
     }
 
-    function modelPills(model) {
+    function modelPills(model, next = state) {
       const pills = [
         `<span class="model-pill">${escapeHtml(model.kind)}</span>`,
         `<span class="model-pill ${model.downloading ? 'is-accent' : model.on_disk ? 'is-ok' : 'is-warn'}">${escapeHtml(model.status)}</span>`,
@@ -3058,7 +3117,10 @@
       if (model.size_display) {
         pills.push(`<span class="model-pill" data-size-pill>${escapeHtml(model.size_display)}</span>`);
       }
-      if (model.selected) pills.push('<span class="model-pill is-accent">Selected</span>');
+      if (model.selected) pills.push('<span class="model-pill is-accent">Next launch</span>');
+      if (next && runningServers(next).some((server) => server.model === model.label)) {
+        pills.push('<span class="model-pill is-ok">Running</span>');
+      }
       return pills.join('');
     }
 
@@ -3073,10 +3135,13 @@
         model.downloading ? 1 : 0,
         model.kind,
         model.downloading ? 'Downloading' : model.status,
+        runningServers(next).some((server) => server.model === model.label) ? 1 : 0,
       ].join('\x1f')).join('\x1e');
       const remote = (next.network?.remote_models || []).map((m) => m.id).join('\x1e');
       return [
         modelFilter,
+        next.running ? 1 : 0,
+        next.running_server_count || 0,
         next.network?.via_remote ? 1 : 0,
         next.network?.remote_name || '',
         remote,
@@ -3166,14 +3231,16 @@
       document.getElementById('modelsActiveLabel').textContent = hasModel ? (next.model || '—') : 'No model selected';
       const active = libraryModels(next).find((model) => model.selected);
       const meta = document.getElementById('modelsActiveMeta');
+      const running = !!(next.running || (next.running_server_count || 0) > 0);
+      const sameRunning = selectedModelAlreadyRunning(next);
       const signature = (!hasModel || !active)
-        ? 'empty'
-        : [active.id || active.label, active.kind, active.status, active.on_disk ? 1 : 0, active.downloading ? 1 : 0, active.selected ? 1 : 0].join('|');
+        ? `empty|${running ? 1 : 0}`
+        : [active.id || active.label, active.kind, active.status, active.on_disk ? 1 : 0, active.downloading ? 1 : 0, active.selected ? 1 : 0, running ? 1 : 0, sameRunning ? 1 : 0].join('|');
       if (meta.dataset.signature !== signature) {
         meta.dataset.signature = signature;
         meta.innerHTML = (!hasModel || !active)
           ? '<span class="model-pill is-warn">Add or import a model to launch</span>'
-          : modelPills(active);
+          : modelPills(active, next);
       } else if (active?.size_display) {
         let sizePill = meta.querySelector('[data-size-pill]');
         if (!sizePill) {
@@ -3187,8 +3254,34 @@
         }
       }
       const startBtn = document.getElementById('btnStartFromModels');
-      startBtn.textContent = next.running ? 'Start another' : 'Start server';
+      const hint = document.getElementById('modelsLaunchHint');
+      const libraryHint = document.getElementById('modelLibraryHint');
       startBtn.disabled = !hasModel;
+      if (!hasModel) {
+        startBtn.textContent = 'Start server';
+        if (hint) hint.textContent = 'Add or select a model from your library first.';
+      } else if (!running) {
+        startBtn.textContent = 'Start server';
+        if (hint) hint.textContent = 'Starts llama-server with this model.';
+      } else if (sameRunning) {
+        startBtn.textContent = 'Start a second copy';
+        if (hint) {
+          hint.textContent = 'This model is already running. Select a different model below, then Start alongside — or start a second copy of this one on another port.';
+        }
+      } else {
+        startBtn.textContent = 'Start alongside';
+        if (hint) {
+          hint.textContent = shortModelLabel(next.model)
+            + ' will start on a new port beside your running server'
+            + ((next.running_server_count || 0) > 1 ? 's' : '')
+            + '. Restart replaces the focused server instead.';
+        }
+      }
+      if (libraryHint) {
+        libraryHint.textContent = running
+          ? 'Select a different model, then Start alongside to run two (or more) at once. Restart replaces the focused server.'
+          : 'Select a model to make it the next launch, download Hugging Face weights, or remove a model from the library.';
+      }
     }
 
     function renderLibraryDownload(next) {
@@ -3225,9 +3318,12 @@
           actions.push(`<button type="button" class="btn btn-primary" data-action="download" data-id="${escapeHtml(id)}">Download</button>`);
         }
         if (!model.selected) {
-          actions.push(`<button type="button" class="btn btn-ghost" data-action="use" data-id="${escapeHtml(id)}">Use</button>`);
+          const selectLabel = (next.running || (next.running_server_count || 0) > 0)
+            ? 'Select to start'
+            : 'Select';
+          actions.push(`<button type="button" class="btn btn-ghost" data-action="use" data-id="${escapeHtml(id)}">${selectLabel}</button>`);
         } else {
-          actions.push('<button type="button" class="btn btn-ghost" disabled>Selected</button>');
+          actions.push('<button type="button" class="btn btn-ghost" disabled>Next launch</button>');
         }
         actions.push(`<button type="button" class="btn btn-ghost" data-action="delete" data-id="${escapeHtml(id)}" ${model.deletable ? '' : 'disabled'}>Remove</button>`);
       }
@@ -3245,7 +3341,7 @@
         <article class="model-card ${model.selected ? 'is-active' : ''}" data-id="${escapeHtml(id)}">
           <div class="model-card-main">
             <div class="model-card-title">${escapeHtml(model.label)}</div>
-            <div class="model-card-meta">${modelPills(model)}</div>
+            <div class="model-card-meta">${modelPills(model, next)}</div>
           </div>
           <div class="model-card-actions">${actions.join('')}</div>
           ${progress}
@@ -3708,6 +3804,7 @@
         { label: 'Go to Stats', hint: '6', run: () => showStage('stats') },
         { label: 'Add model', hint: '', run: () => { showStage('models'); addModelModal.show(); } },
         { label: state?.running ? 'Stop llama-server' : 'Start llama-server', hint: 'S', run: () => document.getElementById('btnStartStop').click() },
+        { label: 'Start another model', hint: '', run: () => document.getElementById('btnStartAnother').click() },
         { label: 'Restart llama-server', hint: 'R', run: () => document.getElementById('btnRestart').click() },
         { label: 'Copy /v1 URL', hint: '', run: () => document.getElementById('btnCopyEndpoint').click() },
         { label: 'Copy launch command', hint: '', run: () => document.getElementById('btnCopyCommand').click() },
@@ -3772,8 +3869,18 @@
         document.getElementById('statusDetail').textContent = error.message || String(error);
       }
     });
-    document.getElementById('btnStartAnother').addEventListener('click', async () => {
-      applyState(await api('/api/start', { method: 'POST' }));
+    document.getElementById('btnStartAnother').addEventListener('click', () => {
+      showStage('models');
+      const card = document.querySelector('.active-model-card');
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        card.classList.add('is-attention');
+        window.setTimeout(() => card.classList.remove('is-attention'), 1400);
+      }
+      const library = document.getElementById('modelLibrary');
+      if (library && selectedModelAlreadyRunning(state)) {
+        library.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
     });
     document.getElementById('btnRestart').addEventListener('click', async () => {
       applyState(await api('/api/restart', {
@@ -3835,8 +3942,10 @@
     document.getElementById('btnAddModel').addEventListener('click', () => addModelModal.show());
     document.getElementById('btnAddModelEmpty').addEventListener('click', () => addModelModal.show());
     document.getElementById('btnChangeActiveModel').addEventListener('click', () => {
-      const prefill = state?.has_active_model ? (state.model || '') : '';
-      addModelModal.show(prefill === 'No model selected' ? '' : prefill);
+      const library = document.getElementById('modelLibrary');
+      const filter = document.getElementById('modelFilter');
+      library?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      filter?.focus();
     });
     document.getElementById('btnStartFromModels').addEventListener('click', async () => {
       if (!state?.has_active_model) return;
