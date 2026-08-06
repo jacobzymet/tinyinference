@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     io::ErrorKind,
-    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -18,6 +18,8 @@ pub const SERVICE_TYPE: &str = "_tinyinference._tcp.local.";
 pub const BEACON_PORT: u16 = 39217;
 const BEACON_MAGIC: &[u8] = b"TI1\n";
 const BEACON_INTERVAL: Duration = Duration::from_secs(2);
+const SUBNET_SCAN_INTERVAL: Duration = Duration::from_secs(15);
+const SCAN_PORTS: &[u16] = &[8080, 8081, 8090, 3000];
 const TOKEN_BYTES: usize = 24;
 const PEER_TTL: Duration = Duration::from_secs(90);
 const HEALTH_CACHE: Duration = Duration::from_secs(5);
@@ -671,10 +673,21 @@ struct BeaconOut {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BeaconPayload {
     v: u8,
+    /// `discover` asks peers to announce; `announce` (or omitted) advertises a share.
+    #[serde(default)]
+    t: String,
+    #[serde(default)]
     name: String,
+    #[serde(default)]
     port: u16,
+    #[serde(default = "default_https_scheme")]
     scheme: String,
+    #[serde(default)]
     ips: Vec<String>,
+}
+
+fn default_https_scheme() -> String {
+    "https".into()
 }
 
 /// Shared mDNS + UDP-beacon advertise/browse lifecycle for the process.
@@ -689,11 +702,17 @@ pub struct NetworkDiscovery {
 
 impl NetworkDiscovery {
     pub fn new() -> Self {
+        ensure_windows_discovery_firewall();
         let peers = Arc::new(Mutex::new(PeerStore::default()));
         let beacon_out = Arc::new(Mutex::new(None));
         let last_error = Arc::new(Mutex::new(None));
-        spawn_beacon_listener(Arc::clone(&peers), Arc::clone(&last_error));
+        spawn_beacon_listener(
+            Arc::clone(&peers),
+            Arc::clone(&beacon_out),
+            Arc::clone(&last_error),
+        );
         spawn_beacon_broadcaster(Arc::clone(&beacon_out));
+        spawn_subnet_scanner(Arc::clone(&peers));
         let discovery = Self {
             peers,
             daemon: Mutex::new(None),
@@ -704,6 +723,31 @@ impl NetworkDiscovery {
         };
         discovery.ensure_daemon_and_browse();
         discovery
+    }
+
+    pub fn discovery_hint(&self) -> String {
+        let (lan, _) = shareable_ipv4_addrs();
+        if lan.is_empty() {
+            return "No Wi‑Fi/Ethernet IPv4 address found on this PC.".into();
+        }
+        let ips = lan
+            .iter()
+            .take(3)
+            .map(|ip| ip.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        #[cfg(windows)]
+        {
+            format!(
+                "Scanning via mDNS + UDP {BEACON_PORT} + subnet probe. This PC LAN: {ips}. If nothing appears: set Wi‑Fi to Private, allow tinyinference in Windows Firewall, disable router AP/client isolation, and rebuild tinyinference on the other PC too. Tailscale-only peers won’t show — paste their Endpoints URL into Linked LLM."
+            )
+        }
+        #[cfg(not(windows))]
+        {
+            format!(
+                "Scanning via mDNS + UDP {BEACON_PORT} + subnet probe. This PC LAN: {ips}. Peers must share the same Wi‑Fi/LAN (not Tailscale-only), with Share on and a current tinyinference build. Or paste their Endpoints URL into Linked LLM."
+            )
+        }
     }
 
     pub fn last_error(&self) -> Option<String> {
@@ -892,8 +936,35 @@ impl NetworkDiscovery {
     }
 }
 
+fn encode_beacon(payload: &BeaconPayload) -> Option<Vec<u8>> {
+    let body = serde_json::to_vec(payload).ok()?;
+    let mut packet = Vec::with_capacity(BEACON_MAGIC.len() + body.len());
+    packet.extend_from_slice(BEACON_MAGIC);
+    packet.extend_from_slice(&body);
+    Some(packet)
+}
+
+fn announce_payload(out: &BeaconOut) -> BeaconPayload {
+    BeaconPayload {
+        v: 1,
+        t: "announce".into(),
+        name: out.name.clone(),
+        port: out.port,
+        scheme: "https".into(),
+        ips: out.ips.iter().map(|ip| ip.to_string()).collect(),
+    }
+}
+
+fn broadcast_packet(socket: &UdpSocket, packet: &[u8], ips: &[Ipv4Addr]) {
+    let _ = socket.send_to(packet, ("255.255.255.255", BEACON_PORT));
+    for ip in ips {
+        let _ = socket.send_to(packet, (guess_broadcast(*ip), BEACON_PORT));
+    }
+}
+
 fn spawn_beacon_listener(
     peers: Arc<Mutex<PeerStore>>,
+    beacon_out: Arc<Mutex<Option<BeaconOut>>>,
     last_error: Arc<Mutex<Option<String>>>,
 ) {
     thread::Builder::new()
@@ -903,7 +974,7 @@ fn spawn_beacon_listener(
                 Ok(socket) => socket,
                 Err(error) => {
                     *last_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!(
-                        "LAN beacon listen failed on UDP {BEACON_PORT}: {error}"
+                        "LAN beacon listen failed on UDP {BEACON_PORT}: {error}. On Windows, allow tinyinference through the firewall (Private network)."
                     ));
                     return;
                 }
@@ -914,13 +985,34 @@ fn spawn_beacon_listener(
             loop {
                 match socket.recv_from(&mut buf) {
                     Ok((n, from)) => {
-                        if let Some(peer) = peer_from_beacon(&buf[..n], from) {
+                        let Some(payload) = decode_beacon(&buf[..n]) else {
+                            continue;
+                        };
+                        if payload.v != 1 {
+                            continue;
+                        }
+                        if payload.t == "discover" {
+                            // Actively reply so late joiners find us even if they missed announces.
+                            if let Some(out) = beacon_out
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clone()
+                            {
+                                if let Some(packet) = encode_beacon(&announce_payload(&out)) {
+                                    let _ = socket.send_to(&packet, from);
+                                }
+                            }
+                            continue;
+                        }
+                        if let Some(peer) = peer_from_announce(&payload, from) {
                             if let Ok(mut store) = peers.lock() {
                                 store.upsert(peer);
                             }
                         }
                     }
-                    Err(error) if error.kind() == ErrorKind::TimedOut || error.kind() == ErrorKind::WouldBlock => {}
+                    Err(error)
+                        if error.kind() == ErrorKind::TimedOut
+                            || error.kind() == ErrorKind::WouldBlock => {}
                     Err(_) => break,
                 }
             }
@@ -938,6 +1030,18 @@ fn spawn_beacon_broadcaster(beacon_out: Arc<Mutex<Option<BeaconOut>>>) {
             let _ = socket.set_broadcast(true);
             loop {
                 thread::sleep(BEACON_INTERVAL);
+                // Always ask the LAN who is sharing — multicast/mDNS often dies on Windows Wi‑Fi.
+                let (lan, _) = shareable_ipv4_addrs();
+                if let Some(packet) = encode_beacon(&BeaconPayload {
+                    v: 1,
+                    t: "discover".into(),
+                    name: String::new(),
+                    port: 0,
+                    scheme: "https".into(),
+                    ips: Vec::new(),
+                }) {
+                    broadcast_packet(&socket, &packet, &lan);
+                }
                 let Some(out) = beacon_out
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
@@ -945,27 +1049,171 @@ fn spawn_beacon_broadcaster(beacon_out: Arc<Mutex<Option<BeaconOut>>>) {
                 else {
                     continue;
                 };
-                let payload = BeaconPayload {
-                    v: 1,
-                    name: out.name,
-                    port: out.port,
-                    scheme: "https".into(),
-                    ips: out.ips.iter().map(|ip| ip.to_string()).collect(),
-                };
-                let Ok(body) = serde_json::to_vec(&payload) else {
-                    continue;
-                };
-                let mut packet = Vec::with_capacity(BEACON_MAGIC.len() + body.len());
-                packet.extend_from_slice(BEACON_MAGIC);
-                packet.extend_from_slice(&body);
-                let _ = socket.send_to(&packet, ("255.255.255.255", BEACON_PORT));
-                for ip in &out.ips {
-                    let bcast = guess_broadcast(*ip);
-                    let _ = socket.send_to(&packet, (bcast, BEACON_PORT));
+                if let Some(packet) = encode_beacon(&announce_payload(&out)) {
+                    broadcast_packet(&socket, &packet, &out.ips);
                 }
             }
         })
         .ok();
+}
+
+fn spawn_subnet_scanner(peers: Arc<Mutex<PeerStore>>) {
+    thread::Builder::new()
+        .name("tinyinference-lan-scan".into())
+        .spawn(move || {
+            loop {
+                thread::sleep(SUBNET_SCAN_INTERVAL);
+                let found = scan_local_subnets_for_peers();
+                if found.is_empty() {
+                    continue;
+                }
+                if let Ok(mut store) = peers.lock() {
+                    for peer in found {
+                        store.upsert(peer);
+                    }
+                }
+            }
+        })
+        .ok();
+}
+
+fn scan_local_subnets_for_peers() -> Vec<DiscoveredPeer> {
+    use std::sync::mpsc;
+    let (lan, _) = shareable_ipv4_addrs();
+    let local: std::collections::HashSet<_> = lan.iter().copied().collect();
+    let mut targets = Vec::new();
+    for ip in lan.iter().take(2) {
+        let o = ip.octets();
+        // Home/office /24s only — avoid blasting large enterprise prefixes.
+        if !(o[0] == 192 && o[1] == 168) && o[0] != 10 {
+            continue;
+        }
+        for host in 1..=254u8 {
+            let target = Ipv4Addr::new(o[0], o[1], o[2], host);
+            if local.contains(&target) {
+                continue;
+            }
+            for &port in SCAN_PORTS {
+                targets.push((target, port));
+            }
+        }
+    }
+    if targets.is_empty() {
+        return Vec::new();
+    }
+    let queue = Arc::new(Mutex::new(targets));
+    let (tx, rx) = mpsc::channel();
+    let workers = 32usize;
+    let mut handles = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let queue = Arc::clone(&queue);
+        let tx = tx.clone();
+        handles.push(thread::spawn(move || loop {
+            let next = queue.lock().unwrap_or_else(|e| e.into_inner()).pop();
+            let Some((ip, port)) = next else {
+                break;
+            };
+            if let Some(peer) = probe_openai_compatible_peer(ip, port) {
+                let _ = tx.send(peer);
+            }
+        }));
+    }
+    drop(tx);
+    let mut out = Vec::new();
+    while let Ok(peer) = rx.recv() {
+        out.push(peer);
+    }
+    for handle in handles {
+        let _ = handle.join();
+    }
+    out
+}
+
+fn probe_openai_compatible_peer(ip: Ipv4Addr, port: u16) -> Option<DiscoveredPeer> {
+    let addr = SocketAddr::from((ip, port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(120)).ok()?;
+    let tls = ureq::tls::TlsConfig::builder()
+        .disable_verification(true)
+        .build();
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_millis(700)))
+        .tls_config(tls)
+        .user_agent(concat!("tinyinference/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .new_agent();
+    let url = format!("https://{ip}:{port}/v1/models");
+    let response = agent.get(&url).call().ok()?;
+    let status = response.status();
+    // llama-server / tinyinference share: 200 with keyless, or 401 when a key is required.
+    if status != 200 && status != 401 {
+        return None;
+    }
+    Some(DiscoveredPeer {
+        name: format!("lan-{ip}"),
+        host: ip.to_string(),
+        port,
+        base_url: format!("https://{ip}:{port}/v1"),
+        fullname: format!("scan:{ip}:{port}"),
+    })
+}
+
+/// Windows Firewall silently drops custom UDP discovery ports unless allowed.
+/// Best-effort: succeeds without elevation on some setups, otherwise the UI hint covers it.
+fn ensure_windows_discovery_firewall() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let exe = exe.to_string_lossy().replace('"', "");
+        let name = "tinyinference LAN discovery";
+        let _ = Command::new("netsh")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args([
+                "advfirewall",
+                "firewall",
+                "delete",
+                "rule",
+                &format!("name={name}"),
+            ])
+            .output();
+        let _ = Command::new("netsh")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                &format!("name={name}"),
+                "dir=in",
+                "action=allow",
+                &format!("program={exe}"),
+                "protocol=UDP",
+                &format!("localport={BEACON_PORT}"),
+                "profile=private,domain",
+                "enable=yes",
+            ])
+            .output();
+        // Also allow the binary inbound on private networks (covers llama share TCP).
+        let _ = Command::new("netsh")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=tinyinference private inbound",
+                "dir=in",
+                "action=allow",
+                &format!("program={exe}"),
+                "profile=private,domain",
+                "enable=yes",
+            ])
+            .output();
+    }
 }
 
 fn guess_broadcast(ip: Ipv4Addr) -> Ipv4Addr {
@@ -974,10 +1222,16 @@ fn guess_broadcast(ip: Ipv4Addr) -> Ipv4Addr {
     Ipv4Addr::new(o[0], o[1], o[2], 255)
 }
 
-fn peer_from_beacon(bytes: &[u8], from: SocketAddr) -> Option<DiscoveredPeer> {
+fn decode_beacon(bytes: &[u8]) -> Option<BeaconPayload> {
     let body = bytes.strip_prefix(BEACON_MAGIC)?;
-    let payload: BeaconPayload = serde_json::from_slice(body).ok()?;
-    if payload.v != 1 || payload.port == 0 || payload.name.trim().is_empty() {
+    serde_json::from_slice(body).ok()
+}
+
+fn peer_from_announce(payload: &BeaconPayload, from: SocketAddr) -> Option<DiscoveredPeer> {
+    if payload.port == 0 || payload.name.trim().is_empty() {
+        return None;
+    }
+    if !payload.t.is_empty() && payload.t != "announce" {
         return None;
     }
     let mut ips: Vec<Ipv4Addr> = payload
@@ -990,7 +1244,8 @@ fn peer_from_beacon(bytes: &[u8], from: SocketAddr) -> Option<DiscoveredPeer> {
             ips.push(*v4.ip());
         }
     }
-    ips.sort_by_key(|ip| (is_tailscale_cg_nat(*ip), lan_range_rank(*ip)));
+    ips.retain(|ip| !ip.is_loopback() && !is_tailscale_cg_nat(*ip));
+    ips.sort_by_key(|ip| lan_range_rank(*ip));
     let host = ips.first()?.to_string();
     let scheme = if payload.scheme == "http" {
         "http"
@@ -1195,21 +1450,14 @@ mod tests {
 
     #[test]
     fn beacon_payload_roundtrip() {
-        let payload = BeaconPayload {
-            v: 1,
+        let payload = announce_payload(&BeaconOut {
             name: "desk".into(),
             port: 8080,
-            scheme: "https".into(),
-            ips: vec!["192.168.1.20".into()],
-        };
-        let body = serde_json::to_vec(&payload).unwrap();
-        let mut packet = BEACON_MAGIC.to_vec();
-        packet.extend_from_slice(&body);
-        let peer = peer_from_beacon(
-            &packet,
-            "192.168.1.20:9".parse().unwrap(),
-        )
-        .unwrap();
+            ips: vec![Ipv4Addr::new(192, 168, 1, 20)],
+        });
+        let packet = encode_beacon(&payload).unwrap();
+        let decoded = decode_beacon(&packet).unwrap();
+        let peer = peer_from_announce(&decoded, "192.168.1.20:9".parse().unwrap()).unwrap();
         assert_eq!(peer.name, "desk");
         assert_eq!(peer.port, 8080);
         assert_eq!(peer.base_url, "https://192.168.1.20:8080/v1");

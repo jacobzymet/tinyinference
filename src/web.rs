@@ -827,6 +827,7 @@ struct NetworkState {
     peers: Vec<DiscoveredPeer>,
     mdns_error: Option<String>,
     advertising: bool,
+    discovery_hint: String,
     remote_health: Option<RemoteHealth>,
     llama_binds_loopback: bool,
     llama_endpoint: Option<String>,
@@ -888,6 +889,7 @@ impl NetworkState {
             peers: app.discovered_peers(),
             mdns_error: app.mdns_error(),
             advertising: app.discovery_advertising(),
+            discovery_hint: app.discovery_hint(),
             remote_health: app.remote_health(),
             llama_binds_loopback: llama_loopback,
             llama_endpoint: if network.expose {
