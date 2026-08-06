@@ -30,44 +30,6 @@ use crate::{
 /// Id used for the primary (first) managed llama-server slot.
 pub const PRIMARY_SERVER_ID: &str = "main";
 
-/// A server detached from [`App`] so kill/wait can run without holding the mutex.
-pub enum StopWork {
-    Primary(ServerProcess),
-    Extra(ManagedServer),
-}
-
-impl StopWork {
-    pub fn execute(self) -> StopOutcome {
-        match self {
-            Self::Primary(mut process) => {
-                let result = process.stop();
-                StopOutcome::Primary { process, result }
-            }
-            Self::Extra(mut server) => {
-                let target = server.id.clone();
-                let lines = server.stop();
-                StopOutcome::Extra {
-                    target,
-                    server,
-                    lines,
-                }
-            }
-        }
-    }
-}
-
-pub enum StopOutcome {
-    Primary {
-        process: ServerProcess,
-        result: Result<(), anyhow::Error>,
-    },
-    Extra {
-        target: String,
-        server: ManagedServer,
-        lines: Vec<String>,
-    },
-}
-
 const MAX_LOG_LINES: usize = 2_000;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -2082,86 +2044,67 @@ impl App {
         self.stop_server(None);
     }
 
-    /// Detach a running server so it can be killed without holding the app lock.
-    pub fn take_server_for_stop(&mut self, id: Option<&str>) -> Option<StopWork> {
+    pub fn stop_server(&mut self, id: Option<&str>) {
         let target = id
             .map(str::to_string)
             .unwrap_or_else(|| self.active_server_id.clone());
         if target == PRIMARY_SERVER_ID {
-            let process = self.process.take()?;
+            let Some(mut process) = self.process.take() else {
+                return;
+            };
             self.running_config = None;
             self.status = ServerStatus::Stopping;
-            self.status_detail = "Stopping…".into();
-            return Some(StopWork::Primary(process));
-        }
-        let index = self.extra_servers.iter().position(|s| s.id == target)?;
-        let server = self.extra_servers.remove(index);
-        Some(StopWork::Extra(server))
-    }
-
-    pub fn apply_stop_outcome(&mut self, outcome: StopOutcome) {
-        match outcome {
-            StopOutcome::Primary {
-                process,
-                result,
-            } => {
-                for event in process.drain_logs() {
-                    let ServerEvent::Log(line) = event;
-                    self.push_log(line);
-                }
-                match result {
-                    Ok(()) => {
-                        self.status = ServerStatus::Stopped;
-                        self.status_detail = "Stopped by user".into();
-                        self.push_log("llama-server stopped".into());
-                    }
-                    Err(error) => {
-                        self.status = ServerStatus::Failed;
-                        self.status_detail = error.to_string();
-                        self.push_log(format!("[stop failed] {error:#}"));
-                    }
-                }
-                self.endpoint_online = false;
-                self.probe = None;
-                self.download = None;
-                self.process_usage = None;
-                self.server_metrics = None;
-                self.clear_live_throughput();
-                self.clear_thinking_support();
-                if self.active_server_id == PRIMARY_SERVER_ID {
-                    if let Some(extra) = self.extra_servers.iter().find(|s| s.is_running()) {
-                        self.active_server_id = extra.id.clone();
-                    }
-                }
-                self.sync_mdns_advertise();
+            let stop_result = process.stop();
+            let tail_logs = process.drain_logs().collect::<Vec<_>>();
+            for event in tail_logs {
+                let ServerEvent::Log(line) = event;
+                self.push_log(line);
             }
-            StopOutcome::Extra { target, server, lines } => {
-                for line in lines {
-                    self.push_log(line);
+            match stop_result {
+                Ok(()) => {
+                    self.status = ServerStatus::Stopped;
+                    self.status_detail = "Stopped by user".into();
+                    self.push_log("llama-server stopped".into());
                 }
-                self.status_detail = server.status_detail.clone();
-                if self.active_server_id == target {
-                    self.active_server_id = if self.process.is_some() {
-                        PRIMARY_SERVER_ID.into()
-                    } else if let Some(extra) = self.extra_servers.iter().find(|s| s.is_running()) {
-                        extra.id.clone()
-                    } else {
-                        PRIMARY_SERVER_ID.into()
-                    };
+                Err(error) => {
+                    self.status = ServerStatus::Failed;
+                    self.status_detail = error.to_string();
+                    self.push_log(format!("[stop failed] {error:#}"));
                 }
-                if server.status == ServerStatus::Failed {
-                    self.extra_servers.push(server);
-                }
-                self.sync_mdns_advertise();
             }
-        }
-    }
-
-    pub fn stop_server(&mut self, id: Option<&str>) {
-        let Some(work) = self.take_server_for_stop(id) else {
+            self.endpoint_online = false;
+            self.probe = None;
+            self.download = None;
+            self.process_usage = None;
+            self.server_metrics = None;
+            self.clear_live_throughput();
+            self.clear_thinking_support();
+            if self.active_server_id == PRIMARY_SERVER_ID {
+                if let Some(extra) = self.extra_servers.iter().find(|s| s.is_running()) {
+                    self.active_server_id = extra.id.clone();
+                }
+            }
+            self.sync_mdns_advertise();
             return;
-        };
-        self.apply_stop_outcome(work.execute());
+        }
+
+        if let Some(index) = self.extra_servers.iter().position(|s| s.id == target) {
+            let mut server = self.extra_servers.remove(index);
+            for line in server.stop() {
+                self.push_log(line);
+            }
+            self.status_detail = server.status_detail;
+            if self.active_server_id == target {
+                self.active_server_id = if self.process.is_some() {
+                    PRIMARY_SERVER_ID.into()
+                } else if let Some(extra) = self.extra_servers.iter().find(|s| s.is_running()) {
+                    extra.id.clone()
+                } else {
+                    PRIMARY_SERVER_ID.into()
+                };
+            }
+            self.sync_mdns_advertise();
+        }
     }
 
     pub fn restart(&mut self) {
