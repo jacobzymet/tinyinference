@@ -4858,6 +4858,38 @@
       return stream.dom;
     }
 
+    /**
+     * While an open <think> block is streaming alone, patch the existing
+     * .think-stream text instead of rebuilding answer HTML every typer frame.
+     * Full innerHTML rebuilds starve the canvas orb's rAF (CSS shimmer keeps
+     * running on the compositor, so the label still sweeps).
+     */
+    function paintLiveThinkOnly(answerEl, cleaned) {
+      if (settings.thinking === 'hidden') {
+        if (answerEl.innerHTML) answerEl.innerHTML = '';
+        return true;
+      }
+      const segments = parseThinkSegments(cleaned);
+      const openThink = segments.find((segment) => segment.type === 'think' && segment.open);
+      if (!openThink) return false;
+      const hasOther = segments.some((segment) => {
+        if (segment.type === 'think') return !segment.open && !!segment.content.trim();
+        return !!segment.content.trim();
+      });
+      if (hasOther) return false;
+      let streamEl = answerEl.querySelector(':scope > .think-live > .think-stream, :scope > .think-block.is-streaming > .think-stream');
+      if (!streamEl) {
+        answerEl.innerHTML = renderThinkBlock(openThink.content, { open: true, streaming: true });
+        streamEl = answerEl.querySelector('.think-stream');
+      }
+      if (!streamEl) return false;
+      if (streamEl.textContent !== openThink.content) {
+        streamEl.textContent = openThink.content;
+      }
+      streamEl.scrollTop = streamEl.scrollHeight;
+      return true;
+    }
+
     function paintStreamIntoView(convo, stream, replyText, streaming) {
       stream.partial = replyText;
       const { cleaned, memory } = applyMemoryUpdateProtocol(replyText, { streaming });
@@ -4876,24 +4908,31 @@
         traceEl.innerHTML = renderAgentTrace();
         traceEl.classList.remove('is-hidden');
       }
+      const thinkingOpen = streaming && isThinkingOpen(cleaned);
       if (cleaned) {
-        answerEl.innerHTML = renderAssistantHtml(cleaned, { streaming });
-        if (!streaming) enhanceCodeBlocks(answerEl);
-        scrollThinkStreams(answerEl);
+        const liveThink = streaming && thinkingOpen && paintLiveThinkOnly(answerEl, cleaned);
+        if (!liveThink) {
+          answerEl.innerHTML = renderAssistantHtml(cleaned, { streaming });
+          if (!streaming) enhanceCodeBlocks(answerEl);
+          scrollThinkStreams(answerEl);
+        }
       } else if (!streaming) {
         answerEl.innerHTML = '';
       }
-      const thinkingOpen = streaming && isThinkingOpen(cleaned);
       const toolLive = stream.agentSteps.some((step) => step.live);
       if (stream.useAgent) {
         statusEl.classList.remove('is-hidden');
+        thinkingOrb.play();
         if (thinkingOpen && !toolLive) thinkingLabel.textContent = 'Thinking';
-      } else if (thinkingOpen) {
+      } else if (thinkingOpen || (streaming && !cleaned)) {
         statusEl.classList.remove('is-hidden');
-        thinkingLabel.textContent = 'Thinking';
+        thinkingLabel.textContent = thinkingOpen ? 'Thinking' : thinkingLabel.textContent;
+        thinkingOrb.play();
       } else if (cleaned) {
         statusEl.classList.add('is-hidden');
-        thinkingOrb.stop();
+        // Pause only — stop() is irreversible and a brief think/answer flicker
+        // would leave a dead orb while the label shimmer keeps running.
+        thinkingOrb.pause();
       }
       row.dataset.raw = cleaned;
       // Never force — respect user scroll-away while tokens arrive.
