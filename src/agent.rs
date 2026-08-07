@@ -33,6 +33,8 @@ const SEARCH_TIMEOUT: Duration = Duration::from_secs(25);
 const PAGE_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_SEARCH_RESULTS: usize = 6;
 const MAX_PAGE_BYTES: u64 = 1_500_000;
+/// Default extract size for the dedicated fetch_url capability.
+const FETCH_URL_MAX_CHARS: usize = 8_000;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentRequest {
@@ -93,11 +95,14 @@ pub struct AgentSkills {
     pub web_search: bool,
     #[serde(default)]
     pub web_search_depth: WebSearchDepth,
+    /// Fetch readable text from a single user-provided URL (not search).
+    #[serde(default)]
+    pub fetch_url: bool,
 }
 
 impl AgentSkills {
     pub fn any_enabled(&self) -> bool {
-        self.web_search
+        self.web_search || self.fetch_url
     }
 }
 
@@ -182,9 +187,9 @@ fn run_agent_loop(
                 "content": reply,
             }));
             let follow_up = if call.name == "activate_skill" || call.name == "read_skill" {
-                "Follow the activated skill instructions for the user's request. You may activate another skill or call web_search if needed. Otherwise reply normally without a tool_call."
+                "Follow the activated skill instructions for the user's request. You may activate another skill, call web_search, or fetch_url if needed. Otherwise reply normally without a tool_call."
             } else {
-                "Use these results to answer the user. If you need another search or to activate a skill, emit another tool_call. Otherwise reply normally without a tool_call."
+                "Use these results to answer the user. If you need another search, to fetch a specific URL, or to activate a skill, emit another tool_call. Otherwise reply normally without a tool_call."
             };
             request.messages.push(json!({
                 "role": "user",
@@ -206,6 +211,7 @@ fn run_agent_loop(
 fn capability_allowed(name: &str, skills: &AgentSkills, user_skills: &[UserSkill]) -> bool {
     match name {
         "web_search" => skills.web_search,
+        "fetch_url" => skills.fetch_url,
         "activate_skill" | "read_skill" => !user_skills.is_empty(),
         _ => false,
     }
@@ -262,7 +268,12 @@ fn agent_system_block(skills: &AgentSkills, user_skills: &[UserSkill]) -> String
             ),
         };
         lines.push(format!(
-            "Available capability: web_search — search the public web via DuckDuckGo, then dig into sources. {depth_note} Arguments: {{\"query\":\"search terms\"}}."
+            "Available capability: web_search — search the public web via DuckDuckGo, then dig into sources. Use this when the user wants you to look something up and has not given a specific URL. {depth_note} Arguments: {{\"query\":\"search terms\"}}."
+        ));
+    }
+    if skills.fetch_url {
+        lines.push(format!(
+            "Available capability: fetch_url — open one specific http(s) URL and extract readable page text (~{FETCH_URL_MAX_CHARS} characters). Prefer this over web_search when the user (or a prior result) already gives a concrete URL to view. Arguments: {{\"url\":\"https://…\"}}."
         ));
     }
     if !user_skills.is_empty() {
@@ -456,6 +467,16 @@ fn execute_tool(
                 .ok_or_else(|| "web_search requires a non-empty \"query\" string.".to_string())?;
             duckduckgo_search(query, skills.web_search_depth)
         }
+        "fetch_url" => {
+            let url = call
+                .arguments
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "fetch_url requires a non-empty \"url\" string.".to_string())?;
+            fetch_single_url(url)
+        }
         "activate_skill" | "read_skill" => {
             let key = call
                 .arguments
@@ -476,6 +497,23 @@ fn execute_tool(
         }
         other => Err(format!("Unknown capability '{other}'.")),
     }
+}
+
+fn fetch_single_url(url: &str) -> Result<String, String> {
+    if !scrapeable_url(url) {
+        return Err(
+            "fetch_url only supports http(s) pages (not files like PDF, images, or archives)."
+                .into(),
+        );
+    }
+    let agent = search_http_agent(PAGE_TIMEOUT);
+    let text = fetch_page_text(&agent, url, FETCH_URL_MAX_CHARS)?;
+    if text.trim().is_empty() {
+        return Err(format!("Fetched {url} but extracted no readable text."));
+    }
+    Ok(format!(
+        "Fetched page text from {url} (up to {FETCH_URL_MAX_CHARS} characters):\n{text}"
+    ))
 }
 
 #[derive(Debug)]
@@ -1031,5 +1069,26 @@ mod tests {
         assert!(scrapeable_url("https://example.com/story"));
         assert!(!scrapeable_url("https://example.com/file.pdf"));
         assert!(!scrapeable_url("ftp://example.com/a"));
+    }
+
+    #[test]
+    fn fetch_url_capability_gated() {
+        let off = AgentSkills::default();
+        let on = AgentSkills {
+            fetch_url: true,
+            ..AgentSkills::default()
+        };
+        assert!(!capability_allowed("fetch_url", &off, &[]));
+        assert!(capability_allowed("fetch_url", &on, &[]));
+        assert!(on.any_enabled());
+        assert!(!off.any_enabled());
+    }
+
+    #[test]
+    fn fetch_url_rejects_bad_targets() {
+        let err = fetch_single_url("ftp://example.com/a").unwrap_err();
+        assert!(err.contains("http(s)"));
+        let err = fetch_single_url("https://example.com/doc.pdf").unwrap_err();
+        assert!(err.contains("http(s)") || err.contains("PDF"));
     }
 }

@@ -2367,6 +2367,18 @@
                 </div>
               </div>
             </div>
+            <div class="settings-section">
+              <h3 class="settings-section-title">Fetch URL</h3>
+              <label class="field-check">
+                <input type="checkbox" id="settingSkillFetchUrl" checked>
+                <span>
+                  <strong style="color:var(--color-ink);font-weight:600">Enable fetch URL</strong>
+                  <span style="display:block;color:var(--color-muted);font-size:var(--text-xs);margin-top:0.2rem">
+                    Open one specific page the user (or a prior result) names and extract readable text — not a web search.
+                  </span>
+                </span>
+              </label>
+            </div>
           </section>
 
           <section class="settings-pane" data-settings-pane="skills">
@@ -2516,6 +2528,7 @@
       enterSends: true,
       skillWebSearch: true,
       webSearchDepth: 'auto', // auto | off | light | standard | deep
+      skillFetchUrl: true,
       agentMode: false,
     };
 
@@ -2846,6 +2859,7 @@
           webSearchDepth: WEB_SEARCH_DEPTHS.includes(parsed.webSearchDepth)
             ? parsed.webSearchDepth
             : DEFAULT_SETTINGS.webSearchDepth,
+          skillFetchUrl: parsed.skillFetchUrl !== false,
           agentMode: parsed.agentMode === true,
         };
       } catch {
@@ -3083,7 +3097,9 @@
     let userSkills = [];
 
     function anySkillEnabled() {
-      return !!settings.skillWebSearch || userSkills.some((skill) => skill.enabled);
+      return !!settings.skillWebSearch
+        || !!settings.skillFetchUrl
+        || userSkills.some((skill) => skill.enabled);
     }
 
     function showSettingsPane(pane) {
@@ -3200,6 +3216,7 @@
       document.getElementById('settingEnterSends').checked = settings.enterSends;
       document.getElementById('settingSkillWebSearch').checked = settings.skillWebSearch;
       document.getElementById('settingWebSearchDepth').value = settings.webSearchDepth || 'auto';
+      document.getElementById('settingSkillFetchUrl').checked = settings.skillFetchUrl;
       syncWebSearchDepthControls();
       showSettingsPane('personalization');
       settingsModal.classList.remove('is-hidden');
@@ -3429,6 +3446,7 @@
         webSearchDepth: WEB_SEARCH_DEPTHS.includes(document.getElementById('settingWebSearchDepth').value)
           ? document.getElementById('settingWebSearchDepth').value
           : 'auto',
+        skillFetchUrl: document.getElementById('settingSkillFetchUrl').checked,
         agentMode: settings.agentMode,
       });
       syncThinkingEffortControls(settings.thinkingEffort);
@@ -3508,8 +3526,15 @@
 
     function skillLabel(name) {
       if (name === 'web_search') return 'Web search';
+      if (name === 'fetch_url') return 'Fetch URL';
       if (name === 'activate_skill' || name === 'read_skill') return 'Activate skill';
       return name || 'Skill';
+    }
+
+    function skillDetailLabel(name) {
+      if (name === 'fetch_url') return 'URL';
+      if (name === 'activate_skill' || name === 'read_skill') return 'Skill';
+      return 'Query';
     }
 
     function agentStepHtml({ name, detail, result, live }) {
@@ -3520,7 +3545,7 @@
           '<div class="agent-step-card">' +
             '<div class="agent-step-kind">' + escapeHtml(skillLabel(name)) + '</div>' +
             (detail
-              ? '<div class="agent-step-detail"><em>Query</em> · ' + escapeHtml(detail) + '</div>'
+              ? '<div class="agent-step-detail"><em>' + escapeHtml(skillDetailLabel(name)) + '</em> · ' + escapeHtml(detail) + '</div>'
               : '') +
             (result
               ? '<div class="agent-step-result">' + escapeHtml(result) + '</div>'
@@ -4998,9 +5023,16 @@
             stream.dom.answerEl.innerHTML = '';
             stream.dom.row.dataset.raw = '';
           }
-          const detail = payload.arguments && payload.arguments.query
-            ? String(payload.arguments.query)
-            : '';
+          const args = payload.arguments || {};
+          const detail = args.url
+            ? String(args.url)
+            : args.query
+              ? String(args.query)
+              : args.name
+                ? String(args.name)
+                : args.id
+                  ? String(args.id)
+                  : '';
           stream.agentSteps.forEach((step) => { step.live = false; });
           stream.agentSteps.push({
             name: payload.name || 'skill',
@@ -5057,6 +5089,7 @@
           web_search_depth: WEB_SEARCH_DEPTHS.includes(settings.webSearchDepth)
             ? settings.webSearchDepth
             : 'auto',
+          fetch_url: !!settings.skillFetchUrl,
         },
         ...(thinkingSupported ? reasoningRequestFields(settings.thinkingEffort) : {}),
       };
