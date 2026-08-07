@@ -372,6 +372,10 @@
     .btn:hover { border-color: var(--color-accent); }
     .btn:active { opacity: 0.88; }
     .btn:disabled, .btn.is-disabled { opacity: 0.45; cursor: not-allowed; }
+    #btnStartStop {
+      /* Keep Start/Stop label swaps from nudging the hit target. */
+      min-width: 4.75rem;
+    }
     .btn-primary {
       background: var(--color-accent);
       border-color: var(--color-accent);
@@ -1521,8 +1525,9 @@
             <span id="statusBadgeLabel">stopped</span>
           </span>
           <button type="button" id="btnRestart" class="btn btn-ghost" title="Restart the focused local llama-server">Restart</button>
-          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden" title="Go to Models, pick a different model, then start it beside the ones already running">Choose another model…</button>
+          <!-- Start/Stop before "another model" so revealing that button doesn't shift this target under the cursor. -->
           <button type="button" id="btnStartStop" class="btn btn-primary" title="Start or stop llama-server on this PC">Start</button>
+          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden" title="Go to Models, pick a different model, then start it beside the ones already running">Choose another model…</button>
         </div>
       </header>
 
@@ -1983,6 +1988,12 @@
   <script>
     let state = null;
     let currentTheme = 'dark';
+    // Monotonic epoch so in-flight /api/state polls cannot clobber a fresher
+    // start/stop (or other mutation) response — the classic "click does nothing
+    // until I mash it" race with the 250ms refresh loop.
+    let stateSeq = 0;
+    let refreshInFlight = false;
+    let startStopInFlight = false;
 
     const FONT_BODY_STACKS = {
       inter: '"Inter", system-ui, sans-serif',
@@ -3134,6 +3145,19 @@
       }
     }
 
+    function beginStateMutation() {
+      stateSeq += 1;
+      return stateSeq;
+    }
+
+    function commitStateMutation(seq, next) {
+      if (seq !== stateSeq) return false;
+      // Bump again so polls that sampled mid-mutation are dropped.
+      stateSeq += 1;
+      applyState(next);
+      return true;
+    }
+
     function applyState(next) {
       state = next;
       applyAppearance(next);
@@ -4003,11 +4027,19 @@
     }
 
     async function refresh() {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      const seq = stateSeq;
       try {
         const next = await api('/api/state');
+        if (seq !== stateSeq) return;
         applyState(next);
       } catch (error) {
-        document.getElementById('statusDetail').textContent = error.message;
+        if (seq === stateSeq) {
+          document.getElementById('statusDetail').textContent = error.message;
+        }
+      } finally {
+        refreshInFlight = false;
       }
     }
 
@@ -4073,17 +4105,27 @@
     });
 
     document.getElementById('btnStartStop').addEventListener('click', async () => {
+      if (startStopInFlight || !state) return;
+      startStopInFlight = true;
+      const btn = document.getElementById('btnStartStop');
+      const running = !!state.running;
+      const serverId = state.active_server_id || 'main';
+      btn.disabled = true;
+      const seq = beginStateMutation();
       try {
-        if (state?.running) {
-          applyState(await api('/api/stop', {
-            method: 'POST',
-            body: JSON.stringify({ id: state.active_server_id || 'main' }),
-          }));
-        } else {
-          applyState(await api('/api/start', { method: 'POST' }));
-        }
+        const next = running
+          ? await api('/api/stop', {
+              method: 'POST',
+              body: JSON.stringify({ id: serverId }),
+            })
+          : await api('/api/start', { method: 'POST' });
+        commitStateMutation(seq, next);
       } catch (error) {
         document.getElementById('statusDetail').textContent = error.message || String(error);
+        refresh();
+      } finally {
+        startStopInFlight = false;
+        btn.disabled = false;
       }
     });
     document.getElementById('btnStartAnother').addEventListener('click', () => {
@@ -4100,24 +4142,31 @@
       }
     });
     document.getElementById('btnRestart').addEventListener('click', async () => {
-      applyState(await api('/api/restart', {
-        method: 'POST',
-        body: JSON.stringify({ id: state?.active_server_id || 'main' }),
-      }));
+      const seq = beginStateMutation();
+      try {
+        const next = await api('/api/restart', {
+          method: 'POST',
+          body: JSON.stringify({ id: state?.active_server_id || 'main' }),
+        });
+        commitStateMutation(seq, next);
+      } catch (error) {
+        document.getElementById('statusDetail').textContent = error.message || String(error);
+      }
     });
     document.getElementById('runningServersList').addEventListener('click', async (event) => {
       const btn = event.target.closest('[data-server-action]');
       if (!btn) return;
       const id = btn.getAttribute('data-server-id');
       const action = btn.getAttribute('data-server-action');
+      const seq = beginStateMutation();
       try {
         if (action === 'select') {
-          applyState(await api('/api/servers/select', {
+          commitStateMutation(seq, await api('/api/servers/select', {
             method: 'POST',
             body: JSON.stringify({ id }),
           }));
         } else if (action === 'stop') {
-          applyState(await api('/api/stop', {
+          commitStateMutation(seq, await api('/api/stop', {
             method: 'POST',
             body: JSON.stringify({ id }),
           }));
@@ -4165,13 +4214,20 @@
       filter?.focus();
     });
     document.getElementById('btnStartFromModels').addEventListener('click', async () => {
-      if (!state?.has_active_model) return;
+      if (!state?.has_active_model || startStopInFlight) return;
+      startStopInFlight = true;
+      const seq = beginStateMutation();
       try {
         clearModelsError();
-        applyState(await api('/api/start', { method: 'POST' }));
+        const next = await api('/api/start', { method: 'POST' });
+        commitStateMutation(seq, next);
         showStage('dashboard');
       } catch (error) {
         showModelsError(error);
+      } finally {
+        startStopInFlight = false;
+        const btn = document.getElementById('btnStartStop');
+        if (btn) btn.disabled = false;
       }
     });
     document.getElementById('modelFilter').addEventListener('input', (event) => {
@@ -4720,11 +4776,12 @@
       }).catch(showNetworkError);
     });
     document.getElementById('btnNetworkRestart')?.addEventListener('click', () => {
+      const seq = beginStateMutation();
       api('/api/restart', {
         method: 'POST',
         body: JSON.stringify({ id: state?.active_server_id || 'main' }),
       })
-        .then((next) => applyState(next))
+        .then((next) => commitStateMutation(seq, next))
         .catch(showNetworkError);
     });
 
