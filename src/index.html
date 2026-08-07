@@ -3,31 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>tinyinference</title>
+  <title>tinyinference · Admin</title>
   <link rel="icon" type="image/png" href="/ti.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=DM+Sans:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Sans:wght@500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Literata:opsz,wght@7..72,400;500;600&family=Source+Code+Pro:wght@400;500;600&family=Source+Sans+3:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet">
   <style>
-    /* Hallmark · genre: modern-minimal · macrostructure: Workbench · theme: Cobalt instrument
-     * tone: utilitarian · nav: N3 side-rail · footer: status-bar · enrichment: none
-     * designed-as-app · pre-emit critique: P5 H5 E5 S4 R5 V4
-     */
+    /* Admin shell — tokens aligned with Chat (do not invent a third theme). */
     :root {
       color-scheme: dark;
-      --color-paper: oklch(14% 0.014 260);
-      --color-paper-2: oklch(18% 0.015 260);
+      --color-paper: oklch(16% 0.015 260);
+      --color-paper-2: oklch(20% 0.016 260);
       --color-ink: oklch(94% 0.01 250);
-      --color-ink-2: oklch(78% 0.012 250);
-      --color-muted: oklch(58% 0.014 257);
-      --color-rule: oklch(26% 0.014 260);
-      --color-rule-2: oklch(32% 0.015 260);
+      --color-ink-2: oklch(80% 0.012 250);
+      --color-muted: oklch(62% 0.015 257);
+      --color-rule: oklch(28% 0.015 260);
+      --color-rule-2: oklch(34% 0.016 260);
       --color-accent: oklch(72% 0.14 250);
-      --color-accent-ink: oklch(14% 0.014 260);
+      --color-accent-ink: oklch(16% 0.015 260);
       --color-focus: oklch(72% 0.14 250);
-      --color-graphite: oklch(11% 0.013 260);
-      --color-graphite-2: oklch(17% 0.014 260);
-      --color-rail: oklch(12% 0.014 260);
+      --color-graphite: oklch(12% 0.014 260);
+      --color-graphite-2: oklch(18% 0.015 260);
       --color-ok: oklch(72% 0.12 160);
       --color-warn: oklch(75% 0.12 55);
       --color-danger: oklch(68% 0.16 25);
@@ -38,24 +34,24 @@
       --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
       --space-3xs: 0.2rem;
-      --space-2xs: 0.35rem;
-      --space-xs: 0.5rem;
-      --space-sm: 0.75rem;
-      --space-md: 1rem;
-      --space-lg: 1.35rem;
+      --space-2xs: 0.4rem;
+      --space-xs: 0.65rem;
+      --space-sm: 0.85rem;
+      --space-md: 1.15rem;
+      --space-lg: 1.5rem;
 
-      --text-xs: 0.7rem;
-      --text-sm: 0.8rem;
-      --text-md: 0.88rem;
-      --text-lg: 1.05rem;
-      --text-xl: 1.25rem;
-      --text-display: clamp(1.35rem, 1.2vw + 1rem, 1.75rem);
+      --text-xs: 0.72rem;
+      --text-sm: 0.84rem;
+      --text-md: 0.95rem;
+      --text-lg: 1.1rem;
+      --text-xl: 1.35rem;
+      --text-display: clamp(1.5rem, 1.5vw + 1rem, 2rem);
 
       --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-      --dur-short: 140ms;
-      --radius-input: 4px;
-      --radius-panel: 4px;
-      --rail-width: 9.5rem;
+      --dur-short: 180ms;
+      --radius-input: 6px;
+      --radius-panel: 8px;
+      --sidebar-w: 15rem;
     }
 
     html[data-font-scale="compact"] { font-size: 93.75%; }
@@ -75,7 +71,6 @@
       --color-focus: oklch(48% 0.14 250);
       --color-graphite: oklch(93% 0.008 260);
       --color-graphite-2: oklch(90% 0.01 260);
-      --color-rail: oklch(95.5% 0.007 260);
       --color-ok: oklch(45% 0.12 160);
       --color-warn: oklch(55% 0.14 55);
       --color-danger: oklch(50% 0.16 25);
@@ -123,43 +118,42 @@
       color: var(--color-muted);
     }
 
-    /* Full-window app chrome — fills the native window, not a browser page column. */
     .app {
-      display: grid;
-      grid-template-columns: var(--rail-width) minmax(0, 1fr);
+      display: flex;
       height: 100%;
       min-height: 100vh;
       min-height: 100dvh;
+      overflow: hidden;
     }
     .rail {
+      flex: 0 0 var(--sidebar-w);
+      width: var(--sidebar-w);
       display: flex;
       flex-direction: column;
-      gap: var(--space-xs);
-      padding: var(--space-sm) var(--space-xs);
-      background: var(--color-rail);
+      gap: var(--space-sm);
+      padding: var(--space-md) var(--space-xs) var(--space-sm);
+      background: var(--color-graphite);
       border-right: 1px solid var(--color-rule);
       min-height: 0;
     }
+    .sidebar-head { padding: 0 var(--space-2xs) var(--space-3xs); }
     .wordmark {
       display: inline-flex;
       align-items: center;
-      gap: 0.45rem;
+      gap: 0.5rem;
       font-family: var(--font-logo);
       font-weight: 700;
-      font-size: 0.95rem;
+      font-size: 1.05rem;
       line-height: 1;
       color: var(--color-ink);
-      letter-spacing: -0.03em;
+      letter-spacing: -0.02em;
       text-decoration: none;
-      padding: 0.3rem 0.4rem;
-      border-radius: var(--radius-input);
       min-width: 0;
     }
-    .wordmark:hover { text-decoration: none; background: var(--color-paper-2); }
+    .wordmark:hover { text-decoration: none; }
     .wordmark-text {
       display: block;
       line-height: 1;
-      /* Syne’s optical center sits high; shift paint without breaking flex centering */
       transform: translateY(0.04em);
     }
     .wordmark-text > span { color: var(--color-accent); }
@@ -172,6 +166,38 @@
       object-fit: contain;
     }
 
+    .mode-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+      border-radius: var(--radius-input);
+      font-size: var(--text-sm);
+      font-weight: 500;
+      color: var(--color-muted);
+      text-decoration: none;
+      transition: color var(--dur-short) var(--ease-out), background var(--dur-short) var(--ease-out);
+    }
+    .mode-link:hover {
+      color: var(--color-ink);
+      text-decoration: none;
+      background: var(--color-paper-2);
+    }
+    .mode-link-arrow {
+      font-size: var(--text-xs);
+      opacity: 0.7;
+    }
+
+    .sidebar-label {
+      font-size: var(--text-xs);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      padding: 0 var(--space-2xs);
+      margin: 0 0 0.2rem;
+    }
+
     .top-nav {
       display: flex;
       flex-direction: column;
@@ -181,16 +207,19 @@
       padding: 0;
       flex: 1;
       min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: thin;
     }
     .top-nav li { min-width: 0; }
     .top-nav button {
       width: 100%;
       border: 0;
       background: transparent;
-      color: var(--color-muted);
+      color: var(--color-ink-2);
       border-radius: var(--radius-input);
-      padding: 0.4rem 0.55rem;
+      padding: 0.4rem 0.5rem;
       font-size: var(--text-sm);
+      font-weight: 500;
       text-align: left;
       cursor: pointer;
       transition: color var(--dur-short) var(--ease-out),
@@ -202,13 +231,12 @@
     }
     .top-nav button.is-active {
       color: var(--color-ink);
-      background: color-mix(in oklch, var(--color-accent) 14%, var(--color-paper));
-      box-shadow: inset 2px 0 0 var(--color-accent);
+      background: color-mix(in oklch, var(--color-accent) 14%, var(--color-paper-2));
     }
 
     .rail-foot {
       display: grid;
-      gap: 0.35rem;
+      gap: 0.45rem;
       padding-top: var(--space-xs);
       border-top: 1px solid var(--color-rule);
     }
@@ -219,34 +247,15 @@
     }
     .rail-foot .segmented button {
       flex: 1;
-      padding: 0.3rem 0.35rem;
+      padding: 0.35rem 0.4rem;
       font-size: var(--text-xs);
-    }
-    .chat-cta {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      padding: 0.35rem 0.5rem;
-      border: 1px solid var(--color-rule);
-      background: var(--color-paper);
-      color: var(--color-ink);
-      border-radius: var(--radius-input);
-      font-size: var(--text-sm);
-      font-weight: 500;
-      text-decoration: none;
-      white-space: nowrap;
-      transition: background var(--dur-short) var(--ease-out),
-                  border-color var(--dur-short) var(--ease-out);
-    }
-    .chat-cta:hover {
-      background: var(--color-paper-2);
-      border-color: var(--color-rule-2);
-      text-decoration: none;
     }
     .chat-cta-orb { flex: 0 0 auto; display: block; }
     .rail-foot .btn-cmdk { width: 100%; justify-content: center; }
 
     .main {
+      flex: 1;
+      min-width: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
       min-width: 0;
@@ -258,8 +267,8 @@
       align-items: center;
       justify-content: space-between;
       gap: var(--space-xs) var(--space-sm);
-      padding: 0.45rem 0.85rem;
-      background: var(--color-paper-2);
+      padding: 0.65rem 1.15rem;
+      background: color-mix(in oklch, var(--color-paper-2) 70%, transparent);
       border-bottom: 1px solid var(--color-rule);
     }
     .toolbar-model {
@@ -287,7 +296,7 @@
     .workspace {
       min-height: 0;
       overflow: auto;
-      padding: var(--space-sm) 0.85rem;
+      padding: var(--space-md) 1.15rem var(--space-lg);
     }
     .stage-panel {
       min-height: 100%;
@@ -303,23 +312,23 @@
       display: flex;
       align-items: center;
       gap: var(--space-sm);
-      min-height: 1.75rem;
-      padding: 0.25rem 0.85rem;
+      min-height: 1.85rem;
+      padding: 0.35rem 1.15rem;
       border-top: 1px solid var(--color-rule);
-      background: var(--color-rail);
+      background: var(--color-graphite);
     }
     .status-chip {
       display: inline-flex;
       align-items: center;
       gap: 0.3rem;
       font-family: var(--font-mono);
-      font-size: 0.66rem;
+      font-size: 0.68rem;
       letter-spacing: 0.04em;
       text-transform: uppercase;
       line-height: 1;
-      padding: 0.2rem 0.45rem;
+      padding: 0.25rem 0.55rem;
       border: 1px solid var(--color-rule);
-      border-radius: var(--radius-input);
+      border-radius: 999px;
       color: var(--color-muted);
       white-space: nowrap;
     }
@@ -406,18 +415,18 @@
     #chatCtaDash:hover { text-decoration: none; }
 
     .panel {
-      border: 1px solid var(--color-rule);
+      border: 1px solid color-mix(in oklch, var(--color-rule) 85%, transparent);
       border-radius: var(--radius-panel);
-      background: var(--color-paper-2);
-      padding: var(--space-sm);
+      background: color-mix(in oklch, var(--color-paper-2) 88%, transparent);
+      padding: var(--space-md);
       min-width: 0;
     }
     .instrument {
-      background: var(--color-paper-2);
-      border: 1px solid var(--color-rule);
+      background: color-mix(in oklch, var(--color-paper-2) 88%, transparent);
+      border: 1px solid color-mix(in oklch, var(--color-rule) 85%, transparent);
       border-radius: var(--radius-panel);
       color: var(--color-ink);
-      padding: var(--space-sm);
+      padding: var(--space-md);
       min-width: 0;
     }
     .instrument .eyebrow { color: var(--color-muted); }
@@ -725,11 +734,16 @@
       margin: 0;
     }
     .size-panel {
-      border: 1px solid var(--color-rule);
-      border-radius: var(--radius-panel);
-      padding: var(--space-sm);
-      background: var(--color-paper);
-      margin-bottom: var(--space-sm);
+      display: grid;
+      gap: 0.15rem;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .active-model-card .size-value {
+      font-size: var(--text-md);
+      font-weight: 500;
     }
     .size-value {
       font-family: var(--font-display);
@@ -1293,9 +1307,30 @@
     .chat-source-row {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.5rem;
+      gap: 0.5rem 0.75rem;
       align-items: center;
       margin-top: var(--space-md);
+      padding: var(--space-sm);
+      border-radius: var(--radius-panel);
+      background: color-mix(in oklch, var(--color-paper) 55%, transparent);
+      border: 1px solid color-mix(in oklch, var(--color-rule) 80%, transparent);
+    }
+    .chat-source-row .field-label {
+      flex: 0 0 100%;
+      margin: 0;
+    }
+    .chat-source-row .setting-hint {
+      flex: 1 1 12rem;
+    }
+    .chat-source-row.is-busy .segmented {
+      pointer-events: none;
+      animation: chat-source-pulse 1.1s var(--ease-out) infinite;
+    }
+    @keyframes chat-source-pulse {
+      50% { opacity: 0.55; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .chat-source-row.is-busy .segmented { animation: none; opacity: 0.7; }
     }
     .linked-chip {
       max-width: 14rem;
@@ -1485,12 +1520,15 @@
 </head>
 <body>
   <div class="app">
-    <aside class="rail" aria-label="Console">
-      <a class="wordmark" href="#dashboard" id="wordmark">
-        <img class="wordmark-mark" src="/ti-transparent-bg-white.png" width="17" height="17" alt="">
-        <span class="wordmark-text">tiny<span>inference</span></span>
-      </a>
-      <ul class="top-nav" role="tablist" aria-label="Console stages">
+    <aside class="rail" aria-label="Admin">
+      <div class="sidebar-head">
+        <a class="wordmark" href="/" id="wordmark">
+          <img class="wordmark-mark" src="/ti-transparent-bg-white.png" width="18" height="18" alt="">
+          <span class="wordmark-text">tiny<span>inference</span></span>
+        </a>
+      </div>
+      <p class="sidebar-label">Manage</p>
+      <ul class="top-nav" role="tablist" aria-label="Admin sections">
         <li><button type="button" class="is-active" data-stage="dashboard" role="tab" aria-selected="true">Dash</button></li>
         <li><button type="button" data-stage="models" role="tab" aria-selected="false">Models</button></li>
         <li><button type="button" data-stage="configure" role="tab" aria-selected="false">Config</button></li>
@@ -1499,10 +1537,7 @@
         <li><button type="button" data-stage="stats" role="tab" aria-selected="false">Stats</button></li>
       </ul>
       <div class="rail-foot">
-        <a class="chat-cta" id="chatCta" href="/chat">
-          <canvas class="chat-cta-orb" id="chatCtaOrb" aria-hidden="true"></canvas>
-          <span>Chat</span>
-        </a>
+        <a class="mode-link" href="/">Chat <span class="mode-link-arrow" aria-hidden="true">→</span></a>
         <div class="segmented" id="themeToggle" role="tablist" aria-label="Theme">
           <button type="button" data-theme-choice="dark" class="is-active" role="tab" aria-selected="true">Dark</button>
           <button type="button" data-theme-choice="light" role="tab" aria-selected="false">Light</button>
@@ -1519,15 +1554,15 @@
           <div id="toolbarModel">—</div>
         </div>
         <div class="toolbar-actions">
-          <span id="linkedBadge" class="status-chip linked-chip status-stopped is-hidden" title="Chat inference source">local</span>
+          <span id="linkedBadge" class="status-chip linked-chip status-stopped is-hidden" title="Chat is using a linked device">linked</span>
           <span id="statusBadge" class="status-chip status-stopped" title="Local llama-server on this PC">
             <canvas id="statusBadgeOrb" class="status-chip-orb is-hidden" width="12" height="12" aria-hidden="true"></canvas>
             <span id="statusBadgeLabel">stopped</span>
           </span>
-          <button type="button" id="btnRestart" class="btn btn-ghost" title="Restart the focused local llama-server">Restart</button>
+          <button type="button" id="btnRestart" class="btn btn-ghost" title="Restart the focused local model">Restart</button>
           <!-- Start/Stop before "another model" so revealing that button doesn't shift this target under the cursor. -->
-          <button type="button" id="btnStartStop" class="btn btn-primary" title="Start or stop llama-server on this PC">Start</button>
-          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden" title="Go to Models, pick a different model, then start it beside the ones already running">Choose another model…</button>
+          <button type="button" id="btnStartStop" class="btn btn-primary" title="Start or stop the local model on this PC">Start</button>
+          <button type="button" id="btnStartAnother" class="btn btn-ghost is-hidden" title="Pick another model in Models, then start it alongside the ones already running">Add model…</button>
         </div>
       </header>
 
@@ -1558,7 +1593,7 @@
             <p id="linkedSourceChatHint" class="source-detail is-hidden">Open Chat to pick among these models in the model selector.</p>
             <ul id="linkedSourceModels" class="network-list is-hidden" style="margin-top:0.5rem"></ul>
             <div class="actions" style="margin-top:0.65rem">
-              <a class="btn btn-primary is-hidden" id="btnDashOpenChat" href="/chat">
+              <a class="btn btn-primary is-hidden" id="btnDashOpenChat" href="/">
                 <canvas class="chat-cta-orb" id="dashLinkedChatOrb" aria-hidden="true" style="width:16px;height:16px"></canvas>
                 <span>Open Chat</span>
               </a>
@@ -1596,13 +1631,13 @@
             <span>On this PC</span>
             <span class="source-tag">local</span>
           </div>
-          <p id="runningServersHint" class="setting-hint">Each row is a live llama-server. To run a different model at the same time, pick it on Models → Start alongside.</p>
+          <p id="runningServersHint" class="setting-hint">Each row is a live local model. To run another at the same time, pick it under Models and start it alongside.</p>
           <ul id="runningServersList" class="network-list"></ul>
         </div>
 
         <div id="dashActionsPanel" class="panel">
           <div class="actions">
-            <a class="btn" id="chatCtaDash" href="/chat">
+            <a class="btn" id="chatCtaDash" href="/">
               <canvas class="chat-cta-orb" id="chatCtaDashOrb" aria-hidden="true"></canvas>
               <span>tinyinference Chat</span>
             </a>
@@ -1623,7 +1658,10 @@
 
     <section id="models" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
-        <h2>Models</h2>
+        <div>
+          <h2>Models</h2>
+          <p class="setting-hint" style="margin:0.25rem 0 0">1 · Pick a model &nbsp;→&nbsp; 2 · Start it</p>
+        </div>
         <div class="mast-actions">
           <button type="button" class="btn btn-primary" id="btnAddModel">Add model</button>
         </div>
@@ -1639,18 +1677,16 @@
         </div>
 
         <div class="panel active-model-card">
-          <div class="eyebrow">Selected to start</div>
+          <div class="eyebrow">Selected</div>
           <h3 class="model-title" id="modelsActiveLabel">—</h3>
           <div id="modelsActiveMeta" class="model-card-meta"></div>
           <div class="size-panel">
-            <div class="eyebrow">Ready?</div>
             <div id="mappedSizeValue" class="size-value is-muted">—</div>
             <div id="mappedSizeDetail" class="setting-hint">—</div>
           </div>
-          <p id="modelsLaunchHint" class="setting-hint">Select a model from your library, then start it.</p>
+          <p id="modelsLaunchHint" class="setting-hint">Select a model below, then start it.</p>
           <div class="model-card-actions" style="justify-content:flex-start">
-            <button type="button" class="btn btn-primary" id="btnStartFromModels">Start server</button>
-            <button type="button" class="btn btn-ghost" id="btnChangeActiveModel">Choose from library</button>
+            <button type="button" class="btn btn-primary" id="btnStartFromModels">Start</button>
           </div>
           <p id="modelsError" class="text-error is-hidden"></p>
         </div>
@@ -1658,17 +1694,17 @@
         <div id="remoteModelsSection" class="panel model-section is-hidden">
           <div class="model-section-head">
             <div>
-              <p class="eyebrow">Linked device</p>
-              <h3>Remote models</h3>
+              <p class="eyebrow">Not on this PC</p>
+              <h3>From a linked device</h3>
             </div>
           </div>
           <p id="remoteModelsHint" class="setting-hint">
-            Models on the linked device. They are not stored here — open Chat and use the model selector to talk to them.
+            Available in Chat only — you can’t start or stop these here.
           </p>
           <div id="remoteModelsLibrary" class="model-library"></div>
           <div class="model-card-actions" style="justify-content:flex-start;margin-top:0.65rem">
-            <a class="btn btn-primary" id="btnRemoteModelsOpenChat" href="/chat">Open Chat</a>
-            <button type="button" class="btn btn-ghost" id="btnRemoteModelsUseLinked">Use linked for chat</button>
+            <a class="btn btn-primary" id="btnRemoteModelsOpenChat" href="/">Open Chat</a>
+            <button type="button" class="btn btn-ghost" id="btnRemoteModelsUseLinked">Use in Chat</button>
             <a class="btn btn-ghost" href="#network" id="btnRemoteModelsDevices">Devices</a>
           </div>
         </div>
@@ -1676,17 +1712,16 @@
         <div class="panel model-section">
           <div class="model-section-head">
             <div>
-              <p class="eyebrow">This PC</p>
-              <h3>My models</h3>
+              <h3>Your library</h3>
             </div>
-            <input class="field-input" id="modelFilter" type="search" placeholder="Filter…" autocomplete="off">
+            <input class="field-input" id="modelFilter" type="search" placeholder="Search…" autocomplete="off">
           </div>
           <div class="setting-hint" id="modelLibraryHint">
-            Select a model to make it the next launch. If something is already running, you can start the newly selected model alongside it.
+            Click a model to select it.
           </div>
           <div id="modelLibrary" class="model-library"></div>
           <div id="modelLibraryEmpty" class="model-empty is-hidden">
-            <p>Your library is empty. Add a Hugging Face repo or a local .gguf path.</p>
+            <p>No models yet. Add one from Hugging Face or a local .gguf file.</p>
             <button type="button" class="btn btn-primary" id="btnAddModelEmpty">Add model</button>
           </div>
         </div>
@@ -1694,12 +1729,11 @@
         <div id="availableSection" class="panel model-section is-hidden">
           <div class="model-section-head">
             <div>
-              <p class="eyebrow">On this machine</p>
-              <h3>Found on disk</h3>
+              <h3>Also on disk</h3>
             </div>
           </div>
           <div class="setting-hint">
-            GGUF models discovered in the Hugging Face hub / llama.cpp cache that are not in your library yet. Import to manage them here, or delete the cached files.
+            Cached models not in your library. Import to use, or delete the files.
           </div>
           <div id="modelAvailable" class="model-library"></div>
         </div>
@@ -1709,7 +1743,7 @@
     <section id="configure" class="stage-panel is-hidden reveal" data-stage-panel>
       <div class="stage-head">
         <div class="stage-head-title">
-          <h2>Configure</h2>
+          <h2>Config</h2>
           <span id="autosaveStatus" class="autosave-status is-idle" aria-live="polite" title="Settings write to disk as you change them">
             <span class="autosave-icon" aria-hidden="true">✓</span>
             <span class="autosave-label">Autosaved</span>
@@ -1719,6 +1753,7 @@
           <button type="button" class="btn btn-text" id="btnReset">Reset defaults</button>
         </div>
       </div>
+      <p class="setting-hint" style="margin:0 0 var(--space-sm)">llama-server path, port, and runtime knobs. Changes save as you edit.</p>
       <div class="configure-layout">
         <div class="panel configure-section">
           <h3 class="configure-section-title">Preset</h3>
@@ -1746,47 +1781,49 @@
           <span id="networkStatusChip" class="status-chip status-stopped">local only</span>
         </div>
       </div>
+      <p class="setting-hint" style="margin:0 0 var(--space-sm)">Two separate jobs: let others use <em>this</em> PC, or point Chat at <em>another</em> PC. Chat and Admin always stay on this machine.</p>
       <div class="network-layout">
         <div class="panel network-section">
-          <h3 class="network-section-title">This device</h3>
-          <p class="network-section-lede">Name this PC, choose whether its LLM API is shared, and see how others can reach it. Control panel and chat stay on this machine.</p>
+          <p class="eyebrow" style="margin:0 0 0.35rem">Job 1</p>
+          <h3 class="network-section-title">Share this PC</h3>
+          <p class="network-section-lede">Turn this on if other devices should call models running here.</p>
           <div class="network-identity" style="margin-top:0;padding-top:0;border-top:0">
-            <label class="field-label" for="networkDeviceName">Device name</label>
-            <input class="field-input" id="networkDeviceName" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="This PC’s name on the LAN">
-            <p class="setting-hint">Shown in LAN discovery. Leave blank to use this computer’s hostname.</p>
+            <label class="field-label" for="networkDeviceName">Name for this PC</label>
+            <input class="field-input" id="networkDeviceName" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="e.g. Living room PC">
+            <p class="setting-hint">How this PC appears to others on the network. Blank = hostname.</p>
           </div>
           <div class="field-switch" style="margin-top:var(--space-md)">
             <input type="checkbox" id="networkExposeToggle">
-            <label for="networkExposeToggle">Share LLM API</label>
+            <label for="networkExposeToggle">Allow other devices to connect</label>
           </div>
           <ol id="networkShareSteps" class="share-steps is-hidden" aria-label="Share setup steps"></ol>
           <div id="networkScopeBlock" class="is-hidden">
-            <label class="field-label" for="networkListenScope">Listen on</label>
+            <label class="field-label" for="networkListenScope">Who can reach it</label>
             <select class="field-select" id="networkListenScope">
               <option value="all">Wi‑Fi / LAN and Tailscale</option>
-              <option value="tailscale">Tailscale only</option>
-              <option value="custom">A specific address</option>
+              <option value="tailscale">Tailscale only (recommended)</option>
+              <option value="custom">One specific address</option>
             </select>
             <p id="networkScopeHint" class="setting-hint"></p>
             <p id="networkScopeDetail" class="setting-hint is-hidden" aria-hidden="true"></p>
             <div id="networkCustomHostBlock" class="is-hidden" style="margin-top:var(--space-md)">
-              <label class="field-label" for="networkListenHost">Listen address</label>
+              <label class="field-label" for="networkListenHost">Address</label>
               <select class="field-select" id="networkListenHost"></select>
             </div>
             <div id="networkBindError" class="preset-warning is-hidden" role="alert"></div>
             <p id="networkLlamaHint" class="setting-hint" style="margin-top:var(--space-sm)"></p>
           </div>
-          <p id="networkShareStatus" class="network-share-status">Not sharing. Other devices cannot see or call this PC until Share is on and a model is running.</p>
+          <p id="networkShareStatus" class="network-share-status">Not sharing. Others can’t connect until this is on and a model is running.</p>
           <div id="networkRestartBanner" class="preset-warning is-hidden" role="status" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;justify-content:space-between">
-            <span>Restart the model to apply Share on/off changes.</span>
+            <span>Restart the model to apply share changes.</span>
             <button type="button" class="btn btn-primary" id="btnNetworkRestart">Restart model</button>
           </div>
         </div>
 
         <div id="networkShareBlock" class="network-share-stack is-hidden">
           <div class="panel network-section">
-            <h3 class="network-section-title">Access keys</h3>
-            <p class="network-section-lede">Other devices need one of these as <code>Authorization: Bearer …</code>. Name keys after the device (Phone, Laptop) — that name shows up in Connected now. Full secrets appear once after create or regenerate.</p>
+            <h3 class="network-section-title">Keys for callers</h3>
+            <p class="network-section-lede">Give a key to each device that should connect. Name it after the device (Phone, Laptop). The secret is shown once when you create or regenerate it.</p>
             <ul id="networkApiKeyList" class="network-list"></ul>
             <div class="network-token-row">
               <input class="field-input" id="networkNewKeyName" type="text" placeholder="Name (Phone, Laptop…)" autocomplete="off" spellcheck="false" maxlength="64">
@@ -1794,72 +1831,74 @@
             </div>
           </div>
           <div class="panel network-section">
-            <h3 class="network-section-title">Share endpoints</h3>
-            <p class="network-section-lede">OpenAI-compatible HTTPS bases. Trust the self-signed cert in your client, then send a Bearer key.</p>
+            <h3 class="network-section-title">Addresses to share</h3>
+            <p class="network-section-lede">Send these URLs to the other device. They’ll need to trust the self-signed certificate and use a key above.</p>
             <ul id="networkShareList" class="network-list"></ul>
           </div>
           <div class="panel network-section" id="networkConnectedBlock">
             <div class="network-peers-head">
-              <h3 class="network-section-title" style="margin:0">Connected now</h3>
+              <h3 class="network-section-title" style="margin:0">Who’s connected</h3>
               <span class="network-scan-live" title="Refreshes while this tab is open">
                 <span class="network-scan-spinner" aria-hidden="true"></span>
                 Live
               </span>
             </div>
-            <p class="network-section-lede">Devices calling this PC’s share endpoints. Key name, IP, model, and what they’re doing update in realtime.</p>
+            <p class="network-section-lede">Devices currently using this PC’s shared model.</p>
             <p id="networkActivitySummary" class="network-activity-summary is-hidden" aria-live="polite"></p>
             <p id="networkProxyError" class="preset-warning is-hidden" role="alert"></p>
             <ul id="networkConnectedList" class="network-list network-connected-list" aria-live="polite"></ul>
-            <p id="networkConnectedEmpty" class="setting-hint">No devices connected right now.</p>
+            <p id="networkConnectedEmpty" class="setting-hint">Nobody connected right now.</p>
           </div>
         </div>
 
         <div class="panel network-section">
-          <h3 class="network-section-title">Linked LLMs</h3>
-          <p class="network-section-lede">Manage saved links to other machines. Name them, pick which one chat uses, or stay on this PC. When you Share, Connected now shows callers using your keys.</p>
-          <div class="chat-source-row">
+          <p class="eyebrow" style="margin:0 0 0.35rem">Job 2</p>
+          <h3 class="network-section-title">Use another PC in Chat</h3>
+          <p class="network-section-lede">Point Chat at a model on a different machine. This does not share your PC.</p>
+          <div class="chat-source-row" id="chatSourceRow">
+            <label class="field-label" style="margin:0">Chat talks to</label>
             <div class="segmented" role="tablist" aria-label="Chat source">
               <button type="button" id="modeLocalBtn" class="is-active" data-mode="local">This PC</button>
-              <button type="button" id="modeRemoteBtn" data-mode="remote">Linked LLM</button>
+              <button type="button" id="modeRemoteBtn" data-mode="remote">Linked PC</button>
             </div>
-            <p id="networkModeHint" class="setting-hint" style="margin:0">Chat uses models on this PC.</p>
+            <p id="networkModeHint" class="setting-hint" style="margin:0" aria-live="polite">Chat uses models on this PC.</p>
           </div>
           <ul id="networkRemoteList" class="manager-list" style="margin-top:var(--space-md)" aria-live="polite"></ul>
-          <p id="networkRemoteEmpty" class="manager-empty">No linked LLMs yet. Add one below or from Nearby on LAN.</p>
+          <p id="networkRemoteEmpty" class="manager-empty">No linked PCs yet. Add one below, or pick something from Nearby.</p>
 
           <div class="manager-add">
-            <div class="field-label" id="networkRemoteFormTitle">Add linked LLM</div>
+            <div class="field-label" id="networkRemoteFormTitle">Add a link</div>
             <div class="manager-add-grid">
               <div>
-                <label class="field-label" for="networkRemoteName">Link name</label>
+                <label class="field-label" for="networkRemoteName">Name</label>
                 <input class="field-input" id="networkRemoteName" type="text" maxlength="64" placeholder="Living room PC" autocomplete="off" spellcheck="false">
               </div>
               <div>
-                <label class="field-label" for="networkRemoteBase">API base</label>
+                <label class="field-label" for="networkRemoteBase">Address (from that PC’s Devices page)</label>
                 <input class="field-input" id="networkRemoteBase" type="url" placeholder="https://100.x.x.x:8080/v1" autocomplete="off" spellcheck="false">
               </div>
               <div>
-                <label class="field-label" for="networkRemoteToken">API key</label>
-                <input class="field-input" id="networkRemoteToken" type="password" placeholder="From the host" autocomplete="off" spellcheck="false">
+                <label class="field-label" for="networkRemoteToken">Key (from that PC)</label>
+                <input class="field-input" id="networkRemoteToken" type="password" placeholder="Paste the key they created for you" autocomplete="off" spellcheck="false">
               </div>
               <div class="mast-actions" style="justify-content:flex-start;gap:0.35rem">
                 <button type="button" class="btn btn-primary" id="btnSaveRemoteLink">Add</button>
                 <button type="button" class="btn btn-ghost is-hidden" id="btnCancelRemoteEdit">Cancel</button>
               </div>
             </div>
-            <p id="networkRemoteHealth" class="setting-hint">Paste the host API key, then Add. Chat switches to the link when it is saved.</p>
+            <p id="networkRemoteHealth" class="setting-hint">Paste the address and key from the other PC, then Add. Chat will use that link.</p>
           </div>
 
           <div class="network-subsection">
             <div class="network-peers-head">
-              <div class="field-label">Nearby on LAN</div>
-              <span class="network-scan-live" title="Peer list refreshes about 4× per second while this tab is open">
+              <div class="field-label">Nearby on Wi‑Fi</div>
+              <span class="network-scan-live" title="Peer list refreshes while this tab is open">
                 <span class="network-scan-spinner" aria-hidden="true"></span>
                 Scanning
               </span>
             </div>
             <ul id="networkPeerList" class="network-list"></ul>
-            <p id="networkPeerEmpty" class="setting-hint">Listening for peers… None found yet. Peers must be on the same Wi‑Fi/LAN (not Tailscale-only), with Share on, Listen on “Wi‑Fi / LAN and Tailscale”, and a model running.</p>
+            <p id="networkPeerEmpty" class="setting-hint">No peers yet. They need Share on, “Wi‑Fi / LAN and Tailscale”, and a model running — on the same Wi‑Fi (not Tailscale-only).</p>
           </div>
           <p id="networkError" class="text-error is-hidden"></p>
         </div>
@@ -1914,8 +1953,8 @@
 
   <div id="exposeConfirmModal" class="dialog-backdrop is-hidden" role="dialog" aria-modal="true" aria-labelledby="exposeConfirmTitle">
     <div class="dialog">
-      <h2 id="exposeConfirmTitle">Share the LLM API?</h2>
-      <p>Only the model inference API is exposed — not the control panel, chat, or llama web UI. Callers use HTTPS with a self-signed cert (clients will warn until they trust it) and need an API key. Default bind is Tailscale only. Restart the model after enabling. Connected now lists who is calling.</p>
+      <h2 id="exposeConfirmTitle">Let other devices connect?</h2>
+      <p>Only the model API is shared — not Chat or Admin. Callers need HTTPS (self-signed cert warning is normal) and a key you create. Default is Tailscale-only. Restart the model after turning this on.</p>
       <div class="dialog-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelExpose">Cancel</button>
         <button type="button" class="btn btn-primary" id="btnConfirmExpose">Continue</button>
@@ -2097,6 +2136,7 @@
       }
     }
     let networkState = null;
+    let chatSourceBusyToken = 0;
     let revealedTokens = {}; // id -> full secret (session only)
     let lastShareSignature = '';
     let lastApiKeySignature = '';
@@ -2441,7 +2481,7 @@
         llamaHint.textContent = 'llama-server is listening with HTTPS + API keys. Endpoints below are what other devices link to.';
         llamaHint.classList.remove('is-hidden');
       } else if (next.expose) {
-        llamaHint.textContent = 'Share is on — start or restart the model so Endpoints become reachable.';
+        llamaHint.textContent = 'Sharing is on — start or restart the model so others can connect.';
         llamaHint.classList.remove('is-hidden');
       } else {
         llamaHint.textContent = '';
@@ -2465,10 +2505,10 @@
           shareStatus.textContent = 'Sharing as “' + name + '”. Clients use Endpoints + an API key. Connected now lists active callers. LAN discovery is off for this listen scope.';
           shareStatus.classList.add('is-live');
         } else if (next.expose) {
-          shareStatus.textContent = 'Share is on as “' + name + '”, but the model is not listening yet. Start (or restart) the model so others can reach Endpoints.';
+          shareStatus.textContent = 'Sharing as “' + name + '”, but nothing is listening yet. Start (or restart) the model.';
           shareStatus.classList.remove('is-live');
         } else {
-          shareStatus.textContent = 'Not sharing. Named “' + name + '” for when you turn Share on. Other devices cannot see or call this PC until Share is on and a model is running.';
+          shareStatus.textContent = 'Not sharing. Named “' + name + '” for when you turn it on.';
           shareStatus.classList.remove('is-live');
         }
       }
@@ -2552,19 +2592,24 @@
 
       const mode = next.inference_mode || 'local';
       const remotes = next.remotes || [];
-      document.getElementById('modeLocalBtn').classList.toggle('is-active', mode === 'local');
-      document.getElementById('modeRemoteBtn').classList.toggle('is-active', mode === 'remote');
-      document.getElementById('modeRemoteBtn').disabled = remotes.length === 0;
-      const modeHint = document.getElementById('networkModeHint');
-      if (modeHint) {
-        if (mode === 'remote' && remotes.length) {
-          const active = remotes.find((r) => r.active) || remotes.find((r) => r.id === next.active_remote_id) || remotes[0];
-          modeHint.textContent = 'Chat → ' + (active?.name || 'linked LLM') + '. Local Start/Stop still only affects this PC.';
-        } else if (remotes.length) {
-          modeHint.textContent = remotes.length + ' linked · chat still on this PC.';
-        } else {
-          modeHint.textContent = 'Chat uses models on this PC.';
+      const chatSourceBusy = !!document.getElementById('chatSourceRow')?.classList.contains('is-busy');
+      if (!chatSourceBusy) {
+        document.getElementById('modeLocalBtn').classList.toggle('is-active', mode === 'local');
+        document.getElementById('modeRemoteBtn').classList.toggle('is-active', mode === 'remote');
+        document.getElementById('modeRemoteBtn').disabled = remotes.length === 0;
+        const modeHint = document.getElementById('networkModeHint');
+        if (modeHint) {
+          if (mode === 'remote' && remotes.length) {
+            const active = remotes.find((r) => r.active) || remotes.find((r) => r.id === next.active_remote_id) || remotes[0];
+            modeHint.textContent = 'Chat uses “' + (active?.name || 'linked PC') + '”. Start/Stop here still only affects this PC.';
+          } else if (remotes.length) {
+            modeHint.textContent = remotes.length + ' link' + (remotes.length === 1 ? '' : 's') + ' saved · Chat still on this PC.';
+          } else {
+            modeHint.textContent = 'Chat uses models on this PC.';
+          }
         }
+      } else {
+        document.getElementById('modeRemoteBtn').disabled = remotes.length === 0;
       }
 
       const remoteEmpty = document.getElementById('networkRemoteEmpty');
@@ -2579,12 +2624,15 @@
       if (remoteSignature !== lastRemoteSignature) {
         lastRemoteSignature = remoteSignature;
         remoteList.innerHTML = remotes.map((remote) => {
+          const checking = !!remote.token_set && !remote.health;
           const health = remote.health || {};
-          const kind = health.kind || (health.ok ? 'ready' : 'error');
-          const canUse = !!remote.token_set && (health.ok || kind === 'waiting' || kind === 'empty');
+          const kind = health.kind || (health.ok ? 'ready' : (checking ? 'checking' : 'error'));
+          const canUse = !!remote.token_set && (checking || health.ok || kind === 'waiting' || kind === 'empty');
           let status;
           if (!remote.token_set) {
             status = 'Needs API key from the host';
+          } else if (checking) {
+            status = 'Checking…';
           } else if (kind === 'ready' || health.ok) {
             status = 'Reachable · ' + (health.model || 'model') + (health.status ? ' · ' + health.status : '');
           } else if (kind === 'waiting') {
@@ -2598,7 +2646,7 @@
           }
           const useLabel = remote.active
             ? 'In use'
-            : (canUse ? 'Use for chat' : (kind === 'auth' || !remote.token_set ? 'Fix to use' : 'Check link'));
+            : (canUse ? 'Use in Chat' : (kind === 'auth' || !remote.token_set ? 'Fix key' : 'Check link'));
           const useTitle = remote.active
             ? ''
             : (canUse
@@ -2638,9 +2686,9 @@
         if (!health.dataset.sticky) {
           health.textContent = remotes.length
             ? (mode === 'remote'
-              ? 'Chat uses the active linked LLM. Local Start/Stop still only affects this PC.'
-              : 'Links are saved here. Use for chat on a card, or switch to Linked LLM.')
-            : 'Nearby Add fills the form — paste the host API key, then Add.';
+              ? 'Chat is using the linked PC. Start/Stop here still only affects this machine.'
+              : 'Saved links appear above. Switch “Chat talks to” to Linked PC when you want to use one.')
+            : 'Use Nearby to fill the form, paste their key, then Add.';
         }
       }
 
@@ -2661,7 +2709,7 @@
       if (peers.length === 0) {
         const rawCount = (next.peers || []).length;
         empty.textContent = rawCount > 0
-          ? 'Nearby peers are already in Linked LLMs.'
+          ? 'Nearby PCs are already linked above.'
           : (next.mdns_error
             || next.discovery_hint
             || 'Listening for peers… None found yet.');
@@ -2686,6 +2734,27 @@
         applyNetworkState(next);
       } catch (error) {
         showNetworkError(error);
+      }
+    }
+
+    /** Disable a control and swap its label while work runs. */
+    async function withBusyControl(el, busyLabel, work, opts = {}) {
+      if (!el || el.dataset.busy === '1') return;
+      const restore = opts.restore !== false;
+      const prevText = el.textContent;
+      const prevDisabled = el.disabled;
+      el.dataset.busy = '1';
+      el.disabled = true;
+      if (busyLabel != null) el.textContent = busyLabel;
+      el.setAttribute('aria-busy', 'true');
+      try {
+        return await work();
+      } finally {
+        if (!el.isConnected) return;
+        delete el.dataset.busy;
+        el.removeAttribute('aria-busy');
+        el.disabled = prevDisabled;
+        if (busyLabel != null && restore) el.textContent = prevText;
       }
     }
 
@@ -2881,7 +2950,7 @@
           : 'Chat is using a linked device. This row is the local server on this PC — not what Chat talks to.')
         : (servers.length > 1
           ? 'Multiple local models are live. Focus picks which one Chat and the dashboard use; Stop ends only that instance.'
-          : 'To run a different model at the same time: Models → select it → Start alongside.');
+          : 'To run another model at the same time: Models → select it → Start too.');
       if (hint && hint.textContent !== nextHint) hint.textContent = nextHint;
       // Stable signature — skip DOM rewrite on poll ticks so Focus/Stop stay clickable.
       const signature = servers.map((server) => [
@@ -2953,7 +3022,7 @@
         } else if (via) {
           detail.textContent = host + ' · can’t reach host — check URL on Devices';
         } else if (net.remote_ok || models.length) {
-          detail.textContent = host + ' · reachable · switch to Linked LLM to use these in Chat';
+          detail.textContent = host + ' · reachable · switch Chat to Linked PC to use these';
         } else if (kind === 'waiting') {
           detail.textContent = host + ' · waiting for host model · open Devices to manage';
         } else {
@@ -3002,10 +3071,10 @@
           const kind = net.remote_kind || 'error';
           useLinked.disabled = false;
           if (kind === 'waiting' || kind === 'empty') {
-            useLinked.textContent = 'Use for chat';
+            useLinked.textContent = 'Use in Chat';
             useLinked.title = 'Link looks fine — start the model on the host when you want to chat';
           } else if (kind === 'auth') {
-            useLinked.textContent = 'Fix API key on Devices';
+            useLinked.textContent = 'Fix key on Devices';
             useLinked.title = 'The host rejected this API key';
           } else {
             useLinked.textContent = 'Check link on Devices';
@@ -3013,7 +3082,7 @@
           }
         } else {
           useLinked.disabled = false;
-          useLinked.textContent = 'Use for chat';
+          useLinked.textContent = 'Use in Chat';
           useLinked.title = '';
         }
       }
@@ -3054,7 +3123,7 @@
         } else if (via) {
           hint.textContent = 'Chat is linked to “' + host + '”, but no remote models responded yet. Check Share and that a model is running on the host.';
         } else if (models.length) {
-          hint.textContent = 'From “' + host + '”. Switch chat to Linked LLM (or Use linked for chat), then open Chat to use these in the model selector.';
+          hint.textContent = 'From “' + host + '”. Switch Chat to Linked PC, then open Chat to pick one.';
         } else if (kind === 'waiting') {
           hint.textContent = 'A linked device is saved. Start the model on the host, then Use linked for chat.';
         } else {
@@ -3087,7 +3156,7 @@
             </div>
           </div>
           <div class="model-card-actions">
-            <a class="btn btn-ghost" href="/chat" title="Opens Chat — pick this name in the model selector">${via ? 'Open in Chat' : 'Open Chat'}</a>
+            <a class="btn btn-ghost" href="/" title="Opens Chat — pick this name in the model selector">${via ? 'Open in Chat' : 'Open Chat'}</a>
           </div>
         </article>
       `).join('');
@@ -3131,7 +3200,7 @@
         const linkBit = count > 1 ? (count + ' links') : 'link saved';
         badge.textContent = shareBit ? (shareBit + ' · ' + linkBit) : linkBit;
         badge.className = 'status-chip linked-chip status-starting';
-        badge.title = 'Linked LLMs are saved; chat still uses this PC';
+        badge.title = 'Linked PCs saved; Chat still uses this PC';
       } else if (net.listening_exposed) {
         badge.textContent = 'sharing';
         badge.className = 'status-chip linked-chip status-ready';
@@ -3181,7 +3250,7 @@
       else if (next.pending_changes && next.running) {
         const focused = focusedServerModel(next);
         if (next.has_active_model && focused && next.model !== focused) {
-          detail = 'Different model selected · Models → Start alongside, or Restart to replace the focused server';
+          detail = 'Different model selected · Models → Start too, or Restart to replace the focused one';
         } else {
           detail = 'Settings changed · restart to apply';
         }
@@ -3202,12 +3271,12 @@
       } else {
         startStop.className = next.running ? 'btn btn-danger' : 'btn btn-primary';
         startStop.title = next.running
-          ? 'Stop the focused local llama-server'
-          : 'Start llama-server on this PC with the selected model';
+          ? 'Stop the focused local model'
+          : 'Start the selected model on this PC';
       }
       startAnother.classList.toggle('is-hidden', count < 1);
       startAnother.disabled = false;
-      startAnother.textContent = 'Choose another model…';
+      startAnother.textContent = 'Add model…';
 
       const localEyebrow = document.getElementById('localModelEyebrow');
       // Specs are always this PC’s llama — linked identity lives in linkedSourceBlock.
@@ -3227,7 +3296,7 @@
       }
       if (toolbarModel) {
         if (viaRemote) {
-          toolbarModel.textContent = (net.remote_model || 'Linked LLM') + ' · via ' + (net.remote_name || net.remote_label || 'peer');
+          toolbarModel.textContent = (net.remote_model || 'Linked PC') + ' · via ' + (net.remote_name || net.remote_label || 'peer');
         } else if (count > 1) {
           toolbarModel.textContent = (next.model || '—') + ' · ' + count + ' running locally';
         } else {
@@ -3361,7 +3430,7 @@
       if (model.size_display) {
         pills.push(`<span class="model-pill" data-size-pill>${escapeHtml(model.size_display)}</span>`);
       }
-      if (model.selected) pills.push('<span class="model-pill is-accent">Selected to start</span>');
+      if (model.selected) pills.push('<span class="model-pill is-accent">Selected</span>');
       if (next && runningServers(next).some((server) => server.model === model.label)) {
         pills.push('<span class="model-pill is-ok">Running</span>');
       }
@@ -3453,7 +3522,7 @@
 
     function handleModelActionClick(event) {
       const btn = event.target.closest('button[data-action]');
-      if (!btn || btn.disabled || !state) return;
+      if (!btn || btn.disabled || btn.dataset.busy === '1' || !state) return;
       const root = btn.closest('#modelLibrary, #modelAvailable');
       if (!root) return;
       event.preventDefault();
@@ -3462,9 +3531,9 @@
       const models = scope === 'available' ? availableModels(state) : libraryModels(state);
       const model = models.find((item) => (item.id || item.label) === id);
       if (!model) return;
-      if (btn.dataset.action === 'use') selectLibraryModel(id);
-      if (btn.dataset.action === 'download') downloadLibraryModel(id);
-      if (btn.dataset.action === 'import') importAvailableModel(id);
+      if (btn.dataset.action === 'use') selectLibraryModel(id, btn);
+      if (btn.dataset.action === 'download') downloadLibraryModel(id, btn);
+      if (btn.dataset.action === 'import') importAvailableModel(id, btn);
       if (btn.dataset.action === 'delete' && model.deletable) {
         deleteModelModal.show(model, scope);
       }
@@ -3502,29 +3571,26 @@
       const libraryHint = document.getElementById('modelLibraryHint');
       startBtn.disabled = !hasModel;
       if (!hasModel) {
-        startBtn.textContent = 'Start server';
-        if (hint) hint.textContent = 'Add or select a model from your library first.';
+        startBtn.textContent = 'Start';
+        if (hint) hint.textContent = 'Add a model, or click one in your library.';
       } else if (!running) {
-        startBtn.textContent = 'Start server';
-        if (hint) hint.textContent = 'Starts llama-server with this model.';
+        startBtn.textContent = 'Start';
+        if (hint) hint.textContent = 'Ready — start this model.';
       } else if (sameRunning) {
-        startBtn.textContent = 'Start a second copy';
+        startBtn.textContent = 'Start another copy';
         if (hint) {
-          hint.textContent = 'This model is already running. Select a different model below, then Start alongside — or start a second copy of this one on another port.';
+          hint.textContent = 'Already running. Pick a different model below to run two at once, or start another copy on a new port.';
         }
       } else {
-        startBtn.textContent = 'Start alongside';
+        startBtn.textContent = 'Start too';
         if (hint) {
-          hint.textContent = shortModelLabel(next.model)
-            + ' will start on a new port beside your running server'
-            + ((next.running_server_count || 0) > 1 ? 's' : '')
-            + '. Restart replaces the focused server instead.';
+          hint.textContent = 'Starts beside what’s already running (new port). Use Restart in the top bar to replace the focused one instead.';
         }
       }
       if (libraryHint) {
         libraryHint.textContent = running
-          ? 'Select a different model, then Start alongside to run two (or more) at once. Restart replaces the focused server.'
-          : 'Select a model to make it the next launch, download Hugging Face weights, or remove a model from the library.';
+          ? 'Click a different model, then Start too — runs both at once.'
+          : 'Click a model to select it.';
       }
     }
 
@@ -3629,40 +3695,49 @@
         : '<p class="model-empty">No on-disk models match this filter.</p>';
     }
 
-    async function selectLibraryModel(id) {
-      try {
-        clearModelsError();
-        applyState(await api('/api/models/select', {
-          method: 'POST',
-          body: JSON.stringify({ id }),
-        }));
-      } catch (error) {
-        showModelsError(error);
-      }
+    async function selectLibraryModel(id, btn) {
+      if (!btn) return;
+      await withBusyControl(btn, 'Selecting…', async () => {
+        try {
+          clearModelsError();
+          applyState(await api('/api/models/select', {
+            method: 'POST',
+            body: JSON.stringify({ id }),
+          }));
+        } catch (error) {
+          showModelsError(error);
+        }
+      });
     }
 
-    async function downloadLibraryModel(id) {
-      try {
-        clearModelsError();
-        applyState(await api('/api/models/download', {
-          method: 'POST',
-          body: JSON.stringify({ id }),
-        }));
-      } catch (error) {
-        showModelsError(error);
-      }
+    async function downloadLibraryModel(id, btn) {
+      if (!btn) return;
+      await withBusyControl(btn, 'Starting…', async () => {
+        try {
+          clearModelsError();
+          applyState(await api('/api/models/download', {
+            method: 'POST',
+            body: JSON.stringify({ id }),
+          }));
+        } catch (error) {
+          showModelsError(error);
+        }
+      });
     }
 
-    async function importAvailableModel(id) {
-      try {
-        clearModelsError();
-        applyState(await api('/api/models/import', {
-          method: 'POST',
-          body: JSON.stringify({ id }),
-        }));
-      } catch (error) {
-        showModelsError(error);
-      }
+    async function importAvailableModel(id, btn) {
+      if (!btn) return;
+      await withBusyControl(btn, 'Importing…', async () => {
+        try {
+          clearModelsError();
+          applyState(await api('/api/models/import', {
+            method: 'POST',
+            body: JSON.stringify({ id }),
+          }));
+        } catch (error) {
+          showModelsError(error);
+        }
+      });
     }
 
     async function confirmAddModel() {
@@ -3675,22 +3750,25 @@
           : 'Enter a local .gguf path.'));
         return;
       }
-      try {
-        document.getElementById('addModelError').classList.add('is-hidden');
-        const next = await api('/api/models/add', {
-          method: 'POST',
-          body: JSON.stringify({
-            kind: addModelKind,
-            value,
-            download: addModelKind === 'hugging_face' && document.getElementById('addModelDownload').checked,
-          }),
-        });
-        addModelModal.hide();
-        applyState(next);
-        showStage('models');
-      } catch (error) {
-        showAddModelError(error);
-      }
+      const confirmBtn = document.getElementById('btnConfirmAddModel');
+      await withBusyControl(confirmBtn, 'Adding…', async () => {
+        try {
+          document.getElementById('addModelError').classList.add('is-hidden');
+          const next = await api('/api/models/add', {
+            method: 'POST',
+            body: JSON.stringify({
+              kind: addModelKind,
+              value,
+              download: addModelKind === 'hugging_face' && document.getElementById('addModelDownload').checked,
+            }),
+          });
+          addModelModal.hide();
+          applyState(next);
+          showStage('models');
+        } catch (error) {
+          showAddModelError(error);
+        }
+      });
     }
 
     function formatPresetWarning(text) {
@@ -4045,16 +4123,17 @@
 
     function openCmdk() {
       cmdkItems = [
-        { label: 'Go to Dashboard', hint: '1', run: () => showStage('dashboard') },
+        { label: 'Open Chat', hint: '', run: () => { window.location.href = '/'; } },
+        { label: 'Go to Dash', hint: '1', run: () => showStage('dashboard') },
         { label: 'Go to Models', hint: '2', run: () => showStage('models') },
-        { label: 'Go to Configure', hint: '3', run: () => showStage('configure') },
+        { label: 'Go to Config', hint: '3', run: () => showStage('configure') },
         { label: 'Go to Devices', hint: '4', run: () => showStage('network') },
         { label: 'Go to Logs', hint: '5', run: () => showStage('logs') },
         { label: 'Go to Stats', hint: '6', run: () => showStage('stats') },
         { label: 'Add model', hint: '', run: () => { showStage('models'); addModelModal.show(); } },
-        { label: state?.running ? 'Stop llama-server' : 'Start llama-server', hint: 'S', run: () => document.getElementById('btnStartStop').click() },
-        { label: 'Choose another model…', hint: '', run: () => document.getElementById('btnStartAnother').click() },
-        { label: 'Restart llama-server', hint: 'R', run: () => document.getElementById('btnRestart').click() },
+        { label: state?.running ? 'Stop local model' : 'Start local model', hint: 'S', run: () => document.getElementById('btnStartStop').click() },
+        { label: 'Add another model…', hint: '', run: () => document.getElementById('btnStartAnother').click() },
+        { label: 'Restart local model', hint: 'R', run: () => document.getElementById('btnRestart').click() },
         { label: 'Copy /v1 URL', hint: '', run: () => document.getElementById('btnCopyEndpoint').click() },
         { label: 'Copy launch command', hint: '', run: () => document.getElementById('btnCopyCommand').click() },
         { label: 'Copy all logs', hint: '', run: () => document.getElementById('btnCopyLogs').click() },
@@ -4093,10 +4172,7 @@
       });
     }
 
-    document.getElementById('wordmark').addEventListener('click', (event) => {
-      event.preventDefault();
-      showStage('dashboard');
-    });
+    // Wordmark returns to Chat; Admin sections stay in the sidebar.
     document.querySelectorAll('#themeToggle [data-theme-choice]').forEach((btn) => {
       btn.addEventListener('click', () => setTheme(btn.dataset.themeChoice));
     });
@@ -4110,16 +4186,17 @@
       const btn = document.getElementById('btnStartStop');
       const running = !!state.running;
       const serverId = state.active_server_id || 'main';
-      btn.disabled = true;
       const seq = beginStateMutation();
       try {
-        const next = running
-          ? await api('/api/stop', {
-              method: 'POST',
-              body: JSON.stringify({ id: serverId }),
-            })
-          : await api('/api/start', { method: 'POST' });
-        commitStateMutation(seq, next);
+        await withBusyControl(btn, running ? 'Stopping…' : 'Starting…', async () => {
+          const next = running
+            ? await api('/api/stop', {
+                method: 'POST',
+                body: JSON.stringify({ id: serverId }),
+              })
+            : await api('/api/start', { method: 'POST' });
+          commitStateMutation(seq, next);
+        }, { restore: false });
       } catch (error) {
         document.getElementById('statusDetail').textContent = error.message || String(error);
         refresh();
@@ -4142,50 +4219,59 @@
       }
     });
     document.getElementById('btnRestart').addEventListener('click', async () => {
+      const btn = document.getElementById('btnRestart');
       const seq = beginStateMutation();
       try {
-        const next = await api('/api/restart', {
-          method: 'POST',
-          body: JSON.stringify({ id: state?.active_server_id || 'main' }),
+        await withBusyControl(btn, 'Restarting…', async () => {
+          const next = await api('/api/restart', {
+            method: 'POST',
+            body: JSON.stringify({ id: state?.active_server_id || 'main' }),
+          });
+          commitStateMutation(seq, next);
         });
-        commitStateMutation(seq, next);
       } catch (error) {
         document.getElementById('statusDetail').textContent = error.message || String(error);
       }
     });
     document.getElementById('runningServersList').addEventListener('click', async (event) => {
       const btn = event.target.closest('[data-server-action]');
-      if (!btn) return;
+      if (!btn || btn.dataset.busy === '1') return;
       const id = btn.getAttribute('data-server-id');
       const action = btn.getAttribute('data-server-action');
       const seq = beginStateMutation();
+      const label = action === 'stop' ? 'Stopping…' : 'Focusing…';
       try {
-        if (action === 'select') {
-          commitStateMutation(seq, await api('/api/servers/select', {
-            method: 'POST',
-            body: JSON.stringify({ id }),
-          }));
-        } else if (action === 'stop') {
-          commitStateMutation(seq, await api('/api/stop', {
-            method: 'POST',
-            body: JSON.stringify({ id }),
-          }));
-        }
+        await withBusyControl(btn, label, async () => {
+          if (action === 'select') {
+            commitStateMutation(seq, await api('/api/servers/select', {
+              method: 'POST',
+              body: JSON.stringify({ id }),
+            }));
+          } else if (action === 'stop') {
+            commitStateMutation(seq, await api('/api/stop', {
+              method: 'POST',
+              body: JSON.stringify({ id }),
+            }));
+          }
+        });
       } catch (error) {
         document.getElementById('statusDetail').textContent = error.message || String(error);
       }
     });
     document.getElementById('btnReset').addEventListener('click', async () => {
       settingsDirty = false;
+      const btn = document.getElementById('btnReset');
       setAutosaveState('saving');
       const token = ++autosaveToken;
-      try {
-        applyState(await api('/api/reset', { method: 'POST' }));
-        if (token === autosaveToken) setAutosaveState('saved');
-      } catch (error) {
-        if (token === autosaveToken) setAutosaveState('error');
-        showSettingsError(error);
-      }
+      await withBusyControl(btn, 'Resetting…', async () => {
+        try {
+          applyState(await api('/api/reset', { method: 'POST' }));
+          if (token === autosaveToken) setAutosaveState('saved');
+        } catch (error) {
+          if (token === autosaveToken) setAutosaveState('error');
+          showSettingsError(error);
+        }
+      });
     });
     document.getElementById('runtimePreset').addEventListener('change', async (event) => {
       const preset = event.target.value;
@@ -4207,26 +4293,24 @@
     });
     document.getElementById('btnAddModel').addEventListener('click', () => addModelModal.show());
     document.getElementById('btnAddModelEmpty').addEventListener('click', () => addModelModal.show());
-    document.getElementById('btnChangeActiveModel').addEventListener('click', () => {
-      const library = document.getElementById('modelLibrary');
-      const filter = document.getElementById('modelFilter');
-      library?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      filter?.focus();
-    });
     document.getElementById('btnStartFromModels').addEventListener('click', async () => {
       if (!state?.has_active_model || startStopInFlight) return;
       startStopInFlight = true;
+      const btn = document.getElementById('btnStartFromModels');
       const seq = beginStateMutation();
       try {
-        clearModelsError();
-        const next = await api('/api/start', { method: 'POST' });
-        commitStateMutation(seq, next);
-        showStage('dashboard');
+        await withBusyControl(btn, 'Starting…', async () => {
+          clearModelsError();
+          const next = await api('/api/start', { method: 'POST' });
+          commitStateMutation(seq, next);
+          showStage('dashboard');
+        });
       } catch (error) {
         showModelsError(error);
       } finally {
         startStopInFlight = false;
-        const btn = document.getElementById('btnStartStop');
+        const startStop = document.getElementById('btnStartStop');
+        if (startStop) startStop.disabled = false;
         if (btn) btn.disabled = false;
       }
     });
@@ -4297,7 +4381,7 @@
       if (!isTextEditable(el)) return;
       const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
       if (typeof text !== 'string') return;
-      // Force-insert — default paste is unreliable in the desktop webview.
+      // Force-insert when the browser drops a native paste into the field.
       event.preventDefault();
       insertIntoEditable(el, text);
     }, true);
@@ -4321,47 +4405,54 @@
       }, 0);
     }, true);
     document.getElementById('btnCancelDownload').addEventListener('click', async () => {
-      try {
-        clearModelsError();
-        applyState(await api('/api/models/download/cancel', { method: 'POST' }));
-      } catch (error) {
-        showModelsError(error);
-      }
+      const btn = document.getElementById('btnCancelDownload');
+      await withBusyControl(btn, 'Canceling…', async () => {
+        try {
+          clearModelsError();
+          applyState(await api('/api/models/download/cancel', { method: 'POST' }));
+        } catch (error) {
+          showModelsError(error);
+        }
+      });
     });
     document.getElementById('btnCancelDeleteModel').addEventListener('click', () => {
       deleteModelModal.hide();
     });
     document.getElementById('btnConfirmDeleteModel').addEventListener('click', async () => {
+      const confirmBtn = document.getElementById('btnConfirmDeleteModel');
+      if (confirmBtn?.dataset.busy === '1') return;
       const id = deleteModelModal.id;
       const scope = deleteModelModal.scope || 'library';
-      deleteModelModal.hide();
       if (!id) return;
-      // Optimistic removal so the row cannot "stick" while waiting on the next poll.
-      if (state) {
-        if (scope === 'available') {
-          state.available = availableModels(state).filter((model) => (model.id || model.label) !== id);
-        } else {
-          state.library = libraryModels(state).filter((model) => (model.id || model.label) !== id);
-          state.recent_models = state.library;
-          if (state.model === id) {
-            state.has_active_model = false;
-            state.model = 'No model selected';
+      await withBusyControl(confirmBtn, 'Removing…', async () => {
+        deleteModelModal.hide();
+        // Optimistic removal so the row cannot "stick" while waiting on the next poll.
+        if (state) {
+          if (scope === 'available') {
+            state.available = availableModels(state).filter((model) => (model.id || model.label) !== id);
+          } else {
+            state.library = libraryModels(state).filter((model) => (model.id || model.label) !== id);
+            state.recent_models = state.library;
+            if (state.model === id) {
+              state.has_active_model = false;
+              state.model = 'No model selected';
+            }
           }
+          lastLibrarySignature = '';
+          renderActiveModel(state);
+          renderModelLibrary(state, true);
         }
-        lastLibrarySignature = '';
-        renderActiveModel(state);
-        renderModelLibrary(state, true);
-      }
-      try {
-        clearModelsError();
-        applyState(await api('/api/models/delete', {
-          method: 'POST',
-          body: JSON.stringify({ id, scope }),
-        }));
-      } catch (error) {
-        showModelsError(error);
-        try { applyState(await api('/api/state')); } catch (_) {}
-      }
+        try {
+          clearModelsError();
+          applyState(await api('/api/models/delete', {
+            method: 'POST',
+            body: JSON.stringify({ id, scope }),
+          }));
+        } catch (error) {
+          showModelsError(error);
+          try { applyState(await api('/api/state')); } catch (_) {}
+        }
+      });
     });
     document.getElementById('deleteModelModal').addEventListener('click', (event) => {
       if (event.target.id === 'deleteModelModal') deleteModelModal.hide();
@@ -4459,7 +4550,7 @@
     // The chat mark spins continuously — it is the live sign of the surface it
     // points at. mountOrb parks the loop on hidden tabs, and reduced-motion
     // users get a single static frame instead.
-    ['chatCtaOrb', 'chatCtaDashOrb'].forEach((orbId) => {
+    ['chatCtaDashOrb'].forEach((orbId) => {
       const canvas = document.getElementById(orbId);
       if (canvas) mountOrb(canvas, 20);
     });
@@ -4492,47 +4583,58 @@
       },
     };
 
-    document.getElementById('networkExposeToggle').addEventListener('change', (event) => {
+    document.getElementById('networkExposeToggle').addEventListener('change', async (event) => {
       if (event.target.checked) {
         event.target.checked = false;
         exposeModal.show();
         return;
       }
-      postNetwork({ expose: false }).catch((error) => {
+      event.target.disabled = true;
+      try {
+        await postNetwork({ expose: false });
+      } catch (error) {
         event.target.checked = true;
         showNetworkError(error);
-      });
+      } finally {
+        event.target.disabled = false;
+      }
     });
     document.getElementById('btnCancelExpose').addEventListener('click', () => {
       exposeModal.hide();
       document.getElementById('networkExposeToggle').checked = !!networkState?.expose;
     });
     document.getElementById('btnConfirmExpose').addEventListener('click', async () => {
-      try {
-        // Keep the saved/default scope (Tailscale-first). Do not widen to LAN here.
-        await postNetwork({ expose: true });
-        exposeModal.hide();
-      } catch (error) {
-        showNetworkError(error);
-      }
+      const btn = document.getElementById('btnConfirmExpose');
+      await withBusyControl(btn, 'Turning on…', async () => {
+        try {
+          // Keep the saved/default scope (Tailscale-first). Do not widen to LAN here.
+          await postNetwork({ expose: true });
+          exposeModal.hide();
+        } catch (error) {
+          showNetworkError(error);
+        }
+      });
     });
     document.getElementById('btnCancelLanScope').addEventListener('click', () => lanScopeModal.cancel());
     document.getElementById('lanScopeConfirmModal').addEventListener('click', (event) => {
       if (event.target.id === 'lanScopeConfirmModal') lanScopeModal.cancel();
     });
     document.getElementById('btnConfirmLanScope').addEventListener('click', async () => {
-      try {
-        await postNetwork({ listen_scope: 'all' });
-        lanScopeModal.hide();
-      } catch (error) {
-        lanScopeModal.cancel();
-        showNetworkError(error);
-      }
+      const btn = document.getElementById('btnConfirmLanScope');
+      await withBusyControl(btn, 'Applying…', async () => {
+        try {
+          await postNetwork({ listen_scope: 'all' });
+          lanScopeModal.hide();
+        } catch (error) {
+          lanScopeModal.cancel();
+          showNetworkError(error);
+        }
+      });
     });
-    document.getElementById('networkListenScope').addEventListener('change', (event) => {
+    document.getElementById('networkListenScope').addEventListener('change', async (event) => {
       const listen_scope = event.target.value;
       if (listen_scope === 'all') {
-        // Native window.confirm is unreliable in the desktop webview — use an in-app modal.
+        // Prefer an in-app modal over window.confirm for consistent UX.
         event.target.value = networkState?.listen_scope || 'tailscale';
         lanScopeModal.show();
         return;
@@ -4547,16 +4649,28 @@
         }
         if (host) body.listen_host = host;
       }
-      postNetwork(body).catch((error) => {
+      event.target.disabled = true;
+      try {
+        await postNetwork(body);
+      } catch (error) {
         event.target.value = networkState?.listen_scope || 'tailscale';
         showNetworkError(error);
-      });
+      } finally {
+        event.target.disabled = false;
+      }
     });
-    document.getElementById('networkListenHost').addEventListener('change', (event) => {
-      postNetwork({
-        listen_scope: 'custom',
-        listen_host: event.target.value.trim(),
-      }).catch(showNetworkError);
+    document.getElementById('networkListenHost').addEventListener('change', async (event) => {
+      event.target.disabled = true;
+      try {
+        await postNetwork({
+          listen_scope: 'custom',
+          listen_host: event.target.value.trim(),
+        });
+      } catch (error) {
+        showNetworkError(error);
+      } finally {
+        event.target.disabled = false;
+      }
     });
     document.getElementById('networkShareList').addEventListener('click', (event) => {
       const btn = event.target.closest('[data-copy]');
@@ -4589,16 +4703,22 @@
     };
     document.getElementById('networkRemoteList').addEventListener('click', (event) => {
       const activate = event.target.closest('[data-remote-activate]');
-      if (activate && !activate.disabled) {
-        mutateRemote('/api/network/remotes/' + encodeURIComponent(activate.getAttribute('data-remote-activate')) + '/activate', {
-          method: 'POST',
-        }).then(() => {
+      if (activate && !activate.disabled && activate.dataset.busy !== '1') {
+        const remoteId = activate.getAttribute('data-remote-activate');
+        const remote = (networkState?.remotes || []).find((r) => r.id === remoteId);
+        activate.dataset.busy = '1';
+        activate.disabled = true;
+        activate.textContent = 'Switching…';
+        switchChatSource('remote', async () => {
+          await mutateRemote('/api/network/remotes/' + encodeURIComponent(remoteId) + '/activate', {
+            method: 'POST',
+          });
           const health = document.getElementById('networkRemoteHealth');
           if (health) {
             health.dataset.sticky = '1';
             health.textContent = 'Chat now uses that linked LLM.';
           }
-        }).catch(showNetworkError);
+        }, remote?.name);
         return;
       }
       const remove = event.target.closest('[data-remote-delete]');
@@ -4619,20 +4739,26 @@
     document.getElementById('removeRemoteModal').addEventListener('click', (event) => {
       if (event.target.id === 'removeRemoteModal') removeRemoteModal.hide();
     });
-    document.getElementById('btnConfirmRemoveRemote').addEventListener('click', () => {
+    document.getElementById('btnConfirmRemoveRemote').addEventListener('click', async () => {
       const id = pendingRemoveRemoteId;
       if (!id) return;
-      mutateRemote('/api/network/remotes/' + encodeURIComponent(id), {
-        method: 'DELETE',
-      }).then(() => {
-        removeRemoteModal.hide();
-        clearRemoteForm();
-        const health = document.getElementById('networkRemoteHealth');
-        if (health) {
-          health.dataset.sticky = '1';
-          health.textContent = 'Linked LLM removed from this PC.';
+      const btn = document.getElementById('btnConfirmRemoveRemote');
+      await withBusyControl(btn, 'Removing…', async () => {
+        try {
+          await mutateRemote('/api/network/remotes/' + encodeURIComponent(id), {
+            method: 'DELETE',
+          });
+          removeRemoteModal.hide();
+          clearRemoteForm();
+          const health = document.getElementById('networkRemoteHealth');
+          if (health) {
+            health.dataset.sticky = '1';
+            health.textContent = 'Linked LLM removed from this PC.';
+          }
+        } catch (error) {
+          showNetworkError(error);
         }
-      }).catch(showNetworkError);
+      });
     });
     document.getElementById('networkRemoteList').addEventListener('change', (event) => {
       const input = event.target.closest('[data-remote-name]');
@@ -4645,14 +4771,20 @@
         body: JSON.stringify({ name }),
       }).catch(showNetworkError);
     });
-    document.getElementById('btnCreateApiKey').addEventListener('click', () => {
+    document.getElementById('btnCreateApiKey').addEventListener('click', async () => {
       const name = document.getElementById('networkNewKeyName').value.trim() || 'API key';
-      mutateApiKey('/api/network/keys', {
-        method: 'POST',
-        body: JSON.stringify({ name }),
-      }).then(() => {
-        document.getElementById('networkNewKeyName').value = '';
-      }).catch(showNetworkError);
+      const btn = document.getElementById('btnCreateApiKey');
+      await withBusyControl(btn, 'Creating…', async () => {
+        try {
+          await mutateApiKey('/api/network/keys', {
+            method: 'POST',
+            body: JSON.stringify({ name }),
+          });
+          document.getElementById('networkNewKeyName').value = '';
+        } catch (error) {
+          showNetworkError(error);
+        }
+      });
     });
     document.getElementById('networkNewKeyName').addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
@@ -4660,7 +4792,7 @@
         document.getElementById('btnCreateApiKey').click();
       }
     });
-    document.getElementById('networkApiKeyList').addEventListener('click', (event) => {
+    document.getElementById('networkApiKeyList').addEventListener('click', async (event) => {
       const copyBtn = event.target.closest('[data-key-copy]');
       if (copyBtn) {
         const id = copyBtn.getAttribute('data-key-copy');
@@ -4668,19 +4800,31 @@
         return;
       }
       const regenBtn = event.target.closest('[data-key-regen]');
-      if (regenBtn) {
+      if (regenBtn && regenBtn.dataset.busy !== '1') {
         const id = regenBtn.getAttribute('data-key-regen');
-        mutateApiKey('/api/network/keys/' + encodeURIComponent(id) + '/regenerate', {
-          method: 'POST',
-        }).catch(showNetworkError);
+        await withBusyControl(regenBtn, 'Regen…', async () => {
+          try {
+            await mutateApiKey('/api/network/keys/' + encodeURIComponent(id) + '/regenerate', {
+              method: 'POST',
+            });
+          } catch (error) {
+            showNetworkError(error);
+          }
+        }, { restore: false });
         return;
       }
       const deleteBtn = event.target.closest('[data-key-delete]');
-      if (deleteBtn && !deleteBtn.disabled) {
+      if (deleteBtn && !deleteBtn.disabled && deleteBtn.dataset.busy !== '1') {
         const id = deleteBtn.getAttribute('data-key-delete');
-        mutateApiKey('/api/network/keys/' + encodeURIComponent(id), {
-          method: 'DELETE',
-        }).catch(showNetworkError);
+        await withBusyControl(deleteBtn, 'Removing…', async () => {
+          try {
+            await mutateApiKey('/api/network/keys/' + encodeURIComponent(id), {
+              method: 'DELETE',
+            });
+          } catch (error) {
+            showNetworkError(error);
+          }
+        }, { restore: false });
       }
     });
     document.getElementById('networkApiKeyList').addEventListener('change', (event) => {
@@ -4694,8 +4838,55 @@
         body: JSON.stringify({ name }),
       }).catch(showNetworkError);
     });
+    function setChatSourceBusy(busy, mode, remoteName) {
+      const row = document.getElementById('chatSourceRow');
+      if (!row) return;
+      row.classList.toggle('is-busy', !!busy);
+      row.setAttribute('aria-busy', busy ? 'true' : 'false');
+      document.getElementById('modeLocalBtn').disabled = !!busy;
+      document.getElementById('modeRemoteBtn').disabled = !!busy || !(networkState?.remotes || []).length;
+      const modeHint = document.getElementById('networkModeHint');
+      if (busy && modeHint) {
+        modeHint.textContent = mode === 'remote'
+          ? 'Switching Chat to “' + (remoteName || 'linked PC') + '”…'
+          : 'Switching Chat to this PC…';
+      }
+    }
+    function paintChatSourceMode(mode, remoteName) {
+      document.getElementById('modeLocalBtn').classList.toggle('is-active', mode === 'local');
+      document.getElementById('modeRemoteBtn').classList.toggle('is-active', mode === 'remote');
+      const modeHint = document.getElementById('networkModeHint');
+      if (!modeHint) return;
+      if (mode === 'remote') {
+        modeHint.textContent = 'Chat uses “' + (remoteName || 'linked PC') + '”. Start/Stop here still only affects this PC.';
+      } else if ((networkState?.remotes || []).length) {
+        const n = networkState.remotes.length;
+        modeHint.textContent = n + ' link' + (n === 1 ? '' : 's') + ' saved · Chat still on this PC.';
+      } else {
+        modeHint.textContent = 'Chat uses models on this PC.';
+      }
+    }
+    async function switchChatSource(mode, request, remoteName) {
+      const token = ++chatSourceBusyToken;
+      const previous = networkState?.inference_mode || 'local';
+      const remotes = networkState?.remotes || [];
+      const active = remotes.find((r) => r.active) || remotes.find((r) => r.id === networkState?.active_remote_id) || remotes[0];
+      const hintName = remoteName || active?.name;
+      paintChatSourceMode(mode, hintName);
+      setChatSourceBusy(true, mode, hintName);
+      try {
+        await request();
+        if (token === chatSourceBusyToken) paintChatSourceMode(mode, hintName);
+      } catch (error) {
+        if (token === chatSourceBusyToken) paintChatSourceMode(previous, active?.name);
+        showNetworkError(error);
+      } finally {
+        if (token === chatSourceBusyToken) setChatSourceBusy(false);
+      }
+    }
     document.getElementById('modeLocalBtn').addEventListener('click', () => {
-      postNetwork({ inference_mode: 'local' }).catch(showNetworkError);
+      if ((networkState?.inference_mode || 'local') === 'local') return;
+      switchChatSource('local', () => postNetwork({ inference_mode: 'local' }));
     });
     document.getElementById('modeRemoteBtn').addEventListener('click', () => {
       const remotes = networkState?.remotes || [];
@@ -4704,21 +4895,22 @@
         document.getElementById('networkRemoteToken').focus();
         return;
       }
-      const ready = remotes.find((r) => r.id === networkState?.active_remote_id && r.token_set && r.health?.ok)
-        || remotes.find((r) => r.token_set && r.health?.ok)
+      if ((networkState?.inference_mode || 'local') === 'remote') return;
+      const ready = remotes.find((r) => r.id === networkState?.active_remote_id && r.token_set && (r.health?.ok || !r.health))
+        || remotes.find((r) => r.token_set && (r.health?.ok || !r.health || r.health?.kind === 'waiting' || r.health?.kind === 'empty'))
         || remotes.find((r) => r.token_set);
       if (!ready) {
         showNetworkError(new Error('Add a working API key on a linked LLM first.'));
         return;
       }
-      mutateRemote('/api/network/remotes/' + encodeURIComponent(ready.id) + '/activate', {
+      switchChatSource('remote', () => mutateRemote('/api/network/remotes/' + encodeURIComponent(ready.id) + '/activate', {
         method: 'POST',
-      }).catch(showNetworkError);
+      }));
     });
     document.getElementById('btnCancelRemoteEdit').addEventListener('click', () => {
       clearRemoteForm();
     });
-    document.getElementById('btnSaveRemoteLink').addEventListener('click', () => {
+    document.getElementById('btnSaveRemoteLink').addEventListener('click', async () => {
       const name = document.getElementById('networkRemoteName').value.trim();
       const base = document.getElementById('networkRemoteBase').value.trim();
       const token = document.getElementById('networkRemoteToken').value.trim();
@@ -4737,20 +4929,25 @@
           document.getElementById('networkRemoteToken').focus();
           return;
         }
-        mutateRemote('/api/network/remotes/' + encodeURIComponent(editingId), {
-          method: 'PATCH',
-          body: JSON.stringify({
-            name: name || undefined,
-            base,
-            token: token || undefined,
-          }),
-        }).then(() => {
-          clearRemoteForm();
-          if (health) {
-            health.dataset.sticky = '1';
-            health.textContent = 'Linked LLM updated.';
+        await withBusyControl(saveBtn, 'Saving…', async () => {
+          try {
+            await mutateRemote('/api/network/remotes/' + encodeURIComponent(editingId), {
+              method: 'PATCH',
+              body: JSON.stringify({
+                name: name || undefined,
+                base,
+                token: token || undefined,
+              }),
+            });
+            clearRemoteForm();
+            if (health) {
+              health.dataset.sticky = '1';
+              health.textContent = 'Linked LLM updated.';
+            }
+          } catch (error) {
+            showNetworkError(error);
           }
-        }).catch(showNetworkError);
+        });
         return;
       }
       if (!token) {
@@ -4758,31 +4955,42 @@
         document.getElementById('networkRemoteToken').focus();
         return;
       }
-      mutateRemote('/api/network/remotes', {
-        method: 'POST',
-        body: JSON.stringify({
-          name,
-          base,
-          token,
-          activate: true,
-        }),
-      }).then((result) => {
-        const linked = result?.network?.remote_name || name || 'Linked LLM';
-        clearRemoteForm();
-        if (health) {
-          health.dataset.sticky = '1';
-          health.textContent = 'Saved “' + linked + '” · chat now uses this link.';
+      await withBusyControl(saveBtn, 'Adding…', async () => {
+        try {
+          const result = await mutateRemote('/api/network/remotes', {
+            method: 'POST',
+            body: JSON.stringify({
+              name,
+              base,
+              token,
+              activate: true,
+            }),
+          });
+          const linked = result?.network?.remote_name || name || 'Linked LLM';
+          clearRemoteForm();
+          if (health) {
+            health.dataset.sticky = '1';
+            health.textContent = 'Saved “' + linked + '” · chat now uses this link.';
+          }
+        } catch (error) {
+          showNetworkError(error);
         }
-      }).catch(showNetworkError);
+      });
     });
-    document.getElementById('btnNetworkRestart')?.addEventListener('click', () => {
+    document.getElementById('btnNetworkRestart')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btnNetworkRestart');
       const seq = beginStateMutation();
-      api('/api/restart', {
-        method: 'POST',
-        body: JSON.stringify({ id: state?.active_server_id || 'main' }),
-      })
-        .then((next) => commitStateMutation(seq, next))
-        .catch(showNetworkError);
+      await withBusyControl(btn, 'Restarting…', async () => {
+        try {
+          const next = await api('/api/restart', {
+            method: 'POST',
+            body: JSON.stringify({ id: state?.active_server_id || 'main' }),
+          });
+          commitStateMutation(seq, next);
+        } catch (error) {
+          showNetworkError(error);
+        }
+      });
     });
 
     let deviceNameTimer = 0;
@@ -4819,15 +5027,28 @@
         refreshNetwork();
         return;
       }
-      mutateRemote('/api/network/remotes/' + encodeURIComponent(net.active_remote_id) + '/activate', {
-        method: 'POST',
-      }).catch((error) => {
-        showStage('network');
-        showNetworkError(error);
-      });
+      const btn = document.getElementById('btnDashUseLinked');
+      switchChatSource('remote', async () => {
+        try {
+          await withBusyControl(btn, 'Switching…', async () => {
+            await mutateRemote('/api/network/remotes/' + encodeURIComponent(net.active_remote_id) + '/activate', {
+              method: 'POST',
+            });
+          });
+        } catch (error) {
+          showStage('network');
+          throw error;
+        }
+      }, net.remote_name);
     });
     document.getElementById('btnDashUseLocal').addEventListener('click', () => {
-      postNetwork({ inference_mode: 'local' }).catch(showNetworkError);
+      if ((state?.network?.inference_mode || networkState?.inference_mode || 'local') === 'local') return;
+      const btn = document.getElementById('btnDashUseLocal');
+      switchChatSource('local', async () => {
+        await withBusyControl(btn, 'Switching…', async () => {
+          await postNetwork({ inference_mode: 'local' });
+        });
+      });
     });
     document.getElementById('btnDashNetwork').addEventListener('click', (event) => {
       event.preventDefault();
@@ -4851,12 +5072,19 @@
         refreshNetwork();
         return;
       }
-      mutateRemote('/api/network/remotes/' + encodeURIComponent(id) + '/activate', {
-        method: 'POST',
-      }).catch((error) => {
-        showStage('network');
-        showNetworkError(error);
-      });
+      const btn = document.getElementById('btnRemoteModelsUseLinked');
+      switchChatSource('remote', async () => {
+        try {
+          await withBusyControl(btn, 'Switching…', async () => {
+            await mutateRemote('/api/network/remotes/' + encodeURIComponent(id) + '/activate', {
+              method: 'POST',
+            });
+          });
+        } catch (error) {
+          showStage('network');
+          throw error;
+        }
+      }, net.remote_name);
     });
 
     document.querySelectorAll('.reveal').forEach((el) => el.classList.add('is-in'));

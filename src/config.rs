@@ -147,7 +147,7 @@ pub const DEFAULT_UI_FONT_MONO: &str = "jetbrains-mono";
 pub struct UiConfig {
     pub host: String,
     pub port: u16,
-    /// Shared by control panel and chat (`dark` default).
+    /// Shared by Admin and Chat (`dark` default).
     pub theme: UiTheme,
     pub font_body: String,
     pub font_display: String,
@@ -453,7 +453,10 @@ impl Config {
 
     /// Desired UI bind from config (ignores CLI/env overrides). Always loopback.
     pub fn desired_ui_bind(&self) -> Result<SocketAddr> {
-        Ok(force_loopback_socket(parse_ui_addr(&self.ui.host, self.ui.port)?))
+        Ok(force_loopback_socket(parse_ui_addr(
+            &self.ui.host,
+            self.ui.port,
+        )?))
     }
 
     /// Keep the control panel on loopback. Network sharing binds llama-server instead.
@@ -474,11 +477,7 @@ impl Config {
             Ok(host) => {
                 self.server.host = host;
                 if self.network.expose {
-                    self.server.api_key = self
-                        .network
-                        .primary_api_key()
-                        .unwrap_or("")
-                        .to_string();
+                    self.server.api_key = self.network.primary_api_key().unwrap_or("").to_string();
                 } else {
                     self.server.api_key.clear();
                 }
@@ -486,11 +485,7 @@ impl Config {
             Err(_) => {
                 self.server.host = "127.0.0.1".into();
                 if self.network.expose {
-                    self.server.api_key = self
-                        .network
-                        .primary_api_key()
-                        .unwrap_or("")
-                        .to_string();
+                    self.server.api_key = self.network.primary_api_key().unwrap_or("").to_string();
                 } else {
                     self.server.api_key.clear();
                 }
@@ -650,19 +645,15 @@ impl Config {
         }
         if has_extra_option(&self.server.extra_args, "--host") {
             errors.push(
-                "extra --host is not allowed; the listen address is set only in Devices"
-                    .into(),
+                "extra --host is not allowed; the listen address is set only in Devices".into(),
             );
         }
         if has_extra_option(&self.server.extra_args, "--port") {
-            errors.push(
-                "extra --port is not allowed; set the port in Configure".into(),
-            );
+            errors.push("extra --port is not allowed; set the port in Configure".into());
         }
         if has_extra_option(&self.server.extra_args, "--api-key") {
             errors.push(
-                "extra --api-key is not allowed; manage keys in Devices when Share is on"
-                    .into(),
+                "extra --api-key is not allowed; manage keys in Devices when Share is on".into(),
             );
         }
         if self.network.expose {

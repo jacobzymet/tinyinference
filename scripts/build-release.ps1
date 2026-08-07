@@ -7,10 +7,6 @@
 #   gh workflow run release.yml
 # or push a version tag: git tag v0.3.1 && git push origin v0.3.1
 
-param(
-    [switch]$Headless
-)
-
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
@@ -27,17 +23,11 @@ elseif ($triple -match "x86_64|amd64") { "x86_64" }
 else { "unknown" }
 
 $ext = if ($os -eq "windows") { ".exe" } else { "" }
-$suffix = if ($Headless) { "-headless" } else { "" }
-$artifact = "tinyinference-$os-$arch$suffix$ext"
+$artifact = "tinyinference-$os-$arch$ext"
 
 Write-Host "Building self-contained tinyinference $version for $triple → dist/$artifact"
 
-$featureArgs = @()
-if ($Headless) {
-    $featureArgs += "--no-default-features"
-}
-
-cargo build --release --locked @featureArgs
+cargo build --release --locked
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -46,6 +36,6 @@ Copy-Item -Force $src (Join-Path "dist" $artifact)
 
 Write-Host ""
 Write-Host "Done: dist/$artifact"
-Write-Host "This single file includes the control panel HTML, chat HTML, orb.js, and icons."
+Write-Host "This single file includes the chat UI, admin UI, orb.js, and icons."
 Write-Host ""
 Write-Host "Other OS binaries: push a v* tag or run  gh workflow run release.yml"

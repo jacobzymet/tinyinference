@@ -68,7 +68,10 @@ fn generate_self_signed(paths: &TlsPaths, extra_ips: &[IpAddr]) -> Result<()> {
         if *ip == IpAddr::V4(Ipv4Addr::UNSPECIFIED) || *ip == IpAddr::V6(Ipv6Addr::UNSPECIFIED) {
             continue;
         }
-        if !sans.iter().any(|san| matches!(san, SanType::IpAddress(existing) if existing == ip)) {
+        if !sans
+            .iter()
+            .any(|san| matches!(san, SanType::IpAddress(existing) if existing == ip))
+        {
             sans.push(SanType::IpAddress(*ip));
         }
     }
@@ -105,8 +108,8 @@ mod tests {
         assert!(cert.contains("BEGIN CERTIFICATE"));
         assert!(key.contains("BEGIN") && key.contains("PRIVATE KEY"));
 
-        let second = ensure_self_signed(dir.path(), &[IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))])
-            .unwrap();
+        let second =
+            ensure_self_signed(dir.path(), &[IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))]).unwrap();
         assert_eq!(first, second);
         // Existing pair is reused (no regenerate on extra IPs).
         assert_eq!(fs::read_to_string(&second.cert_file).unwrap(), cert);

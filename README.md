@@ -1,8 +1,8 @@
 # <img src="assets/ti.png" alt="" width="42" align="top"> tinyinference
 
-A minimal, lightweight Rust desktop app for launching and managing `llama-server` with GGUF models.
+A minimal, lightweight Rust web app for launching and managing `llama-server` with GGUF models.
 
-> **Note:** tinyinference started as a terminal UI (TUI), then became a local web UI. The control panel now opens in its own native window. The web server is still there underneath — the chat page runs in your browser, and `--no-window` gives you the old browser-only behaviour.
+> **Note:** tinyinference started as a terminal UI (TUI), then a local web UI with a native window. It is now browser-only: one local server, with **Chat** at `/` and **Admin** at `/admin`.
 
 A primary feature/appeal of tinyinference is the seamless ability to make large, capable LLMs runnable on low-spec, low-RAM machines without a GPU, using CPU inference and file-backed model weights. **It will not be fast, in fact, it will often be painfully slow. The point is that it runs at all on low-spec hardware, which is pretty cool.**
 
@@ -12,19 +12,13 @@ An additional benefit of tinyinference is that all you need to get going is a si
 
 ## Requirements
 
-- [Rust](https://www.rust-lang.org/tools/install)
+- [Rust](https://www.rust-lang.org/tools/install) (from source)
 - [`llama-server`](https://github.com/ggml-org/llama.cpp) from llama.cpp
 - A GGUF model available locally or on Hugging Face
-- A modern web browser (for the chat page)
-- A system webview for the control-panel window:
-  - **Windows** — WebView2, preinstalled on Windows 11
-  - **macOS** — WKWebView, part of the OS
-  - **Linux** — WebKitGTK development packages, e.g.
-    `libwebkit2gtk-4.1-dev` and `libxdo-dev` on Debian/Ubuntu. To skip this
-    entirely, build with `--no-default-features` (see [Windowless](#windowless)).
+- A modern web browser
 
 `llama-server` must be on `PATH`, or you can set its full executable path from
-tinyinference's Configure tab.
+Admin → Config.
 
 ## Run
 
@@ -42,59 +36,40 @@ On macOS or Linux:
 ./tinyinference
 ```
 
-### From source
+Then open the printed URL (default `http://127.0.0.1:3920`), or pass `--open` to
+launch the browser automatically.
 
-Clone the repository, then start the development build:
+### From source
 
 ```powershell
 git clone https://github.com/jacobzymet/tinyinference.git
 cd tinyinference
-cargo run
-```
-
-The control panel opens in its own window. On first launch, tinyinference checks
-for `llama-server`. If it cannot find it, use the prompt to open the
-executable-path setting.
-
-Only one instance runs per address. Launching tinyinference again raises the
-window that is already open rather than starting a second server — so a desktop
-shortcut behaves the way you would expect. If the address is held by an
-unrelated program, tinyinference says so and exits instead of guessing; use
-`--bind` to pick another. Two instances *can* coexist on different addresses.
-
-### Two surfaces
-
-The **control panel** is the native window: models, runtime settings, logs, and
-live statistics. **Chat** is a separate page served at `/chat` that opens in your
-default browser, so conversations live alongside your normal tabs. The window
-hosts only the control panel — the Chat button, the llama-server UI link, and
-any other outbound link are handed to your browser rather than opened in-window.
-
-### Windowless
-
-To run headless, or on a machine without a system webview, skip the window:
-
-```powershell
-cargo run -- --no-window
-```
-
-Then open the printed URL yourself (default `http://127.0.0.1:3920`), or use
-`--open` to launch the browser automatically (this implies `--no-window`):
-
-```powershell
 cargo run -- --open
 ```
 
-To drop the windowing dependencies at build time entirely:
+On first launch, tinyinference checks for `llama-server`. If it cannot find it,
+use the prompt in Admin to set the executable path.
 
-```powershell
-cargo build --release --no-default-features
-```
+Only one instance runs per address. Launching again reports that the server is
+already running instead of starting a second one. If the address is held by an
+unrelated program, tinyinference says so and exits; use `--bind` to pick another.
+Two instances *can* coexist on different addresses.
+
+### Chat and Admin
+
+Both surfaces share the same local server and a Chat | Admin mode switch:
+
+| Path | Surface |
+| --- | --- |
+| `/` | **Chat** — conversations, projects, agent mode |
+| `/admin` | **Admin** — models, runtime, devices, logs, stats |
+
+`/chat` permanently redirects to `/`.
 
 ## Build
 
-The release binary is **self-contained**: control-panel HTML, chat HTML, `orb.js`,
-and icons are compiled into the executable (`include_str!` / `include_bytes!` in
+The release binary is **self-contained**: chat HTML, admin HTML, `orb.js`, and
+icons are compiled into the executable (`include_str!` / `include_bytes!` in
 `src/web.rs`). You ship one file — nothing else from this repo needs to sit
 beside it (you still need `llama-server` on the machine).
 
@@ -125,11 +100,10 @@ Mac). The **Release** GitHub Action builds all of them:
 
 | Artifact | Notes |
 | --- | --- |
-| `tinyinference-windows-x86_64.exe` | Desktop window (WebView2) |
+| `tinyinference-windows-x86_64.exe` | Windows |
 | `tinyinference-macos-aarch64` | Apple Silicon |
 | `tinyinference-macos-x86_64` | Intel Mac |
-| `tinyinference-linux-x86_64` | Desktop (WebKitGTK) |
-| `tinyinference-linux-x86_64-headless` | No window deps (`--no-default-features`) |
+| `tinyinference-linux-x86_64` | Linux |
 
 ```sh
 # Manual run (uploads artifacts; tagging also publishes a GitHub Release)
@@ -139,11 +113,12 @@ gh workflow run release.yml
 git tag v0.3.1
 git push origin v0.3.1
 ```
+
 ## Configuration
 
-Open the **Models** tab to manage your model library. Open **Configure** for the
-`llama-server` path, port, runtime preset, and other server settings. The listen
-address is owned by **Network sharing** (loopback when Share is off). Changes
+Open **Admin → Models** to manage your model library. Open **Admin → Config** for
+the `llama-server` path, port, runtime preset, and other server settings. The
+listen address is owned by **Devices** (loopback when Share is off). Changes
 autosave immediately — no manual save step.
 
 On **Models**:
@@ -168,8 +143,8 @@ cargo run -- --config .\tinyinference.toml
 `tinyinference.toml` is ignored by Git, so local paths and preferences remain
 local. Advanced llama.cpp options can be added through `server.extra_args`.
 
-The server listen address (used by the window, the chat page, and the API) can
-be set before the UI is up, in priority order:
+The server listen address (used by chat, admin, and the API) can be set before
+the UI is up, in priority order:
 
 1. `--bind 127.0.0.1:4000`
 2. environment variable `TINYINFERENCE_BIND=127.0.0.1:4000`
@@ -185,7 +160,6 @@ Useful commands:
 
 ```powershell
 cargo run -- --start
-cargo run -- --no-window
 cargo run -- --open
 cargo run -- --bind 127.0.0.1:4000
 cargo run -- --print-command
@@ -195,15 +169,15 @@ cargo run -- --print-command
 
 | Action | Where |
 | --- | --- |
-| Start / stop | Header button |
-| Restart | Header button |
-| Chat with the model | Header **Chat** button (opens in your browser) |
-| Manage models | Models tab |
-| Configure runtime / server | Configure tab |
-| View logs | Logs tab |
-| Live statistics | Stats tab |
-| Copy OpenAI-compatible `/v1` URL | Dashboard |
-| Copy resolved `llama-server` command | Dashboard |
+| Chat with the model | `/` (Chat) |
+| Start / stop / restart | `/admin` top bar |
+| Manage models | Admin → Models |
+| Configure runtime / server | Admin → Config |
+| Share / linked devices | Admin → Devices |
+| View logs | Admin → Logs |
+| Live statistics | Admin → Stats |
+| Copy OpenAI-compatible `/v1` URL | Admin → Dash |
+| Copy resolved `llama-server` command | Admin → Dash |
 
 When a Hugging Face model has to be fetched, the status reads `downloading`
 instead of `starting`, with a progress bar, transfer rate, and time remaining.
@@ -220,20 +194,20 @@ metrics remain marked unavailable until the server is ready. Clipboard copy uses
 the browser clipboard API, with a system clipboard fallback via `clip.exe` on
 Windows, `pbcopy` on macOS, and `wl-copy`, `xclip`, or `xsel` on Linux.
 
-The tinyinference control panel binds to `127.0.0.1:3920` by default (override with
-`--bind`, `TINYINFERENCE_BIND`, or `[ui]` in the config) and stays private. Use the
-**Network sharing** tab to expose only the managed `llama-server` OpenAI-compatible
-inference API on Tailscale only (`100.x`, default), LAN (all interfaces), or a
-specific address. The control panel and chat always stay on loopback. While
-sharing, tinyinference disables the llama web UI, `/slots`, and `/metrics`,
-enables API keys, and serves **HTTPS with a self-signed certificate** stored
-under your config directory (`tls/cert.pem` and `tls/key.pem`). Clients must
-trust that certificate (browser/OS warning is expected) and send
-`Authorization: Bearer …`. Your `llama-server` build needs OpenSSL support
-(`LLAMA_OPENSSL=ON`). Note: llama.cpp still serves `/health` and `/models`
-without a key; completions and most other routes require the API key. Prefer
-Tailscale. Restart the model after changing share settings or keys. You can also
-point local chat at a remote OpenAI-compatible base URL via Linked LLM.
+tinyinference binds to `127.0.0.1:3920` by default (override with `--bind`,
+`TINYINFERENCE_BIND`, or `[ui]` in the config) and stays private. Use **Admin →
+Devices** to expose only the managed `llama-server` OpenAI-compatible inference
+API on Tailscale only (`100.x`, default), LAN (all interfaces), or a specific
+address. Chat and Admin always stay on loopback. While sharing, tinyinference
+disables the llama web UI, `/slots`, and `/metrics`, enables API keys, and serves
+**HTTPS with a self-signed certificate** stored under your config directory
+(`tls/cert.pem` and `tls/key.pem`). Clients must trust that certificate
+(browser/OS warning is expected) and send `Authorization: Bearer …`. Your
+`llama-server` build needs OpenSSL support (`LLAMA_OPENSSL=ON`). Note: llama.cpp
+still serves `/health` and `/models` without a key; completions and most other
+routes require the API key. Prefer Tailscale. Restart the model after changing
+share settings or keys. You can also point local chat at a remote
+OpenAI-compatible base URL via Linked LLM.
 
 You can run more than one model at a time: **Start another** launches the
 currently configured model on the next free port. The dashboard lists running

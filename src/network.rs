@@ -235,12 +235,7 @@ impl NetworkConfig {
     /// Move legacy `access_token` into `api_keys` when needed.
     pub fn migrate_api_keys(&mut self) {
         let legacy = self.access_token.trim();
-        if !legacy.is_empty()
-            && !self
-                .api_keys
-                .iter()
-                .any(|key| key.secret.trim() == legacy)
-        {
+        if !legacy.is_empty() && !self.api_keys.iter().any(|key| key.secret.trim() == legacy) {
             self.api_keys.insert(
                 0,
                 ApiKey {
@@ -497,7 +492,9 @@ impl NetworkConfig {
         let target_id = id.map(str::to_string).or_else(|| {
             self.remotes
                 .iter()
-                .find(|remote| normalize_openai_base(&remote.base).as_deref() == Some(normalized.as_str()))
+                .find(|remote| {
+                    normalize_openai_base(&remote.base).as_deref() == Some(normalized.as_str())
+                })
                 .map(|remote| remote.id.clone())
         });
 
@@ -586,7 +583,9 @@ impl NetworkConfig {
                 }
                 if host.parse::<IpAddr>().is_err()
                     && host != "localhost"
-                    && !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':')
+                    && !host
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':')
                 {
                     return Err(format!("Listen address looks invalid: {host}"));
                 }
@@ -1129,10 +1128,7 @@ impl NetworkDiscovery {
 
     pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
         self.ensure_daemon_and_browse();
-        self.peers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .list()
+        self.peers.lock().unwrap_or_else(|e| e.into_inner()).list()
     }
 
     pub fn sync_advertise(&self, expose: bool, device_name: &str, ports: &[u16]) {
@@ -1181,9 +1177,7 @@ impl NetworkDiscovery {
         }
 
         if ips.is_empty() {
-            self.set_error(
-                "LAN discovery: no Wi‑Fi/Ethernet IPv4 found to advertise".to_string(),
-            );
+            self.set_error("LAN discovery: no Wi‑Fi/Ethernet IPv4 found to advertise".to_string());
             if let Some(previous) = advertised.take() {
                 let _ = daemon.unregister(&previous.fullname);
             }
@@ -1337,11 +1331,7 @@ fn spawn_beacon_broadcaster(beacon_out: Arc<Mutex<Option<BeaconOut>>>) {
                 }) {
                     broadcast_packet(&socket, &packet, &lan);
                 }
-                let Some(out) = beacon_out
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone()
-                else {
+                let Some(out) = beacon_out.lock().unwrap_or_else(|e| e.into_inner()).clone() else {
                     continue;
                 };
                 if let Some(packet) = encode_beacon(&announce_payload(&out)) {
@@ -1403,13 +1393,15 @@ fn scan_local_subnets_for_peers() -> Vec<DiscoveredPeer> {
     for _ in 0..workers {
         let queue = Arc::clone(&queue);
         let tx = tx.clone();
-        handles.push(thread::spawn(move || loop {
-            let next = queue.lock().unwrap_or_else(|e| e.into_inner()).pop();
-            let Some((ip, port)) = next else {
-                break;
-            };
-            if let Some(peer) = probe_openai_compatible_peer(ip, port) {
-                let _ = tx.send(peer);
+        handles.push(thread::spawn(move || {
+            loop {
+                let next = queue.lock().unwrap_or_else(|e| e.into_inner()).pop();
+                let Some((ip, port)) = next else {
+                    break;
+                };
+                if let Some(peer) = probe_openai_compatible_peer(ip, port) {
+                    let _ = tx.send(peer);
+                }
             }
         }));
     }
@@ -1574,17 +1566,14 @@ fn peer_from_resolved(info: &mdns_sd::ResolvedService) -> Option<DiscoveredPeer>
     // Prefer a real LAN address over Tailscale/CGNAT when both are published.
     let mut v4: Vec<Ipv4Addr> = info.get_addresses_v4().into_iter().collect();
     v4.sort_by_key(|ip| (is_tailscale_cg_nat(*ip), lan_range_rank(*ip)));
-    let host = v4
-        .first()
-        .map(|ip| ip.to_string())
-        .or_else(|| {
-            let host = info.host.trim_end_matches('.');
-            if host.is_empty() {
-                None
-            } else {
-                Some(host.to_string())
-            }
-        })?;
+    let host = v4.first().map(|ip| ip.to_string()).or_else(|| {
+        let host = info.host.trim_end_matches('.');
+        if host.is_empty() {
+            None
+        } else {
+            Some(host.to_string())
+        }
+    })?;
     let short_name = info
         .fullname
         .strip_suffix(&format!(".{SERVICE_TYPE}"))
@@ -1646,12 +1635,12 @@ pub struct RemoteModelOption {
 
 #[derive(Debug, Default)]
 pub struct HealthCache {
-    last: Mutex<Option<(String, Instant, RemoteHealth)>>,
+    last: Mutex<HashMap<String, (Instant, RemoteHealth)>>,
 }
 
 #[derive(Debug, Default)]
 pub struct CatalogCache {
-    last: Mutex<Option<(String, Instant, Vec<RemoteModelOption>)>>,
+    last: Mutex<HashMap<String, (Instant, Vec<RemoteModelOption>)>>,
 }
 
 impl HealthCache {
@@ -1660,25 +1649,25 @@ impl HealthCache {
         let Ok(guard) = self.last.lock() else {
             return None;
         };
-        match guard.as_ref() {
-            Some((cached_key, at, health))
-                if cached_key == &key && at.elapsed() < HEALTH_CACHE =>
-            {
-                Some(health.clone())
-            }
+        match guard.get(&key) {
+            Some((at, health)) if at.elapsed() < HEALTH_CACHE => Some(health.clone()),
             _ => None,
         }
     }
 
-    pub fn probe(&self, base: &str, token: &str) -> RemoteHealth {
+    pub fn put(&self, base: &str, token: &str, health: RemoteHealth) {
         let key = format!("{base}|{token}");
+        if let Ok(mut guard) = self.last.lock() {
+            guard.insert(key, (Instant::now(), health));
+        }
+    }
+
+    pub fn probe(&self, base: &str, token: &str) -> RemoteHealth {
         if let Some(health) = self.peek(base, token) {
             return health;
         }
-        let health = probe_remote_state(base, token);
-        if let Ok(mut guard) = self.last.lock() {
-            *guard = Some((key, Instant::now(), health.clone()));
-        }
+        let health = probe_remote_health(base, token);
+        self.put(base, token, health.clone());
         health
     }
 }
@@ -1689,30 +1678,31 @@ impl CatalogCache {
         let Ok(guard) = self.last.lock() else {
             return None;
         };
-        match guard.as_ref() {
-            Some((cached_key, at, catalog))
-                if cached_key == &key && at.elapsed() < HEALTH_CACHE =>
-            {
-                Some(catalog.clone())
-            }
+        match guard.get(&key) {
+            Some((at, catalog)) if at.elapsed() < HEALTH_CACHE => Some(catalog.clone()),
             _ => None,
         }
     }
 
-    pub fn probe(&self, base: &str, token: &str, extra_ports: &[u16]) -> Vec<RemoteModelOption> {
+    pub fn put(&self, base: &str, token: &str, catalog: Vec<RemoteModelOption>) {
         let key = format!("{base}|{token}");
+        if let Ok(mut guard) = self.last.lock() {
+            guard.insert(key, (Instant::now(), catalog));
+        }
+    }
+
+    pub fn probe(&self, base: &str, token: &str, extra_ports: &[u16]) -> Vec<RemoteModelOption> {
         if let Some(catalog) = self.peek(base, token) {
             return catalog;
         }
         let catalog = probe_remote_catalog(base, token, extra_ports);
-        if let Ok(mut guard) = self.last.lock() {
-            *guard = Some((key, Instant::now(), catalog.clone()));
-        }
+        self.put(base, token, catalog.clone());
         catalog
     }
 }
 
-fn probe_remote_state(base: &str, token: &str) -> RemoteHealth {
+/// Live HTTP probe of a linked host (up to ~2s). Prefer cache peek on hot paths.
+pub fn probe_remote_health(base: &str, token: &str) -> RemoteHealth {
     match fetch_remote_models(base, token) {
         Ok(models) => RemoteHealth {
             ok: true,
@@ -1928,7 +1918,11 @@ fn fetch_remote_models_with_timeout(
 }
 
 /// Probe the linked base and sibling ports on the same host for every ready model.
-pub fn probe_remote_catalog(base: &str, token: &str, extra_ports: &[u16]) -> Vec<RemoteModelOption> {
+pub fn probe_remote_catalog(
+    base: &str,
+    token: &str,
+    extra_ports: &[u16],
+) -> Vec<RemoteModelOption> {
     let Some(primary) = normalize_openai_base(base) else {
         return Vec::new();
     };
@@ -2055,7 +2049,10 @@ mod tests {
         assert_eq!(cfg.proxy_bind_hosts().unwrap(), vec!["0.0.0.0".to_string()]);
         cfg.listen_scope = ListenScope::Custom;
         cfg.listen_host = "10.0.0.187".into();
-        assert_eq!(cfg.proxy_bind_hosts().unwrap(), vec!["10.0.0.187".to_string()]);
+        assert_eq!(
+            cfg.proxy_bind_hosts().unwrap(),
+            vec!["10.0.0.187".to_string()]
+        );
     }
 
     #[test]
@@ -2137,7 +2134,9 @@ mod tests {
             RemoteHealthKind::Empty
         );
         assert_eq!(
-            classify_remote_error("failed to lookup address information: Name or service not known"),
+            classify_remote_error(
+                "failed to lookup address information: Name or service not known"
+            ),
             RemoteHealthKind::Error
         );
         assert!(RemoteHealthKind::Waiting.can_activate());

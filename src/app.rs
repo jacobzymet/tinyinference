@@ -21,8 +21,7 @@ use crate::{
     },
     server::{
         CommandSpec, PendingProbe, PendingThinkingProbe, ProbeResult, ServerEvent, ServerMetrics,
-        ServerProcess, SlotsSnapshot, parse_log_throughput,
-        probe_async, thinking_support_async,
+        ServerProcess, SlotsSnapshot, parse_log_throughput, probe_async, thinking_support_async,
     },
     share_proxy::ShareProxyManager,
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
@@ -641,10 +640,6 @@ pub struct App {
     last_discover: Instant,
     /// Models-tab managed download into the local hub cache.
     pub library_fetch: Option<LibraryFetch>,
-    /// Raises the desktop window, when there is one. Installed by `desktop::run`
-    /// so a second launch can surface the running instance instead of starting
-    /// a rival server. Boxed rather than typed so `app` stays windowing-agnostic.
-    focus_hook: Option<Box<dyn Fn() + Send + Sync>>,
     /// Address the HTTP server actually bound at process start.
     listen_addr: Option<SocketAddr>,
     discovery: NetworkDiscovery,
@@ -722,7 +717,6 @@ impl App {
             pending_discover: Some(cache::discover_models_async()),
             last_discover: Instant::now(),
             library_fetch: None,
-            focus_hook: None,
             extra_servers: Vec::new(),
             active_server_id: PRIMARY_SERVER_ID.into(),
             next_server_seq: 1,
@@ -736,24 +730,6 @@ impl App {
 
     pub fn command(&self) -> CommandSpec {
         CommandSpec::from_config(&self.config)
-    }
-
-    /// Register the callback that raises the desktop window.
-    pub fn set_focus_hook(&mut self, hook: Box<dyn Fn() + Send + Sync>) {
-        self.focus_hook = Some(hook);
-    }
-
-    /// Ask the desktop window to come forward. Returns false when this instance
-    /// has no window (headless), which is not an error — the caller still knows
-    /// an instance is alive and can print its address instead.
-    pub fn request_focus(&self) -> bool {
-        match &self.focus_hook {
-            Some(hook) => {
-                hook();
-                true
-            }
-            None => false,
-        }
     }
 
     pub fn set_listen_addr(&mut self, addr: SocketAddr) {
@@ -770,9 +746,7 @@ impl App {
     }
 
     pub fn list_user_skills(&self) -> Result<Vec<crate::skills::UserSkill>, String> {
-        self.skill_store()
-            .list()
-            .map_err(|error| error.to_string())
+        self.skill_store().list().map_err(|error| error.to_string())
     }
 
     pub fn enabled_user_skills(&self) -> Vec<crate::skills::UserSkill> {
@@ -856,7 +830,9 @@ impl App {
                 configs.push(&server.running_config);
             }
         }
-        configs.iter().any(|config| self.keys_or_host_diverged(config))
+        configs
+            .iter()
+            .any(|config| self.keys_or_host_diverged(config))
     }
 
     fn keys_or_host_diverged(&self, running: &Config) -> bool {
@@ -906,11 +882,8 @@ impl App {
     pub fn discovered_peers(&self) -> Vec<DiscoveredPeer> {
         let own_fullname = self.discovery.advertised_fullname();
         let (lan, ts) = network::shareable_ipv4_addrs();
-        let local_ips: std::collections::HashSet<String> = lan
-            .into_iter()
-            .chain(ts)
-            .map(|ip| ip.to_string())
-            .collect();
+        let local_ips: std::collections::HashSet<String> =
+            lan.into_iter().chain(ts).map(|ip| ip.to_string()).collect();
         self.discovery
             .discovered_peers()
             .into_iter()
@@ -1087,9 +1060,46 @@ impl App {
         self.remote_health.peek(base, remote.token.trim())
     }
 
-    /// Probe (cached) health for every saved linked LLM — used by the manager UI.
-    pub fn remote_health_for(&self, base: &str, token: &str) -> RemoteHealth {
-        self.remote_health.probe(base.trim(), token.trim())
+    /// Cached health for a specific link — never blocks on a live HTTP probe.
+    pub fn remote_health_for_cached(&self, base: &str, token: &str) -> Option<RemoteHealth> {
+        self.remote_health.peek(base.trim(), token.trim())
+    }
+
+    /// Store a background probe result without holding the app lock during the HTTP call.
+    pub fn store_remote_health(&self, base: &str, token: &str, health: RemoteHealth) {
+        self.remote_health.put(base.trim(), token.trim(), health);
+    }
+
+    pub fn store_remote_catalog(
+        &self,
+        base: &str,
+        token: &str,
+        catalog: Vec<network::RemoteModelOption>,
+    ) {
+        self.remote_catalog
+            .put(base.trim(), token.trim(), catalog);
+    }
+
+    /// True when Devices / Dash should schedule a background warm of remote caches.
+    pub fn remote_caches_need_warm(&self) -> bool {
+        for remote in &self.config.network.remotes {
+            let base = remote.base.trim();
+            if base.is_empty() {
+                continue;
+            }
+            if self
+                .remote_health
+                .peek(base, remote.token.trim())
+                .is_none()
+            {
+                return true;
+            }
+        }
+        if self.config.network.active_remote().is_some() && self.remote_model_catalog_peek().is_none()
+        {
+            return true;
+        }
+        false
     }
 
     /// Models available on the active linked host (primary + sibling ports).
@@ -1116,12 +1126,17 @@ impl App {
 
     /// Cached catalog only — safe for high-frequency polls after a warm probe.
     pub fn remote_model_catalog_cached(&self) -> Vec<network::RemoteModelOption> {
-        let Some(remote) = self.config.network.active_remote() else {
-            return Vec::new();
-        };
-        self.remote_catalog
-            .peek(remote.base.trim(), remote.token.trim())
-            .unwrap_or_default()
+        self.remote_model_catalog_peek().unwrap_or_default()
+    }
+
+    /// `None` when the active link has no fresh catalog entry yet.
+    pub fn remote_model_catalog_peek(&self) -> Option<Vec<network::RemoteModelOption>> {
+        let remote = self.config.network.active_remote()?;
+        let base = remote.base.trim();
+        if base.is_empty() {
+            return None;
+        }
+        self.remote_catalog.peek(base, remote.token.trim())
     }
 
     pub fn apply_network_update(
@@ -1143,9 +1158,7 @@ impl App {
 
         if let Some(scope) = update.listen_scope.as_deref() {
             let Some(parsed) = ListenScope::parse(scope) else {
-                return Err(
-                    "listen_scope must be \"all\", \"tailscale\", or \"custom\"".into(),
-                );
+                return Err("listen_scope must be \"all\", \"tailscale\", or \"custom\"".into());
             };
             self.config.network.listen_scope = parsed;
         }
@@ -1214,13 +1227,9 @@ impl App {
                     .active_remote()
                     .map(|remote| remote.name.clone())
                     .unwrap_or_default();
-                self.config.network.upsert_remote(
-                    id.as_deref(),
-                    &name,
-                    &base,
-                    token,
-                    true,
-                )?;
+                self.config
+                    .network
+                    .upsert_remote(id.as_deref(), &name, &base, token, true)?;
             }
         }
 
@@ -1389,7 +1398,10 @@ impl App {
 
     pub fn displayed_config(&self) -> &Config {
         if self.active_server_id != PRIMARY_SERVER_ID
-            && let Some(extra) = self.extra_servers.iter().find(|s| s.id == self.active_server_id)
+            && let Some(extra) = self
+                .extra_servers
+                .iter()
+                .find(|s| s.id == self.active_server_id)
         {
             return &extra.running_config;
         }
@@ -1452,12 +1464,7 @@ impl App {
 
     pub fn running_server_count(&self) -> usize {
         let primary = usize::from(self.process.is_some());
-        primary
-            + self
-                .extra_servers
-                .iter()
-                .filter(|s| s.is_running())
-                .count()
+        primary + self.extra_servers.iter().filter(|s| s.is_running()).count()
     }
 
     /// Snapshot of every managed llama-server (primary + extras) for UI/API.
@@ -1513,12 +1520,15 @@ impl App {
                 thinking_supported: self.thinking_supported.unwrap_or(false),
             });
         }
-        self.extra_servers.iter().find(|s| s.id == id).map(|s| ServerLookup {
-            id: s.id.as_str(),
-            config: &s.running_config,
-            ready: s.status == ServerStatus::Ready && s.endpoint_online,
-            thinking_supported: s.thinking_supported_flag(),
-        })
+        self.extra_servers
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| ServerLookup {
+                id: s.id.as_str(),
+                config: &s.running_config,
+                ready: s.status == ServerStatus::Ready && s.endpoint_online,
+                thinking_supported: s.thinking_supported_flag(),
+            })
     }
 
     pub fn should_prompt_for_server(&self) -> bool {
@@ -1912,15 +1922,11 @@ impl App {
     pub fn thinking_supported(&self) -> bool {
         if self.config.network.inference_mode == crate::network::InferenceMode::Remote {
             // Host GET /props → chat_template (see RemoteModelOption.thinking_supported).
-            let catalog = {
-                let cached = self.remote_model_catalog_cached();
-                if cached.is_empty() {
-                    self.remote_model_catalog()
-                } else {
-                    cached
-                }
-            };
-            return catalog.iter().any(|m| m.thinking_supported);
+            // Cached only — live catalog scans block the app mutex for seconds.
+            return self
+                .remote_model_catalog_cached()
+                .iter()
+                .any(|m| m.thinking_supported);
         }
         if self.active_server_id != PRIMARY_SERVER_ID
             && let Some(extra) = self
@@ -2097,7 +2103,8 @@ impl App {
                     self.next_server_seq += 1;
                     let id = format!("srv-{}", self.next_server_seq);
                     let port = launch_config.effective_port();
-                    let server = ManagedServer::new_launching(id.clone(), launch_config, process, download);
+                    let server =
+                        ManagedServer::new_launching(id.clone(), launch_config, process, download);
                     self.push_log(format!(
                         "started additional llama-server {} on :{} (PID {pid})",
                         id, port
@@ -2610,8 +2617,7 @@ impl App {
             }
             SettingField::Host => {
                 return Err(
-                    "Listen address is controlled in Devices — change the scope there."
-                        .into(),
+                    "Listen address is controlled in Devices — change the scope there.".into(),
                 );
             }
             SettingField::Port => {
@@ -3282,11 +3288,6 @@ fn trim_wrapping_quotes(value: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
-
     use super::*;
 
     #[test]
@@ -3682,20 +3683,6 @@ mod tests {
 
         app.observe_startup_line("srv    load_model: loading model");
         assert!(app.active_download().is_none());
-    }
-
-    #[test]
-    fn focus_is_only_reported_once_a_window_installs_a_hook() {
-        let mut app = App::new(Config::default(), "test.toml".into());
-        // Headless: an instance exists, but there is nothing to raise.
-        assert!(!app.request_focus());
-
-        let raised = Arc::new(AtomicBool::new(false));
-        let flag = Arc::clone(&raised);
-        app.set_focus_hook(Box::new(move || flag.store(true, Ordering::SeqCst)));
-
-        assert!(app.request_focus());
-        assert!(raised.load(Ordering::SeqCst));
     }
 
     #[test]

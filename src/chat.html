@@ -133,6 +133,29 @@
       object-fit: contain;
     }
 
+    .mode-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+      border-radius: var(--radius-input);
+      font-size: var(--text-sm);
+      font-weight: 500;
+      color: var(--color-muted);
+      text-decoration: none;
+      transition: color var(--dur-short) var(--ease-out), background var(--dur-short) var(--ease-out);
+    }
+    .mode-link:hover {
+      color: var(--color-ink);
+      text-decoration: none;
+      background: var(--color-paper-2);
+    }
+    .mode-link-arrow {
+      font-size: var(--text-xs);
+      opacity: 0.7;
+    }
+
     .btn {
       appearance: none;
       display: inline-flex;
@@ -2074,6 +2097,7 @@
           <span id="serverChip" class="status-chip status-stopped">stopped</span>
         </div>
         <button type="button" class="btn btn-ghost" id="btnSettings" style="width:100%">Settings</button>
+        <a class="mode-link" href="/admin">Admin <span class="mode-link-arrow" aria-hidden="true">→</span></a>
       </div>
     </aside>
 
@@ -2242,7 +2266,7 @@
 
           <section class="settings-pane" data-settings-pane="appearance">
             <h2 class="settings-pane-title">Appearance</h2>
-            <p class="settings-pane-lede">Shared with the control panel. Dark theme and the built-in type stack are the defaults.</p>
+            <p class="settings-pane-lede">Shared with Admin. Dark theme and the built-in type stack are the defaults.</p>
             <div class="settings-section">
               <h3 class="settings-section-title">Theme</h3>
               <div class="segmented" id="themeToggle" role="tablist" aria-label="Theme">
@@ -2303,7 +2327,7 @@
             <div class="settings-section">
               <h3 class="settings-section-title">Reset</h3>
               <button type="button" class="btn btn-ghost" id="btnAppearanceReset">Reset to defaults</button>
-              <p class="field-hint" style="margin-top:0.5rem">Restores theme, fonts, and text size for chat and the control panel.</p>
+              <p class="field-hint" style="margin-top:0.5rem">Restores theme, fonts, and text size for Chat and Admin.</p>
             </div>
           </section>
 
@@ -3308,6 +3332,26 @@
       }
     }
 
+    async function withBusyControl(el, busyLabel, work, opts = {}) {
+      if (!el || el.dataset.busy === '1') return;
+      const restore = opts.restore !== false;
+      const prevText = el.textContent;
+      const prevDisabled = el.disabled;
+      el.dataset.busy = '1';
+      el.disabled = true;
+      if (busyLabel != null) el.textContent = busyLabel;
+      el.setAttribute('aria-busy', 'true');
+      try {
+        return await work();
+      } finally {
+        if (!el.isConnected) return;
+        delete el.dataset.busy;
+        el.removeAttribute('aria-busy');
+        el.disabled = prevDisabled;
+        if (busyLabel != null && restore) el.textContent = prevText;
+      }
+    }
+
     async function saveSkillFromEditor() {
       const id = document.getElementById('skillEditId').value.trim();
       const payload = {
@@ -3316,20 +3360,23 @@
         content: document.getElementById('skillEditContent').value,
         enabled: document.getElementById('skillEditEnabled').checked,
       };
-      try {
-        showSkillsError('');
-        const response = await fetch(id ? '/api/skills/' + encodeURIComponent(id) : '/api/skills', {
-          method: id ? 'PATCH' : 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.error || 'Could not save skill');
-        hideSkillEditor();
-        await loadUserSkills();
-      } catch (error) {
-        showSkillsError(error);
-      }
+      const btn = document.getElementById('btnSkillSave');
+      await withBusyControl(btn, 'Saving…', async () => {
+        try {
+          showSkillsError('');
+          const response = await fetch(id ? '/api/skills/' + encodeURIComponent(id) : '/api/skills', {
+            method: id ? 'PATCH' : 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || 'Could not save skill');
+          hideSkillEditor();
+          await loadUserSkills();
+        } catch (error) {
+          showSkillsError(error);
+        }
+      });
     }
 
     async function importSkillFile(file) {
@@ -4778,7 +4825,7 @@
             : 'Model server is ' + statusLabel + '.');
         composerHint.textContent = usingRemote
           ? 'Fix the link in Devices, or pick a local model in the selector.'
-          : 'Start the model on the control panel to chat, or pick a remote model if linked.';
+          : 'Start the model in Admin to chat, or pick a remote model if linked.';
         composerHint.classList.add('is-warn');
       } else if (project && !activeId) {
         modelHintEl.textContent = 'Shared instructions & memory apply · ' + modelName + viaSuffix;
@@ -5322,12 +5369,15 @@
       const file = event.target.files && event.target.files[0];
       event.target.value = '';
       if (!file) return;
-      try {
-        showSkillsError('');
-        await importSkillFile(file);
-      } catch (error) {
-        showSkillsError(error);
-      }
+      const uploadBtn = document.getElementById('btnSkillUpload');
+      await withBusyControl(uploadBtn, 'Importing…', async () => {
+        try {
+          showSkillsError('');
+          await importSkillFile(file);
+        } catch (error) {
+          showSkillsError(error);
+        }
+      });
     });
     document.getElementById('btnSkillSave').addEventListener('click', () => {
       saveSkillFromEditor();
@@ -5343,18 +5393,21 @@
         openSkillEditor(skill);
         return;
       }
-      if (event.target.closest('[data-skill-delete]')) {
+      const deleteBtn = event.target.closest('[data-skill-delete]');
+      if (deleteBtn) {
         if (!window.confirm('Delete skill “' + skill.name + '”?')) return;
-        try {
-          const response = await fetch('/api/skills/' + encodeURIComponent(id), { method: 'DELETE' });
-          const body = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(body.error || 'Could not delete skill');
-          userSkills = body.skills || [];
-          hideSkillEditor();
-          renderUserSkills();
-        } catch (error) {
-          showSkillsError(error);
-        }
+        await withBusyControl(deleteBtn, 'Deleting…', async () => {
+          try {
+            const response = await fetch('/api/skills/' + encodeURIComponent(id), { method: 'DELETE' });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'Could not delete skill');
+            userSkills = body.skills || [];
+            hideSkillEditor();
+            renderUserSkills();
+          } catch (error) {
+            showSkillsError(error);
+          }
+        }, { restore: false });
       }
     });
     document.getElementById('skillsList').addEventListener('change', async (event) => {
@@ -5363,6 +5416,7 @@
       const row = event.target.closest('[data-skill-id]');
       if (!row) return;
       const id = row.getAttribute('data-skill-id');
+      toggle.disabled = true;
       try {
         const response = await fetch('/api/skills/' + encodeURIComponent(id), {
           method: 'PATCH',
@@ -5376,6 +5430,7 @@
         renderUserSkills();
       } catch (error) {
         toggle.checked = !toggle.checked;
+        toggle.disabled = false;
         showSkillsError(error);
       }
     });

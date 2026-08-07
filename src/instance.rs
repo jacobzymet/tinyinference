@@ -307,8 +307,7 @@ impl ManagedServer {
             return;
         }
 
-        if let (Some(prev_at), Some(prev_decoded)) = (self.last_slots_at, self.last_slots_decoded)
-        {
+        if let (Some(prev_at), Some(prev_decoded)) = (self.last_slots_at, self.last_slots_decoded) {
             let dt = now.saturating_duration_since(prev_at);
             if dt >= MIN_LIVE_RATE_INTERVAL {
                 if slots.decoded_tokens >= prev_decoded {
@@ -378,8 +377,7 @@ impl ManagedServer {
 
     fn observe_throughput_line(&mut self, line: &str) {
         let parsed = parse_log_throughput(line);
-        if parsed.generated_tokens_per_second.is_none()
-            && parsed.prompt_tokens_per_second.is_none()
+        if parsed.generated_tokens_per_second.is_none() && parsed.prompt_tokens_per_second.is_none()
         {
             return;
         }

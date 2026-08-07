@@ -184,16 +184,19 @@ impl ShareActivityStore {
                 .unwrap_or_else(|| format!(":{local_port}"));
             let tps = self.port_tps.get(&local_port).copied().flatten();
             let busy = tps.is_some_and(|rate| rate > 0.0);
-            let entry = self.clients.entry(id.clone()).or_insert_with(|| ConnectedClient {
-                id: id.clone(),
-                remote_addr: remote.clone(),
-                local_port,
-                model: model.clone(),
-                first_seen: now,
-                last_seen: now,
-                tokens_per_second: tps,
-                busy,
-            });
+            let entry = self
+                .clients
+                .entry(id.clone())
+                .or_insert_with(|| ConnectedClient {
+                    id: id.clone(),
+                    remote_addr: remote.clone(),
+                    local_port,
+                    model: model.clone(),
+                    first_seen: now,
+                    last_seen: now,
+                    tokens_per_second: tps,
+                    busy,
+                });
             entry.remote_addr = remote;
             entry.local_port = local_port;
             entry.model = model;
@@ -211,7 +214,11 @@ impl ShareActivityStore {
     }
 
     fn snapshot(&mut self) -> (Vec<ConnectedClientPublic>, ShareActivitySummary) {
-        let mut clients: Vec<_> = self.clients.values().map(ConnectedClient::to_public).collect();
+        let mut clients: Vec<_> = self
+            .clients
+            .values()
+            .map(ConnectedClient::to_public)
+            .collect();
         clients.sort_by(|a, b| {
             b.last_seen
                 .cmp(&a.last_seen)
@@ -357,10 +364,7 @@ fn parse_lsof(text: &str, local_ports: &[u16]) -> Vec<(IpAddr, u16)> {
         let Some(name) = line.split_whitespace().last() else {
             continue;
         };
-        let name = name
-            .strip_suffix("(ESTABLISHED)")
-            .unwrap_or(name)
-            .trim();
+        let name = name.strip_suffix("(ESTABLISHED)").unwrap_or(name).trim();
         let Some((local, remote)) = name.split_once("->") else {
             continue;
         };

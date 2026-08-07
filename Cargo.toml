@@ -18,13 +18,10 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.151"
 sysinfo = "0.38"
-image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-tao = { version = "0.35", optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml = "0.9"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
-wry = { version = "0.55", optional = true }
 mdns-sd = "0.20.3"
 local-ip-address = "0.6.13"
 getrandom = "0.4.3"
@@ -37,11 +34,3 @@ tempfile = "3.23"
 lto = "thin"
 codegen-units = 1
 strip = true
-
-[features]
-default = ["desktop"]
-# Runs the control panel in a native window (WebView2 / WKWebView / WebKitGTK)
-# instead of requiring a browser. Build with --no-default-features for a
-# headless, browser-only binary — useful on servers, or on Linux boxes without
-# the webkit2gtk development packages.
-desktop = ["dep:wry", "dep:tao", "dep:image"]

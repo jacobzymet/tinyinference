@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -8,7 +11,7 @@ use axum::{
     body::Body,
     extract::{Path, State},
     http::{StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -24,7 +27,8 @@ use crate::{
     config::RuntimePreset,
     network::{
         ApiKeyPublic, DiscoveredPeer, InferenceMode, LinkedRemotePublic, ListenCandidate,
-        RemoteHealth, RemoteModelOption, ShareUrl, mask_token, remote_base_same_host,
+        RemoteHealth, RemoteModelOption, ShareUrl, mask_token, probe_remote_catalog,
+        probe_remote_health, remote_base_same_host, split_openai_base,
     },
     server::ServerProcess,
     share_proxy::{ConnectedClientPublic, ShareActivitySummary},
@@ -35,6 +39,107 @@ pub type SharedApp = Arc<Mutex<App>>;
 /// Marker returned by `POST /api/focus`, used by a second launch to tell a
 /// running tinyinference apart from an unrelated program on the same port.
 pub const INSTANCE_MARKER: &str = "tinyinference";
+
+/// Prevents stacking cold remote probes from 250ms polls.
+static REMOTE_CACHE_WARM_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// Probe linked-host health/catalog off the app mutex so mode switches stay snappy.
+fn schedule_remote_cache_warm(app: SharedApp) {
+    let needs_warm = app
+        .lock()
+        .map(|guard| guard.remote_caches_need_warm())
+        .unwrap_or(false);
+    if !needs_warm {
+        return;
+    }
+    if REMOTE_CACHE_WARM_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+    tokio::task::spawn_blocking(move || {
+        struct ClearInFlight;
+        impl Drop for ClearInFlight {
+            fn drop(&mut self) {
+                REMOTE_CACHE_WARM_IN_FLIGHT.store(false, Ordering::SeqCst);
+            }
+        }
+        let _clear = ClearInFlight;
+        warm_remote_caches(&app);
+    });
+}
+
+fn warm_remote_caches(app: &SharedApp) {
+    let (health_targets, catalog_job) = {
+        let Ok(guard) = app.lock() else {
+            return;
+        };
+        let health_targets = guard
+            .config
+            .network
+            .remotes
+            .iter()
+            .filter(|remote| !remote.base.trim().is_empty())
+            .filter(|remote| {
+                guard
+                    .remote_health_for_cached(&remote.base, &remote.token)
+                    .is_none()
+            })
+            .map(|remote| {
+                (
+                    remote.base.trim().to_string(),
+                    remote.token.trim().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let catalog_job = if guard.remote_model_catalog_peek().is_none() {
+            guard.config.network.active_remote().and_then(|remote| {
+                let base = remote.base.trim();
+                let token = remote.token.trim();
+                if base.is_empty() {
+                    return None;
+                }
+                let mut extra_ports = Vec::new();
+                if let Some((_, host, _)) = split_openai_base(base) {
+                    for peer in guard.discovered_peers() {
+                        if peer.host.eq_ignore_ascii_case(&host) {
+                            extra_ports.extend(peer.ports.iter().copied());
+                            extra_ports.push(peer.port);
+                        }
+                    }
+                }
+                Some((base.to_string(), token.to_string(), extra_ports))
+            })
+        } else {
+            None
+        };
+        (health_targets, catalog_job)
+    };
+
+    let health_results = health_targets
+        .into_iter()
+        .map(|(base, token)| {
+            let health = probe_remote_health(&base, &token);
+            (base, token, health)
+        })
+        .collect::<Vec<_>>();
+
+    let catalog_result = catalog_job.map(|(base, token, ports)| {
+        let catalog = probe_remote_catalog(&base, &token, &ports);
+        (base, token, catalog)
+    });
+
+    let Ok(guard) = app.lock() else {
+        return;
+    };
+    for (base, token, health) in health_results {
+        guard.store_remote_health(&base, &token, health);
+    }
+    if let Some((base, token, catalog)) = catalog_result {
+        guard.store_remote_catalog(&base, &token, catalog);
+    }
+}
 
 pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> {
     let tick_app = Arc::clone(&app);
@@ -56,14 +161,23 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/ui/appearance/reset", post(reset_ui_appearance))
         .route("/api/network", get(network_state).post(update_network))
         .route("/api/network/keys", post(create_api_key))
-        .route("/api/network/keys/{id}", axum::routing::delete(delete_api_key).patch(rename_api_key))
-        .route("/api/network/keys/{id}/regenerate", post(regenerate_api_key))
+        .route(
+            "/api/network/keys/{id}",
+            axum::routing::delete(delete_api_key).patch(rename_api_key),
+        )
+        .route(
+            "/api/network/keys/{id}/regenerate",
+            post(regenerate_api_key),
+        )
         .route("/api/network/remotes", post(create_linked_remote))
         .route(
             "/api/network/remotes/{id}",
             axum::routing::patch(update_linked_remote).delete(delete_linked_remote),
         )
-        .route("/api/network/remotes/{id}/activate", post(activate_linked_remote))
+        .route(
+            "/api/network/remotes/{id}/activate",
+            post(activate_linked_remote),
+        )
         .route("/api/start", post(start))
         .route("/api/stop", post(stop))
         .route("/api/restart", post(restart))
@@ -95,8 +209,9 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         );
 
     let router = Router::new()
-        .route("/", get(index))
-        .route("/chat", get(chat_page))
+        .route("/", get(chat_page))
+        .route("/admin", get(admin_page))
+        .route("/chat", get(|| async { Redirect::permanent("/") }))
         .route("/orb.js", get(orb_script))
         .route("/highlight.min.js", get(highlight_script))
         .route("/ti.png", get(app_icon_png))
@@ -136,12 +251,12 @@ async fn shutdown_signal() {
     }
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
-}
-
 async fn chat_page() -> Html<&'static str> {
     Html(CHAT_HTML)
+}
+
+async fn admin_page() -> Html<&'static str> {
+    Html(ADMIN_HTML)
 }
 
 async fn orb_script() -> impl IntoResponse {
@@ -160,26 +275,17 @@ async fn highlight_script() -> impl IntoResponse {
 
 /// App / favicon icon (solid `ti.png`).
 async fn app_icon_png() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "image/png")],
-        APP_ICON_PNG,
-    )
+    ([(header::CONTENT_TYPE, "image/png")], APP_ICON_PNG)
 }
 
 /// Dark-UI wordmark mark (white glyphs on transparent).
 async fn ui_mark_white() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "image/png")],
-        UI_MARK_WHITE_PNG,
-    )
+    ([(header::CONTENT_TYPE, "image/png")], UI_MARK_WHITE_PNG)
 }
 
 /// Light-UI wordmark mark (black glyphs on transparent).
 async fn ui_mark_black() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "image/png")],
-        UI_MARK_BLACK_PNG,
-    )
+    ([(header::CONTENT_TYPE, "image/png")], UI_MARK_BLACK_PNG)
 }
 
 async fn set_ui_theme(
@@ -220,9 +326,7 @@ async fn set_ui_appearance(
     Ok(Json(AppState::from_app(&app)))
 }
 
-async fn reset_ui_appearance(
-    State(app): State<SharedApp>,
-) -> Result<Json<AppState>, ApiError> {
+async fn reset_ui_appearance(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
     with_app(app, |app| app.reset_ui_appearance())
 }
 
@@ -248,9 +352,9 @@ async fn chat_completions(
         let user_skills = app.enabled_user_skills();
         let network = &app.config.network;
         // Selector is the source of truth: an explicit local server_id wins over linked mode.
-        let prefer_local = server_id.as_ref().is_some_and(|id| {
-            app.server_by_id(id).is_some_and(|lookup| lookup.ready)
-        });
+        let prefer_local = server_id
+            .as_ref()
+            .is_some_and(|id| app.server_by_id(id).is_some_and(|lookup| lookup.ready));
         let remote = if prefer_local {
             None
         } else if let Some(requested) = remote_base_override.as_deref() {
@@ -270,9 +374,8 @@ async fn chat_completions(
                     "Remote model must be on a linked host.".into(),
                 ));
             }
-            let api_base = crate::network::normalize_openai_base(requested).ok_or_else(|| {
-                ApiError::bad_request("Invalid remote model API base.".into())
-            })?;
+            let api_base = crate::network::normalize_openai_base(requested)
+                .ok_or_else(|| ApiError::bad_request("Invalid remote model API base.".into()))?;
             let chat_url = format!("{api_base}/chat/completions");
             Some((chat_url, api_base, linked.token.clone()))
         } else if network.inference_mode == InferenceMode::Remote {
@@ -281,11 +384,12 @@ async fn chat_completions(
                     "Remote inference is selected but no linked LLM is configured.".into(),
                 ));
             };
-            let api_base = crate::network::normalize_openai_base(&active.base).ok_or_else(|| {
-                ApiError::bad_request(
-                    "Remote inference is selected but no remote URL is configured.".into(),
-                )
-            })?;
+            let api_base =
+                crate::network::normalize_openai_base(&active.base).ok_or_else(|| {
+                    ApiError::bad_request(
+                        "Remote inference is selected but no remote URL is configured.".into(),
+                    )
+                })?;
             let chat_url = format!("{api_base}/chat/completions");
             Some((chat_url, api_base, active.token.clone()))
         } else {
@@ -356,7 +460,8 @@ async fn chat_completions(
                 if let Some(object) = upstream.as_object_mut() {
                     object.remove("agent");
                     object.remove("skills");
-                    if let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut())
+                    if let Some(messages) =
+                        object.get_mut("messages").and_then(|v| v.as_array_mut())
                     {
                         agent::inject_skill_catalog_into_messages(messages, &user_skills);
                     }
@@ -376,19 +481,27 @@ async fn chat_completions(
 }
 
 async fn network_state(State(app): State<SharedApp>) -> Result<Json<NetworkState>, ApiError> {
-    let app = app.lock().map_err(|_| ApiError::lock())?;
-    Ok(Json(NetworkState::from_app(&app)))
+    let state = {
+        let app = app.lock().map_err(|_| ApiError::lock())?;
+        NetworkState::from_app(&app)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(state))
 }
 
 async fn update_network(
     State(app): State<SharedApp>,
     Json(update): Json<NetworkUpdate>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .apply_network_update(update)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app
+            .apply_network_update(update)
+            .map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -405,11 +518,15 @@ async fn create_api_key(
     State(app): State<SharedApp>,
     Json(body): Json<CreateApiKeyBody>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .create_api_key(&body.name)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app
+            .create_api_key(&body.name)
+            .map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 async fn rename_api_key(
@@ -417,31 +534,41 @@ async fn rename_api_key(
     Path(id): Path<String>,
     Json(body): Json<RenameApiKeyBody>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .rename_api_key(&id, &body.name)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app
+            .rename_api_key(&id, &body.name)
+            .map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 async fn regenerate_api_key(
     State(app): State<SharedApp>,
     Path(id): Path<String>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .regenerate_api_key(&id)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app.regenerate_api_key(&id).map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 async fn delete_api_key(
     State(app): State<SharedApp>,
     Path(id): Path<String>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app.delete_api_key(&id).map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app.delete_api_key(&id).map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -470,11 +597,15 @@ async fn create_linked_remote(
     State(app): State<SharedApp>,
     Json(body): Json<CreateLinkedRemoteBody>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .create_linked_remote(&body.name, &body.base, &body.token, body.activate)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app
+            .create_linked_remote(&body.name, &body.base, &body.token, body.activate)
+            .map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 async fn update_linked_remote(
@@ -482,38 +613,50 @@ async fn update_linked_remote(
     Path(id): Path<String>,
     Json(body): Json<UpdateLinkedRemoteBody>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .update_linked_remote(
-            &id,
-            body.name.as_deref(),
-            body.base.as_deref(),
-            body.token.as_deref(),
-        )
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app
+            .update_linked_remote(
+                &id,
+                body.name.as_deref(),
+                body.base.as_deref(),
+                body.token.as_deref(),
+            )
+            .map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 async fn delete_linked_remote(
     State(app): State<SharedApp>,
     Path(id): Path<String>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .delete_linked_remote(&id)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app
+            .delete_linked_remote(&id)
+            .map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 async fn activate_linked_remote(
     State(app): State<SharedApp>,
     Path(id): Path<String>,
 ) -> Result<Json<NetworkMutationResponse>, ApiError> {
-    let mut app = app.lock().map_err(|_| ApiError::lock())?;
-    let result = app
-        .activate_linked_remote(&id)
-        .map_err(ApiError::bad_request)?;
-    Ok(Json(NetworkMutationResponse::from_result(&app, result)))
+    let response = {
+        let mut app = app.lock().map_err(|_| ApiError::lock())?;
+        let result = app
+            .activate_linked_remote(&id)
+            .map_err(ApiError::bad_request)?;
+        NetworkMutationResponse::from_result(&app, result)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(response))
 }
 
 #[derive(Debug, Serialize)]
@@ -544,9 +687,7 @@ async fn create_skill(
     Json(body): Json<crate::skills::SkillUpsert>,
 ) -> Result<Json<crate::skills::UserSkillPublic>, ApiError> {
     let app = app.lock().map_err(|_| ApiError::lock())?;
-    let skill = app
-        .create_user_skill(body)
-        .map_err(ApiError::bad_request)?;
+    let skill = app.create_user_skill(body).map_err(ApiError::bad_request)?;
     Ok(Json(skill.to_public()))
 }
 
@@ -589,8 +730,12 @@ async fn delete_skill(
 }
 
 async fn state(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
-    let app = app.lock().map_err(|_| ApiError::lock())?;
-    Ok(Json(AppState::from_app(&app)))
+    let state = {
+        let app = app.lock().map_err(|_| ApiError::lock())?;
+        AppState::from_app(&app)
+    };
+    schedule_remote_cache_warm(Arc::clone(&app));
+    Ok(Json(state))
 }
 
 async fn start(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
@@ -793,17 +938,16 @@ async fn configure_server(State(app): State<SharedApp>) -> Result<Json<AppState>
     with_app(app, |app| app.open_server_configuration())
 }
 
-/// Identify this instance and raise its window.
+/// Identify this instance for single-instance detection.
 ///
 /// A second launch that finds the port taken posts here: a tinyinference reply
-/// means "already running, come to the front"; anything else means the port
-/// belongs to an unrelated program.
-async fn focus(State(app): State<SharedApp>) -> Result<Json<InstanceInfo>, ApiError> {
-    let app = app.lock().map_err(|_| ApiError::lock())?;
+/// means "already running"; anything else means the port belongs to an
+/// unrelated program.
+async fn focus(State(_app): State<SharedApp>) -> Result<Json<InstanceInfo>, ApiError> {
     Ok(Json(InstanceInfo {
         app: INSTANCE_MARKER,
         version: env!("CARGO_PKG_VERSION"),
-        focused: app.request_focus(),
+        focused: false,
     }))
 }
 
@@ -1030,9 +1174,9 @@ impl NetworkState {
                 base: remote.base.clone(),
                 token_set: !remote.token.trim().is_empty(),
                 token_masked: mask_token(&remote.token),
-                active: remote.id == active_id
-                    && network.inference_mode == InferenceMode::Remote,
-                health: Some(app.remote_health_for(&remote.base, &remote.token)),
+                active: remote.id == active_id && network.inference_mode == InferenceMode::Remote,
+                // Cached only — live probes hold the app mutex for up to ~2s each.
+                health: app.remote_health_for_cached(&remote.base, &remote.token),
             })
             .collect::<Vec<_>>();
         let active = network.active_remote();
@@ -1068,7 +1212,7 @@ impl NetworkState {
             mdns_error: app.mdns_error(),
             advertising: app.discovery_advertising(),
             discovery_hint: app.discovery_hint(),
-            remote_health: app.remote_health(),
+            remote_health: app.remote_health_cached(),
             llama_binds_loopback: llama_loopback,
             llama_endpoint: if network.expose {
                 Some(format!(
@@ -1103,20 +1247,15 @@ impl NetworkSummary {
                     .to_string()
             })
             .unwrap_or_default();
-        let remote_name = active
-            .map(|remote| remote.name.clone())
-            .unwrap_or_default();
-        // Warm/cached probe for the active link so Dash can show reachability
-        // even when chat is still on This PC. Cache keeps this cheap on polls.
-        let health = if remote_saved { app.remote_health() } else { None };
-        // Catalog scan can touch several ports — use cache on hot polls; warm when a link is saved.
+        let remote_name = active.map(|remote| remote.name.clone()).unwrap_or_default();
+        // Cached only — background warm fills these without blocking /api/state.
+        let health = if remote_saved {
+            app.remote_health_cached()
+        } else {
+            None
+        };
         let remote_models = if remote_saved {
-            let cached = app.remote_model_catalog_cached();
-            if cached.is_empty() {
-                app.remote_model_catalog()
-            } else {
-                cached
-            }
+            app.remote_model_catalog_cached()
         } else {
             Vec::new()
         };
@@ -1146,9 +1285,10 @@ impl NetworkSummary {
             },
             remote_error: health.as_ref().and_then(|h| h.error.clone()),
             remote_model,
-            remote_status: health.as_ref().and_then(|h| h.status.clone()).or_else(|| {
-                (!remote_models.is_empty()).then(|| "ready".to_string())
-            }),
+            remote_status: health
+                .as_ref()
+                .and_then(|h| h.status.clone())
+                .or_else(|| (!remote_models.is_empty()).then(|| "ready".to_string())),
             remote_models,
         }
     }
@@ -1380,68 +1520,61 @@ impl AppState {
             .collect();
         let recent_models = library.clone();
 
-        let (
-            status,
-            status_label,
-            endpoint_online,
-            pid,
-            process,
-            metrics,
-            download_state,
-        ) = if let Some(extra) = active_extra {
-            (
-                extra.status,
-                extra.status.label(),
-                extra.endpoint_online,
-                extra.process.as_ref().map(ServerProcess::id),
-                extra.process_usage.as_ref().map(|usage| ProcessState {
-                    cpu_percent: usage.cpu_percent,
-                    resident_memory_gib: usage.resident_memory_gib,
-                    virtual_memory_gib: usage.virtual_memory_gib,
-                    uptime_seconds: usage.uptime_seconds,
-                }),
-                extra.server_metrics.as_ref().map(|metrics| MetricsState {
-                    prompt_tokens: metrics.prompt_tokens,
-                    generated_tokens: metrics.generated_tokens,
-                    prompt_tokens_per_second: metrics.prompt_tokens_per_second,
-                    generated_tokens_per_second: metrics.generated_tokens_per_second,
-                    requests_processing: metrics.requests_processing,
-                    requests_deferred: metrics.requests_deferred,
-                }),
-                extra
-                    .download
-                    .as_ref()
-                    .filter(|d| d.is_active())
-                    .map(DownloadState::from_download),
-            )
-        } else {
-            (
-                app.status,
-                app.status.label(),
-                app.endpoint_online,
-                app.process.as_ref().map(ServerProcess::id),
-                app.process_usage.as_ref().map(|usage| ProcessState {
-                    cpu_percent: usage.cpu_percent,
-                    resident_memory_gib: usage.resident_memory_gib,
-                    virtual_memory_gib: usage.virtual_memory_gib,
-                    uptime_seconds: usage.uptime_seconds,
-                }),
-                app.server_metrics.as_ref().map(|metrics| MetricsState {
-                    prompt_tokens: metrics.prompt_tokens,
-                    generated_tokens: metrics.generated_tokens,
-                    prompt_tokens_per_second: metrics.prompt_tokens_per_second,
-                    generated_tokens_per_second: metrics.generated_tokens_per_second,
-                    requests_processing: metrics.requests_processing,
-                    requests_deferred: metrics.requests_deferred,
-                }),
-                download.or_else(|| {
-                    app.library_fetch
+        let (status, status_label, endpoint_online, pid, process, metrics, download_state) =
+            if let Some(extra) = active_extra {
+                (
+                    extra.status,
+                    extra.status.label(),
+                    extra.endpoint_online,
+                    extra.process.as_ref().map(ServerProcess::id),
+                    extra.process_usage.as_ref().map(|usage| ProcessState {
+                        cpu_percent: usage.cpu_percent,
+                        resident_memory_gib: usage.resident_memory_gib,
+                        virtual_memory_gib: usage.virtual_memory_gib,
+                        uptime_seconds: usage.uptime_seconds,
+                    }),
+                    extra.server_metrics.as_ref().map(|metrics| MetricsState {
+                        prompt_tokens: metrics.prompt_tokens,
+                        generated_tokens: metrics.generated_tokens,
+                        prompt_tokens_per_second: metrics.prompt_tokens_per_second,
+                        generated_tokens_per_second: metrics.generated_tokens_per_second,
+                        requests_processing: metrics.requests_processing,
+                        requests_deferred: metrics.requests_deferred,
+                    }),
+                    extra
+                        .download
                         .as_ref()
-                        .filter(|fetch| fetch.is_active())
-                        .map(DownloadState::from_library_fetch)
-                }),
-            )
-        };
+                        .filter(|d| d.is_active())
+                        .map(DownloadState::from_download),
+                )
+            } else {
+                (
+                    app.status,
+                    app.status.label(),
+                    app.endpoint_online,
+                    app.process.as_ref().map(ServerProcess::id),
+                    app.process_usage.as_ref().map(|usage| ProcessState {
+                        cpu_percent: usage.cpu_percent,
+                        resident_memory_gib: usage.resident_memory_gib,
+                        virtual_memory_gib: usage.virtual_memory_gib,
+                        uptime_seconds: usage.uptime_seconds,
+                    }),
+                    app.server_metrics.as_ref().map(|metrics| MetricsState {
+                        prompt_tokens: metrics.prompt_tokens,
+                        generated_tokens: metrics.generated_tokens,
+                        prompt_tokens_per_second: metrics.prompt_tokens_per_second,
+                        generated_tokens_per_second: metrics.generated_tokens_per_second,
+                        requests_processing: metrics.requests_processing,
+                        requests_deferred: metrics.requests_deferred,
+                    }),
+                    download.or_else(|| {
+                        app.library_fetch
+                            .as_ref()
+                            .filter(|fetch| fetch.is_active())
+                            .map(DownloadState::from_library_fetch)
+                    }),
+                )
+            };
 
         Self {
             status,
@@ -1779,7 +1912,7 @@ impl IntoResponse for ApiError {
 }
 
 // Compile-time embed: the release binary ships alone — no HTML/JS/PNG sidecars.
-const INDEX_HTML: &str = include_str!("index.html");
+const ADMIN_HTML: &str = include_str!("index.html");
 const CHAT_HTML: &str = include_str!("chat.html");
 const ORB_JS: &str = include_str!("orb.js");
 const HIGHLIGHT_JS: &str = include_str!("vendor/highlight.min.js");

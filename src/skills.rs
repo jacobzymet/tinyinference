@@ -216,7 +216,8 @@ impl SkillStore {
         }
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("could not read {}", path.display()))?;
-        serde_json::from_str(&raw).with_context(|| format!("invalid skill index {}", path.display()))
+        serde_json::from_str(&raw)
+            .with_context(|| format!("invalid skill index {}", path.display()))
     }
 
     fn save_index(&self, index: &SkillIndex) -> Result<()> {
@@ -384,9 +385,7 @@ pub fn user_skills_catalog_block(skills: &[UserSkill]) -> String {
     if skills.is_empty() {
         return String::new();
     }
-    let mut lines = vec![
-        "available skills:".into(),
-    ];
+    let mut lines = vec!["available skills:".into()];
     for skill in skills {
         lines.push(skill.catalog_line());
     }
@@ -402,9 +401,9 @@ pub fn find_skill<'a>(skills: &'a [UserSkill], key: &str) -> Option<&'a UserSkil
     if key.is_empty() {
         return None;
     }
-    skills.iter().find(|skill| {
-        skill.id.eq_ignore_ascii_case(key) || skill.name.eq_ignore_ascii_case(key)
-    })
+    skills
+        .iter()
+        .find(|skill| skill.id.eq_ignore_ascii_case(key) || skill.name.eq_ignore_ascii_case(key))
 }
 
 #[cfg(test)]

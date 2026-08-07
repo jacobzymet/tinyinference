@@ -19,12 +19,12 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
-    chat::{sse_error, ChatStream, CHANNEL_CAPACITY, REQUEST_TIMEOUT},
+    chat::{CHANNEL_CAPACITY, ChatStream, REQUEST_TIMEOUT, sse_error},
     skills::UserSkill,
 };
 
@@ -126,9 +126,13 @@ pub fn stream_agent(
         .filter(|key| !key.is_empty())
         .map(str::to_string);
     thread::spawn(move || {
-        if let Err(error) =
-            run_agent_loop(&api_base, api_key.as_deref(), &mut request, &user_skills, &tx)
-        {
+        if let Err(error) = run_agent_loop(
+            &api_base,
+            api_key.as_deref(),
+            &mut request,
+            &user_skills,
+            &tx,
+        ) {
             let _ = tx.blocking_send(Ok(sse_error(&error)));
         }
     });
@@ -261,7 +265,9 @@ fn agent_system_block(skills: &AgentSkills, user_skills: &[UserSkill]) -> String
     if skills.web_search {
         let depth = skills.web_search_depth;
         let depth_note = match depth.scrape_plan() {
-            None => "Returns titles, URLs, and snippets only (page fetch depth is off).".to_string(),
+            None => {
+                "Returns titles, URLs, and snippets only (page fetch depth is off).".to_string()
+            }
             Some((pages, chars)) => format!(
                 "Also opens up to {pages} result pages and extracts ~{chars} characters of text each (depth: {}).",
                 depth.label()
@@ -362,7 +368,9 @@ fn stream_once(
 
     loop {
         line.clear();
-        let read = lines.read_line(&mut line).map_err(|error| error.to_string())?;
+        let read = lines
+            .read_line(&mut line)
+            .map_err(|error| error.to_string())?;
         if read == 0 {
             break;
         }
@@ -489,9 +497,7 @@ fn execute_tool(
                     "activate_skill requires a non-empty \"name\" (or \"id\") string.".to_string()
                 })?;
             let skill = crate::skills::find_skill(user_skills, key).ok_or_else(|| {
-                format!(
-                    "Unknown skill '{key}'. Use a name or id from the available skills list."
-                )
+                format!("Unknown skill '{key}'. Use a name or id from the available skills list.")
             })?;
             Ok(skill.full_instructions())
         }
@@ -552,10 +558,7 @@ fn duckduckgo_search(query: &str, depth: WebSearchDepth) -> Result<String, Strin
         .map_err(|error| format!("DuckDuckGo request failed: {error}"))?;
 
     if response.status() != 200 && response.status() != 202 {
-        return Err(format!(
-            "DuckDuckGo returned HTTP {}",
-            response.status()
-        ));
+        return Err(format!("DuckDuckGo returned HTTP {}", response.status()));
     }
 
     let html = response
@@ -604,7 +607,9 @@ fn duckduckgo_instant_answer(query: &str, depth: WebSearchDepth) -> Result<Strin
         .read_json()
         .map_err(|error| format!("Invalid Instant Answer JSON: {error}"))?;
 
-    let mut lines = vec![format!("Web search results for {query:?} (DuckDuckGo Instant Answer):")];
+    let mut lines = vec![format!(
+        "Web search results for {query:?} (DuckDuckGo Instant Answer):"
+    )];
     let mut hits = Vec::new();
     if let Some(text) = body.get("AbstractText").and_then(|v| v.as_str()) {
         if !text.is_empty() {
@@ -631,10 +636,7 @@ fn duckduckgo_instant_answer(query: &str, depth: WebSearchDepth) -> Result<Strin
                 break;
             }
             if let Some(text) = topic.get("Text").and_then(|v| v.as_str()) {
-                let url = topic
-                    .get("FirstURL")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let url = topic.get("FirstURL").and_then(|v| v.as_str()).unwrap_or("");
                 count += 1;
                 lines.push(format!("\n{count}. {text}"));
                 if !url.is_empty() {
@@ -651,10 +653,7 @@ fn duckduckgo_instant_answer(query: &str, depth: WebSearchDepth) -> Result<Strin
                         break;
                     }
                     if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
-                        let url = item
-                            .get("FirstURL")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let url = item.get("FirstURL").and_then(|v| v.as_str()).unwrap_or("");
                         count += 1;
                         lines.push(format!("\n{count}. {text}"));
                         if !url.is_empty() {
@@ -793,8 +792,24 @@ fn html_to_readable_text(html: &str, max_chars: usize) -> String {
     cleaned = remove_tag_blocks(&cleaned, "template");
 
     for marker in [
-        "</p>", "</div>", "</section>", "</article>", "</li>", "</tr>", "</h1>", "</h2>", "</h3>",
-        "</h4>", "</h5>", "</h6>", "</blockquote>", "<br>", "<br/>", "<br />", "<hr>", "<hr/>",
+        "</p>",
+        "</div>",
+        "</section>",
+        "</article>",
+        "</li>",
+        "</tr>",
+        "</h1>",
+        "</h2>",
+        "</h3>",
+        "</h4>",
+        "</h5>",
+        "</h6>",
+        "</blockquote>",
+        "<br>",
+        "<br/>",
+        "<br />",
+        "<hr>",
+        "<hr/>",
         "<hr />",
     ] {
         cleaned = cleaned.replace(marker, "\n");
@@ -908,7 +923,9 @@ fn parse_ddg_html(html: &str) -> Vec<SearchHit> {
                 let slice = &rest[s..];
                 // stop looking too far ahead so we don't steal the next result's snippet
                 let window = &slice[..slice.len().min(1200)];
-                between(window, ">", "</").map(strip_tags).map(|s| collapse_ws(&s))
+                between(window, ">", "</")
+                    .map(strip_tags)
+                    .map(|s| collapse_ws(&s))
             })
             .unwrap_or_default();
 

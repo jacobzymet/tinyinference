@@ -3,8 +3,6 @@ pub mod app;
 pub mod cache;
 pub mod chat;
 pub mod config;
-#[cfg(feature = "desktop")]
-pub mod desktop;
 pub mod fetch;
 pub mod hub;
 pub mod instance;

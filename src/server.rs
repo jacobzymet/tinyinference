@@ -141,11 +141,7 @@ impl CommandSpec {
             args.push("--metrics".into());
         }
         push_pair(&mut args, "--host", config.effective_host());
-        push_pair(
-            &mut args,
-            "--port",
-            config.effective_port().to_string(),
-        );
+        push_pair(&mut args, "--port", config.effective_port().to_string());
         if config.uses_tls() {
             if let (Some(cert), Some(key)) = (&config.tls_cert_file, &config.tls_key_file) {
                 push_pair(&mut args, "--ssl-cert-file", cert.as_os_str());
@@ -228,9 +224,10 @@ fn filter_managed_extra_args(extra_args: &[String]) -> Vec<String> {
             index += 1;
             continue;
         }
-        if let Some(option) = PAIRED.iter().find(|option| {
-            *argument == **option || argument.starts_with(&format!("{option}="))
-        }) {
+        if let Some(option) = PAIRED
+            .iter()
+            .find(|option| *argument == **option || argument.starts_with(&format!("{option}=")))
+        {
             if *argument == *option {
                 index += 2;
             } else {
@@ -540,8 +537,10 @@ pub fn template_suggests_thinking(template: &str) -> bool {
         && (lower.contains("enable_thinking")
             || lower.contains("enable thinking")
             || lower.contains("ns.enable_thinking")
-            || (lower.contains("thinking") && (lower.contains(" is not") || lower.contains("==") || lower.contains("!=")))
-            || (lower.contains("reasoning") && (lower.contains(" is not") || lower.contains("==") || lower.contains("!="))))
+            || (lower.contains("thinking")
+                && (lower.contains(" is not") || lower.contains("==") || lower.contains("!=")))
+            || (lower.contains("reasoning")
+                && (lower.contains(" is not") || lower.contains("==") || lower.contains("!="))))
     {
         return true;
     }
@@ -587,7 +586,9 @@ fn jinja_mentions_ident(template: &str, ident: &str) -> bool {
         rest = &chunk[end..];
     }
     // Fallback: bare substring (older / atypical templates).
-    template.to_ascii_lowercase().contains(&ident.to_ascii_lowercase())
+    template
+        .to_ascii_lowercase()
+        .contains(&ident.to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -596,8 +597,7 @@ mod thinking_support_tests {
 
     #[test]
     fn props_detect_think_tags_and_controls_in_template() {
-        let with_tags =
-            r#"{"chat_template":"User: {{message}}\nAssistant: <think>maybe</think>"}"#;
+        let with_tags = r#"{"chat_template":"User: {{message}}\nAssistant: <think>maybe</think>"}"#;
         assert!(thinking_support_from_props(with_tags));
 
         let controlled =
@@ -607,18 +607,24 @@ mod thinking_support_tests {
         let caps = r#"{"chat_template_caps":{"supports_preserve_reasoning":true}}"#;
         assert!(thinking_support_from_props(caps));
 
-        let gpt_oss = r#"{"chat_template":"<|start|>assistant<|channel|>analysis\n...\\n<|channel|>final"}"#;
+        let gpt_oss =
+            r#"{"chat_template":"<|start|>assistant<|channel|>analysis\n...\\n<|channel|>final"}"#;
         assert!(thinking_support_from_props(gpt_oss));
 
         let plain = r#"{"chat_template":"{{ messages }}","chat_template_caps":{}}"#;
         assert!(!thinking_support_from_props(plain));
 
         // Mentions outside chat_template must not count.
-        let noise = r#"{"model_path":"/models/foo-thinking.gguf","chat_template":"{{ messages }}"}"#;
+        let noise =
+            r#"{"model_path":"/models/foo-thinking.gguf","chat_template":"{{ messages }}"}"#;
         assert!(!thinking_support_from_props(noise));
 
-        assert!(template_suggests_thinking("{% if enable_thinking %}x{% endif %}"));
-        assert!(!template_suggests_thinking("Just a chain of thought description."));
+        assert!(template_suggests_thinking(
+            "{% if enable_thinking %}x{% endif %}"
+        ));
+        assert!(!template_suggests_thinking(
+            "Just a chain of thought description."
+        ));
     }
 }
 
@@ -732,11 +738,7 @@ fn http_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, Stri
 
 /// Probes against our own self-signed llama TLS (verification intentionally off).
 fn https_get(config: &Config, path: &str, timeout: Duration) -> Option<(u16, String)> {
-    let url = format!(
-        "{}{}",
-        config.endpoint().trim_end_matches('/'),
-        path
-    );
+    let url = format!("{}{}", config.endpoint().trim_end_matches('/'), path);
     let tls = ureq::tls::TlsConfig::builder()
         .disable_verification(true)
         .build();
