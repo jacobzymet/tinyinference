@@ -20,3 +20,6 @@ skills-lock.json
 
 # Site scaffold — move/track later
 /website/
+
+# Local Ollama Modelfile leftovers
+/Modelfile
