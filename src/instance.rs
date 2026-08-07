@@ -221,10 +221,10 @@ impl ManagedServer {
         if let Some(slots) = result.slots {
             self.update_live_throughput(slots);
         }
-        if result.metrics_requested {
-            if let Some(metrics) = result.metrics {
-                self.merge_server_metrics(metrics);
-            }
+        if result.metrics_requested
+            && let Some(metrics) = result.metrics
+        {
+            self.merge_server_metrics(metrics);
         }
         self.publish_live_rates();
         if self.endpoint_online {

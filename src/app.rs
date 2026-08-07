@@ -1144,11 +1144,9 @@ impl App {
         let mut revealed_id: Option<String> = None;
         if let Some(expose) = update.expose {
             self.config.network.expose = expose;
-            if expose {
-                if self.config.network.ensure_token() {
-                    token_revealed = self.config.network.primary_api_key().map(str::to_string);
-                    revealed_id = self.config.network.api_keys.first().map(|k| k.id.clone());
-                }
+            if expose && self.config.network.ensure_token() {
+                token_revealed = self.config.network.primary_api_key().map(str::to_string);
+                revealed_id = self.config.network.api_keys.first().map(|k| k.id.clone());
             }
         }
 
@@ -1165,11 +1163,11 @@ impl App {
 
         // Validate the chosen scope can resolve before persisting a bad Tailscale-only setup
         // as the only option — still allow saving so the UI can show the error + fix path.
-        if self.config.network.expose {
-            if let Err(error) = self.config.network.resolve_listen_host() {
-                // Soft: keep config, surface error via listen_bind_error in API state.
-                self.push_log(format!("network listen warning: {error}"));
-            }
+        if self.config.network.expose
+            && let Err(error) = self.config.network.resolve_listen_host()
+        {
+            // Soft: keep config, surface error via listen_bind_error in API state.
+            self.push_log(format!("network listen warning: {error}"));
         }
 
         if update.regenerate_token.unwrap_or(false) {
@@ -2066,9 +2064,7 @@ impl App {
         }
         let mut launch_config = self.config.clone();
         // Additional instances get the next free port; primary keeps the configured port.
-        if self.process.is_some() {
-            launch_config.server.port = self.allocate_port();
-        } else if self.used_ports().contains(&launch_config.effective_port()) {
+        if self.process.is_some() || self.used_ports().contains(&launch_config.effective_port()) {
             launch_config.server.port = self.allocate_port();
         }
         let display = CommandSpec::from_config(&launch_config).display();
@@ -2334,10 +2330,10 @@ impl App {
             self.server_metrics = None;
             self.clear_live_throughput();
             self.clear_thinking_support();
-            if self.active_server_id == PRIMARY_SERVER_ID {
-                if let Some(extra) = self.extra_servers.iter().find(|s| s.is_running()) {
-                    self.active_server_id = extra.id.clone();
-                }
+            if self.active_server_id == PRIMARY_SERVER_ID
+                && let Some(extra) = self.extra_servers.iter().find(|s| s.is_running())
+            {
+                self.active_server_id = extra.id.clone();
             }
             self.sync_mdns_advertise();
             return;
@@ -2426,11 +2422,11 @@ impl App {
         font_scale: Option<crate::config::UiFontScale>,
     ) -> Result<(), String> {
         let mut changed = false;
-        if let Some(theme) = theme {
-            if self.config.ui.theme != theme {
-                self.config.ui.theme = theme;
-                changed = true;
-            }
+        if let Some(theme) = theme
+            && self.config.ui.theme != theme
+        {
+            self.config.ui.theme = theme;
+            changed = true;
         }
         if let Some(font_body) = font_body {
             let id = font_body.trim().to_ascii_lowercase();
@@ -2471,11 +2467,11 @@ impl App {
                 changed = true;
             }
         }
-        if let Some(font_scale) = font_scale {
-            if self.config.ui.font_scale != font_scale {
-                self.config.ui.font_scale = font_scale;
-                changed = true;
-            }
+        if let Some(font_scale) = font_scale
+            && self.config.ui.font_scale != font_scale
+        {
+            self.config.ui.font_scale = font_scale;
+            changed = true;
         }
         if changed {
             self.persist_config();

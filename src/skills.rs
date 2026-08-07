@@ -297,26 +297,26 @@ struct ParsedMarkdown {
 
 fn parse_skill_markdown(raw: &str) -> ParsedMarkdown {
     let trimmed = raw.trim();
-    if let Some(rest) = trimmed.strip_prefix("---") {
-        if let Some(end) = rest.find("\n---") {
-            let front = &rest[..end];
-            let body = rest[end + 4..].trim_start_matches('\n').to_string();
-            let mut name = None;
-            let mut description = None;
-            for line in front.lines() {
-                let line = line.trim();
-                if let Some(value) = line.strip_prefix("name:") {
-                    name = Some(value.trim().trim_matches('"').to_string());
-                } else if let Some(value) = line.strip_prefix("description:") {
-                    description = Some(value.trim().trim_matches('"').to_string());
-                }
+    if let Some(rest) = trimmed.strip_prefix("---")
+        && let Some(end) = rest.find("\n---")
+    {
+        let front = &rest[..end];
+        let body = rest[end + 4..].trim_start_matches('\n').to_string();
+        let mut name = None;
+        let mut description = None;
+        for line in front.lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("name:") {
+                name = Some(value.trim().trim_matches('"').to_string());
+            } else if let Some(value) = line.strip_prefix("description:") {
+                description = Some(value.trim().trim_matches('"').to_string());
             }
-            return ParsedMarkdown {
-                name,
-                description,
-                content: body,
-            };
         }
+        return ParsedMarkdown {
+            name,
+            description,
+            content: body,
+        };
     }
     ParsedMarkdown {
         name: None,

@@ -566,18 +566,17 @@ fn split_endpoint(value: &str) -> Option<(IpAddr, u16)> {
         return Some((ip.parse().ok()?, port.parse().ok()?));
     }
     // host:port (IPv4 or bracket-free — IPv6 without brackets is uncommon here)
-    if let Some((host, port)) = value.rsplit_once(':') {
-        if !host.contains(':') {
-            if let (Ok(ip), Ok(port)) = (host.parse::<IpAddr>(), port.parse::<u16>()) {
-                return Some((ip, port));
-            }
-        }
+    if let Some((host, port)) = value.rsplit_once(':')
+        && !host.contains(':')
+        && let (Ok(ip), Ok(port)) = (host.parse::<IpAddr>(), port.parse::<u16>())
+    {
+        return Some((ip, port));
     }
     // BSD netstat: a.b.c.d.port or v6addr.port
-    if let Some((host, port)) = value.rsplit_once('.') {
-        if let (Ok(ip), Ok(port)) = (host.parse::<IpAddr>(), port.parse::<u16>()) {
-            return Some((ip, port));
-        }
+    if let Some((host, port)) = value.rsplit_once('.')
+        && let (Ok(ip), Ok(port)) = (host.parse::<IpAddr>(), port.parse::<u16>())
+    {
+        return Some((ip, port));
     }
     None
 }

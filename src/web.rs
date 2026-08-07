@@ -401,10 +401,10 @@ async fn chat_completions(
     let stream = if let Some((chat_url, api_base, token)) = remote {
         // Linked OpenAI-compatible LLM. Agent capabilities still run on this machine;
         // only model tokens go to the remote `/v1` base.
-        if let Some(model) = remote_model {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("model".into(), serde_json::Value::String(model));
-            }
+        if let Some(model) = remote_model
+            && let Some(obj) = body.as_object_mut()
+        {
+            obj.insert("model".into(), serde_json::Value::String(model));
         }
         let key = (!token.trim().is_empty()).then_some(token.as_str());
         match serde_json::from_value::<AgentRequest>(body.clone()) {

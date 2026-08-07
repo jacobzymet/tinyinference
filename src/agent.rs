@@ -235,17 +235,16 @@ fn inject_agent_system_prompt(
     if block.is_empty() {
         return;
     }
-    if let Some(first) = messages.first_mut() {
-        if first.get("role").and_then(|r| r.as_str()) == Some("system") {
-            if let Some(content) = first.get("content").and_then(|c| c.as_str()) {
-                let merged = format!("{content}\n\n{block}");
-                first
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("content".into(), Value::String(merged));
-                return;
-            }
-        }
+    if let Some(first) = messages.first_mut()
+        && first.get("role").and_then(|r| r.as_str()) == Some("system")
+        && let Some(content) = first.get("content").and_then(|c| c.as_str())
+    {
+        let merged = format!("{content}\n\n{block}");
+        first
+            .as_object_mut()
+            .unwrap()
+            .insert("content".into(), Value::String(merged));
+        return;
     }
     messages.insert(0, json!({ "role": "system", "content": block }));
 }
@@ -300,17 +299,16 @@ pub fn inject_skill_catalog_into_messages(messages: &mut Vec<Value>, user_skills
     let note = format!(
         "{block}\n\nTo load full skill instructions you need agent mode (toggle Agent or @agent), which exposes activate_skill."
     );
-    if let Some(first) = messages.first_mut() {
-        if first.get("role").and_then(|r| r.as_str()) == Some("system") {
-            if let Some(content) = first.get("content").and_then(|c| c.as_str()) {
-                let merged = format!("{content}\n\n{note}");
-                first
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("content".into(), Value::String(merged));
-                return;
-            }
-        }
+    if let Some(first) = messages.first_mut()
+        && first.get("role").and_then(|r| r.as_str()) == Some("system")
+        && let Some(content) = first.get("content").and_then(|c| c.as_str())
+    {
+        let merged = format!("{content}\n\n{note}");
+        first
+            .as_object_mut()
+            .unwrap()
+            .insert("content".into(), Value::String(merged));
+        return;
     }
     messages.insert(0, json!({ "role": "system", "content": note }));
 }
@@ -611,21 +609,21 @@ fn duckduckgo_instant_answer(query: &str, depth: WebSearchDepth) -> Result<Strin
         "Web search results for {query:?} (DuckDuckGo Instant Answer):"
     )];
     let mut hits = Vec::new();
-    if let Some(text) = body.get("AbstractText").and_then(|v| v.as_str()) {
-        if !text.is_empty() {
-            let url = body
-                .get("AbstractURL")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            lines.push(format!("\nSummary: {text}"));
-            if !url.is_empty() {
-                lines.push(format!("Source: {url}"));
-                hits.push(SearchHit {
-                    title: "Abstract".into(),
-                    url: url.to_string(),
-                    snippet: text.to_string(),
-                });
-            }
+    if let Some(text) = body.get("AbstractText").and_then(|v| v.as_str())
+        && !text.is_empty()
+    {
+        let url = body
+            .get("AbstractURL")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        lines.push(format!("\nSummary: {text}"));
+        if !url.is_empty() {
+            lines.push(format!("Source: {url}"));
+            hits.push(SearchHit {
+                title: "Abstract".into(),
+                url: url.to_string(),
+                snippet: text.to_string(),
+            });
         }
     }
 
@@ -877,7 +875,7 @@ fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
     }
     'outer: for i in 0..=(h.len() - n.len()) {
         for (a, b) in h[i..i + n.len()].iter().zip(n.iter()) {
-            if a.to_ascii_lowercase() != b.to_ascii_lowercase() {
+            if !a.eq_ignore_ascii_case(b) {
                 continue 'outer;
             }
         }
@@ -915,7 +913,7 @@ fn parse_ddg_html(html: &str) -> Vec<SearchHit> {
             }
         };
         let title = collapse_ws(&strip_tags(title_html));
-        let url = decode_ddg_href(&href);
+        let url = decode_ddg_href(href);
         // Snippet often follows shortly after in result__snippet
         let snippet = rest
             .find("result__snippet")
@@ -1005,12 +1003,13 @@ fn percent_decode(input: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
-                out.push((h << 4) | l);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2]))
+        {
+            out.push((h << 4) | l);
+            i += 3;
+            continue;
         }
         if bytes[i] == b'+' {
             out.push(b' ');

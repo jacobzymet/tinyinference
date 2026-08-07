@@ -986,6 +986,12 @@ pub struct NetworkDiscovery {
     last_error: Arc<Mutex<Option<String>>>,
 }
 
+impl Default for NetworkDiscovery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkDiscovery {
     pub fn new() -> Self {
         ensure_windows_discovery_firewall();
@@ -1104,10 +1110,10 @@ impl NetworkDiscovery {
                     while let Ok(event) = receiver.recv() {
                         match event {
                             ServiceEvent::ServiceResolved(info) => {
-                                if let Some(peer) = peer_from_resolved(&info) {
-                                    if let Ok(mut store) = peers.lock() {
-                                        store.upsert(peer);
-                                    }
+                                if let Some(peer) = peer_from_resolved(&info)
+                                    && let Ok(mut store) = peers.lock()
+                                {
+                                    store.upsert(peer);
                                 }
                             }
                             ServiceEvent::ServiceRemoved(_, fullname) => {
@@ -1285,17 +1291,16 @@ fn spawn_beacon_listener(
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .clone()
+                                && let Some(packet) = encode_beacon(&announce_payload(&out))
                             {
-                                if let Some(packet) = encode_beacon(&announce_payload(&out)) {
-                                    let _ = socket.send_to(&packet, from);
-                                }
+                                let _ = socket.send_to(&packet, from);
                             }
                             continue;
                         }
-                        if let Some(peer) = peer_from_announce(&payload, from) {
-                            if let Ok(mut store) = peers.lock() {
-                                store.upsert(peer);
-                            }
+                        if let Some(peer) = peer_from_announce(&payload, from)
+                            && let Ok(mut store) = peers.lock()
+                        {
+                            store.upsert(peer);
                         }
                     }
                     Err(error)
@@ -1527,10 +1532,10 @@ fn peer_from_announce(payload: &BeaconPayload, from: SocketAddr) -> Option<Disco
         .iter()
         .filter_map(|ip| ip.parse().ok())
         .collect();
-    if ips.is_empty() {
-        if let SocketAddr::V4(v4) = from {
-            ips.push(*v4.ip());
-        }
+    if ips.is_empty()
+        && let SocketAddr::V4(v4) = from
+    {
+        ips.push(*v4.ip());
     }
     ips.retain(|ip| !ip.is_loopback() && !is_tailscale_cg_nat(*ip));
     ips.sort_by_key(|ip| lan_range_rank(*ip));
@@ -2043,9 +2048,11 @@ mod tests {
 
     #[test]
     fn proxy_bind_hosts_follows_listen_scope() {
-        let mut cfg = NetworkConfig::default();
-        cfg.expose = true;
-        cfg.listen_scope = ListenScope::All;
+        let mut cfg = NetworkConfig {
+            expose: true,
+            listen_scope: ListenScope::All,
+            ..Default::default()
+        };
         assert_eq!(cfg.proxy_bind_hosts().unwrap(), vec!["0.0.0.0".to_string()]);
         cfg.listen_scope = ListenScope::Custom;
         cfg.listen_host = "10.0.0.187".into();
@@ -2057,9 +2064,11 @@ mod tests {
 
     #[test]
     fn listen_scope_resolves_all_and_custom() {
-        let mut cfg = NetworkConfig::default();
-        cfg.expose = true;
-        cfg.listen_scope = ListenScope::All;
+        let mut cfg = NetworkConfig {
+            expose: true,
+            listen_scope: ListenScope::All,
+            ..Default::default()
+        };
         assert_eq!(cfg.resolve_listen_host().unwrap(), "0.0.0.0");
 
         cfg.listen_scope = ListenScope::Custom;
@@ -2089,8 +2098,10 @@ mod tests {
 
     #[test]
     fn api_key_crud_and_legacy_migration() {
-        let mut cfg = NetworkConfig::default();
-        cfg.access_token = "legacy-secret".into();
+        let mut cfg = NetworkConfig {
+            access_token: "legacy-secret".into(),
+            ..Default::default()
+        };
         cfg.migrate_api_keys();
         assert_eq!(cfg.api_keys.len(), 1);
         assert_eq!(cfg.api_keys[0].secret, "legacy-secret");

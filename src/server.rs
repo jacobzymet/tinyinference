@@ -142,11 +142,11 @@ impl CommandSpec {
         }
         push_pair(&mut args, "--host", config.effective_host());
         push_pair(&mut args, "--port", config.effective_port().to_string());
-        if config.uses_tls() {
-            if let (Some(cert), Some(key)) = (&config.tls_cert_file, &config.tls_key_file) {
-                push_pair(&mut args, "--ssl-cert-file", cert.as_os_str());
-                push_pair(&mut args, "--ssl-key-file", key.as_os_str());
-            }
+        if config.uses_tls()
+            && let (Some(cert), Some(key)) = (&config.tls_cert_file, &config.tls_key_file)
+        {
+            push_pair(&mut args, "--ssl-cert-file", cert.as_os_str());
+            push_pair(&mut args, "--ssl-key-file", key.as_os_str());
         }
         for key in config.llama_api_keys() {
             if !key.trim().is_empty() {

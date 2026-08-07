@@ -552,11 +552,11 @@ impl Config {
             && self
                 .tls_cert_file
                 .as_ref()
-                .is_some_and(|path| path.as_os_str().len() > 0)
+                .is_some_and(|path| !path.as_os_str().is_empty())
             && self
                 .tls_key_file
                 .as_ref()
-                .is_some_and(|path| path.as_os_str().len() > 0)
+                .is_some_and(|path| !path.as_os_str().is_empty())
     }
 
     pub fn scheme(&self) -> &'static str {
