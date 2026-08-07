@@ -70,7 +70,7 @@ Both surfaces share the same local server and a Chat | Admin mode switch:
 
 The release binary is **self-contained**: chat HTML, admin HTML, `orb.js`, and
 icons are compiled into the executable (`include_str!` / `include_bytes!` in
-`src/web.rs`). You ship one file — nothing else from this repo needs to sit
+`src/web/embed.rs`). You ship one file — nothing else from this repo needs to sit
 beside it (you still need `llama-server` on the machine).
 
 ### This machine

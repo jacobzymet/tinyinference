@@ -1971,11 +1971,7 @@ impl IntoResponse for ApiError {
     }
 }
 
-// Compile-time embed: the release binary ships alone — no HTML/JS/PNG sidecars.
-const ADMIN_HTML: &str = include_str!("index.html");
-const CHAT_HTML: &str = include_str!("chat.html");
-const ORB_JS: &str = include_str!("orb.js");
-const HIGHLIGHT_JS: &str = include_str!("vendor/highlight.min.js");
-const APP_ICON_PNG: &[u8] = include_bytes!("../assets/ti.png");
-const UI_MARK_WHITE_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-white.png");
-const UI_MARK_BLACK_PNG: &[u8] = include_bytes!("../assets/ti-transparent-bg-black.png");
+mod embed;
+use embed::{
+    ADMIN_HTML, APP_ICON_PNG, CHAT_HTML, HIGHLIGHT_JS, ORB_JS, UI_MARK_BLACK_PNG, UI_MARK_WHITE_PNG,
+};

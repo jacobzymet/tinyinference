@@ -2,7 +2,7 @@
 
 ## thinking-orbs
 
-The dotted thought-orb animations in [`src/orb.js`](src/orb.js) are adapted from
+The dotted thought-orb animations in [`src/ui/orb.js`](src/ui/orb.js) are adapted from
 [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs)
 ([demo](https://orbs.jakubantalik.com)), ported to plain canvas for the control
 panel and chat UI.
@@ -34,7 +34,7 @@ SOFTWARE.
 ## highlight.js
 
 Syntax highlighting for fenced code blocks in chat uses
-[`src/vendor/highlight.min.js`](src/vendor/highlight.min.js)
+[`src/ui/vendor/highlight.min.js`](src/ui/vendor/highlight.min.js)
 ([highlight.js](https://highlightjs.org/) v11.11.1).
 
 ```

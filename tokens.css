@@ -1,6 +1,6 @@
 /* Hallmark · genre: modern-minimal · macrostructure: Workbench · theme: Cobalt instrument
  * tone: utilitarian · nav: N3 side-rail · designed-as-app
- * Portable token export — source of truth also lives in src/index.html :root
+ * Portable token export — source of truth also lives in src/ui/index.html :root
  */
 :root {
   --color-paper: oklch(14% 0.014 260);

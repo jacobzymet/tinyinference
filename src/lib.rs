@@ -1,16 +1,12 @@
 pub mod agent;
 pub mod app;
-pub mod cache;
-pub mod chat;
 pub mod config;
-pub mod fetch;
-pub mod hub;
-pub mod instance;
+pub mod inference;
 pub mod network;
-pub mod server;
-pub mod share_proxy;
-pub mod skills;
 pub mod system;
-pub mod tls;
 pub mod update;
 pub mod web;
+
+// Stable crate-root paths (pre-reorg import style).
+pub use agent::{chat, skills};
+pub use inference::{cache, fetch, hub, instance, server, share_proxy, tls};

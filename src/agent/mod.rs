@@ -12,6 +12,9 @@
 //! The server executes the skill, feeds `<tool_result>` back, and continues
 //! until the model answers without a tool call (or hits the round limit).
 
+pub mod chat;
+pub mod skills;
+
 use std::{
     io::{BufRead, BufReader},
     thread,
