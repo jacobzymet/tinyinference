@@ -153,6 +153,9 @@ pub struct UiConfig {
     pub font_display: String,
     pub font_mono: String,
     pub font_scale: UiFontScale,
+    /// GitHub release tag the user dismissed (e.g. `v0.5.0`). Empty = none.
+    #[serde(default)]
+    pub dismissed_release: String,
 }
 
 impl UiConfig {
@@ -233,6 +236,7 @@ impl Default for UiConfig {
             font_display: DEFAULT_UI_FONT_DISPLAY.into(),
             font_mono: DEFAULT_UI_FONT_MONO.into(),
             font_scale: UiFontScale::Default,
+            dismissed_release: String::new(),
         }
     }
 }

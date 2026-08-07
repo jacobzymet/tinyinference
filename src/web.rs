@@ -32,6 +32,7 @@ use crate::{
     },
     server::ServerProcess,
     share_proxy::{ConnectedClientPublic, ShareActivitySummary},
+    update::{self, UpdateNotice},
 };
 
 pub type SharedApp = Arc<Mutex<App>>;
@@ -44,6 +45,42 @@ pub const INSTANCE_MARKER: &str = "tinyinference";
 static REMOTE_CACHE_WARM_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
 /// Probe linked-host health/catalog off the app mutex so mode switches stay snappy.
+fn schedule_update_check(app: SharedApp) {
+    let current = {
+        let Ok(guard) = app.lock() else {
+            return;
+        };
+        if !guard.update_cache().begin_probe() {
+            return;
+        }
+        guard.app_version().to_string()
+    };
+    tokio::task::spawn_blocking(move || {
+        struct ClearProbe {
+            app: SharedApp,
+            done: bool,
+        }
+        impl Drop for ClearProbe {
+            fn drop(&mut self) {
+                if !self.done
+                    && let Ok(app) = self.app.lock()
+                {
+                    app.update_cache().clear_probe_flag();
+                }
+            }
+        }
+        let mut clear = ClearProbe {
+            app: Arc::clone(&app),
+            done: false,
+        };
+        let notice = update::check_for_update(&current);
+        if let Ok(app) = app.lock() {
+            app.update_cache().finish_probe(notice);
+            clear.done = true;
+        }
+    });
+}
+
 fn schedule_remote_cache_warm(app: SharedApp) {
     let needs_warm = app
         .lock()
@@ -199,6 +236,7 @@ pub async fn serve(app: SharedApp, listener: TcpListener) -> anyhow::Result<()> 
         .route("/api/copy/command", post(copy_command))
         .route("/api/copy/logs", post(copy_logs))
         .route("/api/dismiss-prompt", post(dismiss_prompt))
+        .route("/api/update/dismiss", post(dismiss_update))
         .route("/api/configure-server", post(configure_server))
         .route("/api/focus", post(focus))
         .route("/api/skills", get(list_skills).post(create_skill))
@@ -735,7 +773,23 @@ async fn state(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError>
         AppState::from_app(&app)
     };
     schedule_remote_cache_warm(Arc::clone(&app));
+    schedule_update_check(Arc::clone(&app));
     Ok(Json(state))
+}
+
+#[derive(Debug, Deserialize)]
+struct DismissUpdateBody {
+    tag: String,
+}
+
+async fn dismiss_update(
+    State(app): State<SharedApp>,
+    Json(body): Json<DismissUpdateBody>,
+) -> Result<Json<AppState>, ApiError> {
+    let mut app = app.lock().map_err(|_| ApiError::lock())?;
+    app.dismiss_update(&body.tag)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(AppState::from_app(&app)))
 }
 
 async fn start(State(app): State<SharedApp>) -> Result<Json<AppState>, ApiError> {
@@ -1023,6 +1077,10 @@ struct AppState {
     status: ServerStatus,
     status_label: &'static str,
     status_detail: String,
+    /// Running binary version (`CARGO_PKG_VERSION`).
+    version: &'static str,
+    /// Newer GitHub release, when the background check has found one.
+    update: Option<UpdateNotice>,
     theme: &'static str,
     font_body: String,
     font_display: String,
@@ -1584,6 +1642,8 @@ impl AppState {
             } else {
                 app.status_detail.clone()
             },
+            version: app.app_version(),
+            update: app.update_notice(),
             theme: app.config.ui.theme.as_str(),
             font_body: app.config.ui.font_body.clone(),
             font_display: app.config.ui.font_display.clone(),

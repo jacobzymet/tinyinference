@@ -479,6 +479,63 @@
       position: relative;
       z-index: 1;
     }
+    .update-notice {
+      position: absolute;
+      left: 50%;
+      bottom: calc(var(--space-md) + 4.75rem);
+      z-index: 6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.45rem;
+      width: max-content;
+      max-width: min(18.5rem, calc(100% - 2rem));
+      margin: 0;
+      padding: 0.65rem 0.85rem 0.7rem;
+      border-radius: var(--radius-panel);
+      border: 1px solid color-mix(in oklch, var(--color-rule) 85%, var(--color-ink));
+      background: color-mix(in oklch, var(--color-paper-2) 94%, var(--color-paper));
+      box-shadow: 0 12px 32px color-mix(in oklch, var(--color-ink) 12%, transparent);
+      text-align: center;
+      pointer-events: auto;
+      animation: update-notice-in 0.35s var(--ease-out);
+      transform: translateX(-50%);
+    }
+    .update-notice-copy {
+      display: grid;
+      gap: 0.1rem;
+      min-width: 0;
+      justify-items: center;
+    }
+    .update-notice-copy strong {
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--color-ink);
+    }
+    .update-notice-copy span {
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+      line-height: 1.35;
+    }
+    .update-notice-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      align-items: center;
+      justify-content: center;
+    }
+    .update-notice-actions .btn {
+      padding: 0.3rem 0.65rem;
+      font-size: var(--text-xs);
+    }
+    .chat-shell.is-projects .update-notice { display: none !important; }
+    @keyframes update-notice-in {
+      from { opacity: 0; transform: translate(-50%, 0.4rem); }
+      to { opacity: 1; transform: translateX(-50%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .update-notice { animation: none; }
+    }
     .chat-topbar {
       flex: 0 0 auto;
       display: grid;
@@ -2158,6 +2215,16 @@
         </div>
       </div>
 
+      <div id="updateNotice" class="update-notice is-hidden" role="status" aria-live="polite">
+        <div class="update-notice-copy">
+          <strong>Update available</strong>
+          <span id="updateNoticeDetail">A newer release is ready.</span>
+        </div>
+        <div class="update-notice-actions">
+          <a class="btn btn-primary" id="updateNoticeLink" href="https://github.com/jacobzymet/tinyinference/releases" target="_blank" rel="noopener noreferrer">View</a>
+          <button type="button" class="btn btn-ghost" id="updateNoticeDismiss">Later</button>
+        </div>
+      </div>
       <div class="chat-composer-dock" id="composerDock"></div>
     </main>
   </div>
@@ -4786,9 +4853,32 @@
       return isRemoteChatSelection(selectedChatModel);
     }
 
+    function paintUpdateNotice(data) {
+      const el = document.getElementById('updateNotice');
+      if (!el) return;
+      const update = data?.update;
+      if (!update || !update.tag) {
+        el.classList.add('is-hidden');
+        return;
+      }
+      const detail = document.getElementById('updateNoticeDetail');
+      const link = document.getElementById('updateNoticeLink');
+      const label = update.name || update.tag;
+      const current = update.current || data.version || '';
+      if (detail) {
+        detail.textContent = current
+          ? (label + ' · you have ' + current)
+          : label;
+      }
+      if (link && update.html_url) link.href = update.html_url;
+      el.dataset.tag = update.tag;
+      el.classList.remove('is-hidden');
+    }
+
     function updateServerChip(data) {
       latestState = data;
       applyAppearance(data);
+      paintUpdateNotice(data);
       syncModelSelector(data);
       const network = data.network || {};
       const usingRemote = chatSelectionIsRemote();
@@ -5619,6 +5709,28 @@
 
     // Fresh visit always opens a blank chat; history stays in the sidebar.
     startDraft();
+
+    document.getElementById('updateNoticeDismiss')?.addEventListener('click', async () => {
+      const el = document.getElementById('updateNotice');
+      const tag = el?.dataset.tag || latestState?.update?.tag || '';
+      if (!tag) {
+        el?.classList.add('is-hidden');
+        return;
+      }
+      el?.classList.add('is-hidden');
+      try {
+        const response = await fetch('/api/update/dismiss', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tag }),
+        });
+        if (response.ok) {
+          updateServerChip(await response.json());
+        }
+      } catch (_) {
+        // stay dismissed locally until the next successful poll
+      }
+    });
 
     pollState();
     setInterval(pollState, 2000);

@@ -25,6 +25,7 @@ use crate::{
     },
     share_proxy::ShareProxyManager,
     system::{Machine, ProcessMonitor, ProcessUsage, copy_to_clipboard, executable_exists},
+    update::{UpdateCache, UpdateNotice},
 };
 
 /// Id used for the primary (first) managed llama-server slot.
@@ -656,6 +657,8 @@ pub struct App {
     next_server_seq: u64,
     /// Public TLS proxy in front of loopback llama when Share is on.
     share_proxy: ShareProxyManager,
+    /// Cached GitHub Releases probe for the in-app update notice.
+    update_cache: UpdateCache,
 }
 
 impl App {
@@ -721,6 +724,7 @@ impl App {
             active_server_id: PRIMARY_SERVER_ID.into(),
             next_server_seq: 1,
             share_proxy: ShareProxyManager::default(),
+            update_cache: UpdateCache::default(),
         };
         app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
@@ -2487,6 +2491,38 @@ impl App {
             self.persist_config();
             self.push_log("ui appearance reset to defaults".into());
         }
+    }
+
+    pub fn app_version(&self) -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    /// Newer GitHub release, if any — respects a dismissed tag in config.
+    pub fn update_notice(&self) -> Option<UpdateNotice> {
+        let notice = self.update_cache.peek()?;
+        let dismissed = self.config.ui.dismissed_release.trim();
+        if !dismissed.is_empty() && dismissed == notice.tag {
+            return None;
+        }
+        Some(notice)
+    }
+
+    pub fn dismiss_update(&mut self, tag: &str) -> Result<(), String> {
+        let tag = tag.trim();
+        if tag.is_empty() {
+            return Err("release tag required".into());
+        }
+        if self.config.ui.dismissed_release == tag {
+            return Ok(());
+        }
+        self.config.ui.dismissed_release = tag.to_string();
+        self.persist_config();
+        self.push_log(format!("update notice dismissed ({tag})"));
+        Ok(())
+    }
+
+    pub fn update_cache(&self) -> &UpdateCache {
+        &self.update_cache
     }
 
     /// Persist config without replacing the current status line (used after library edits).

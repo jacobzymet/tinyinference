@@ -12,4 +12,5 @@ pub mod share_proxy;
 pub mod skills;
 pub mod system;
 pub mod tls;
+pub mod update;
 pub mod web;

@@ -1411,6 +1411,47 @@
       background: color-mix(in oklch, var(--color-accent) 16%, var(--color-paper));
       color: var(--color-ink);
     }
+    .update-notice {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.65rem 1rem;
+      margin: 0 0 var(--space-sm);
+      padding: 0.7rem 0.9rem;
+      border-radius: var(--radius-panel);
+      border: 1px solid color-mix(in oklch, var(--color-rule) 85%, var(--color-ink));
+      background: color-mix(in oklch, var(--color-paper-2) 88%, var(--color-paper));
+      animation: update-notice-in 0.35s var(--ease-out);
+    }
+    .update-notice-copy {
+      display: grid;
+      gap: 0.15rem;
+      min-width: 0;
+    }
+    .update-notice-copy strong {
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--color-ink);
+    }
+    .update-notice-copy span {
+      font-size: var(--text-xs);
+      color: var(--color-muted);
+      line-height: 1.4;
+    }
+    .update-notice-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+    }
+    @keyframes update-notice-in {
+      from { opacity: 0; transform: translateY(-0.35rem); }
+      to { opacity: 1; transform: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .update-notice { animation: none; }
+    }
     .download-banner {
       border: 1px solid color-mix(in oklch, var(--color-accent) 40%, var(--color-rule));
       background: color-mix(in oklch, var(--color-accent) 10%, var(--color-paper-2));
@@ -1537,13 +1578,13 @@
         <li><button type="button" data-stage="stats" role="tab" aria-selected="false">Stats</button></li>
       </ul>
       <div class="rail-foot">
-        <a class="mode-link" href="/">Chat <span class="mode-link-arrow" aria-hidden="true">→</span></a>
         <div class="segmented" id="themeToggle" role="tablist" aria-label="Theme">
           <button type="button" data-theme-choice="dark" class="is-active" role="tab" aria-selected="true">Dark</button>
           <button type="button" data-theme-choice="light" role="tab" aria-selected="false">Light</button>
           <button type="button" data-theme-choice="system" role="tab" aria-selected="false">System</button>
         </div>
         <button type="button" class="btn btn-cmdk" id="btnCmdk" aria-haspopup="dialog">⌘K</button>
+        <a class="mode-link" href="/">Chat <span class="mode-link-arrow" aria-hidden="true">→</span></a>
       </div>
     </aside>
 
@@ -1567,6 +1608,16 @@
       </header>
 
       <div class="workspace">
+    <div id="updateNotice" class="update-notice is-hidden" role="status" aria-live="polite">
+      <div class="update-notice-copy">
+        <strong>Update available</strong>
+        <span id="updateNoticeDetail">A newer release is ready.</span>
+      </div>
+      <div class="update-notice-actions">
+        <a class="btn btn-primary" id="updateNoticeLink" href="https://github.com/jacobzymet/tinyinference/releases" target="_blank" rel="noopener noreferrer">View release</a>
+        <button type="button" class="btn btn-ghost" id="updateNoticeDismiss">Later</button>
+      </div>
+    </div>
     <section id="dashboard" class="stage-panel reveal" data-stage-panel>
       <div class="stack">
         <div class="instrument">
@@ -3227,9 +3278,34 @@
       return true;
     }
 
+    function paintUpdateNotice(next) {
+      const el = document.getElementById('updateNotice');
+      if (!el) return;
+      const update = next?.update;
+      if (!update || !update.tag) {
+        el.classList.add('is-hidden');
+        return;
+      }
+      const detail = document.getElementById('updateNoticeDetail');
+      const link = document.getElementById('updateNoticeLink');
+      const label = update.name || update.tag;
+      const current = update.current || next.version || '';
+      if (detail) {
+        detail.textContent = current
+          ? (label + ' is out · you’re on ' + current)
+          : (label + ' is out');
+      }
+      if (link && update.html_url) {
+        link.href = update.html_url;
+      }
+      el.dataset.tag = update.tag;
+      el.classList.remove('is-hidden');
+    }
+
     function applyState(next) {
       state = next;
       applyAppearance(next);
+      paintUpdateNotice(next);
       const badge = document.getElementById('statusBadge');
       const badgeLabel = document.getElementById('statusBadgeLabel');
       badge.className = statusClass(next.status);
@@ -5085,6 +5161,24 @@
           throw error;
         }
       }, net.remote_name);
+    });
+
+    document.getElementById('updateNoticeDismiss')?.addEventListener('click', async () => {
+      const el = document.getElementById('updateNotice');
+      const tag = el?.dataset.tag || state?.update?.tag || '';
+      if (!tag) {
+        el?.classList.add('is-hidden');
+        return;
+      }
+      el?.classList.add('is-hidden');
+      try {
+        applyState(await api('/api/update/dismiss', {
+          method: 'POST',
+          body: JSON.stringify({ tag }),
+        }));
+      } catch (_) {
+        // stay dismissed locally until the next successful poll
+      }
     });
 
     document.querySelectorAll('.reveal').forEach((el) => el.classList.add('is-in'));
