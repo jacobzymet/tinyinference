@@ -1002,7 +1002,6 @@
       font-size: var(--text-sm);
       line-height: 1.55;
       color: var(--color-muted);
-      white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
     /* Fixed-height ticker: new tokens push older text up through the window. */
@@ -1011,6 +1010,7 @@
       margin-top: 0;
       overflow-x: hidden;
       overflow-y: auto;
+      white-space: pre-wrap;
       color: color-mix(in oklch, var(--color-ink-2) 82%, var(--color-muted));
       mask-image: linear-gradient(to bottom, transparent 0%, black 22%, black 100%);
       -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 22%, black 100%);
@@ -1024,6 +1024,12 @@
       scrollbar-width: thin;
       scrollbar-color: color-mix(in oklch, var(--color-muted) 40%, transparent) transparent;
     }
+    .think-body > :first-child { margin-top: 0; }
+    .think-body > :last-child { margin-bottom: 0; }
+    .think-body p { margin: 0 0 0.45rem; }
+    .think-body ul, .think-body ol { margin: 0 0 0.45rem 1.1rem; padding: 0; }
+    .think-body li { margin-bottom: 0.1rem; }
+    .think-body .md-code-block { margin: 0 0 0.55rem; }
     @keyframes think-pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.45; }
@@ -3462,22 +3468,25 @@
     function renderThinkBlock(content, { open, streaming }) {
       const mode = settings.thinking;
       if (mode === 'hidden') return '';
-      // Live turn: fixed-height window under the Thinking pill; text scrolls through it.
-      if (streaming && open && mode !== 'visible') {
+      const live = streaming && open;
+      // Live ticker stays plain text — incomplete markdown flickers, and HTML
+      // rebuilds every token starve the thinking orb. Finished blocks use markdown.
+      if (live && mode !== 'visible') {
         return (
           '<div class="think-live" aria-label="Thinking progress">' +
             '<div class="think-stream">' + escapeHtml(content) + '</div>' +
           '</div>'
         );
       }
-      const detailsOpen = mode === 'visible' || (mode === 'collapsed' && streaming && open);
-      const summary = streaming && open
+      const detailsOpen = mode === 'visible' || (mode === 'collapsed' && live);
+      const summary = live
         ? '<span class="thinking-label">Thinking</span>'
         : 'Thought process';
-      const bodyClass = streaming && open ? 'think-stream' : 'think-body';
-      const body = '<div class="' + bodyClass + '">' + escapeHtml(content.trim()) + '</div>';
+      const body = live
+        ? '<div class="think-stream">' + escapeHtml(content) + '</div>'
+        : '<div class="think-body">' + renderMarkdown(content.trim()) + '</div>';
       return (
-        '<details class="think-block' + (streaming && open ? ' is-streaming' : '') + '"' +
+        '<details class="think-block' + (live ? ' is-streaming' : '') + '"' +
         (detailsOpen ? ' open' : '') + '>' +
         '<summary>' + summary + '</summary>' +
         body +
@@ -4913,6 +4922,8 @@
         const liveThink = streaming && thinkingOpen && paintLiveThinkOnly(answerEl, cleaned);
         if (!liveThink) {
           answerEl.innerHTML = renderAssistantHtml(cleaned, { streaming });
+          // Closed think blocks are complete — highlight even while the answer still streams.
+          answerEl.querySelectorAll('.think-body').forEach((el) => enhanceCodeBlocks(el));
           if (!streaming) enhanceCodeBlocks(answerEl);
           scrollThinkStreams(answerEl);
         }
