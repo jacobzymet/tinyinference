@@ -334,10 +334,6 @@ impl RuntimePreset {
         }
     }
 
-    pub fn blocked_on_unified_memory(self) -> bool {
-        matches!(self, Self::GpuFit)
-    }
-
     pub fn runtime(self) -> RuntimeConfig {
         match self {
             Self::LowRam => RuntimeConfig::default(),

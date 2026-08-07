@@ -1479,7 +1479,6 @@ impl AppState {
             .iter()
             .map(|(value, description)| ChoiceHelp { value, description })
             .collect();
-        let unified_memory = crate::system::likely_unified_memory();
         let presets = RuntimePreset::ALL
             .iter()
             .copied()
@@ -1488,7 +1487,7 @@ impl AppState {
                 label: preset.label(),
                 description: preset.description(),
                 warning: preset.warning(),
-                available: !(unified_memory && preset.blocked_on_unified_memory()),
+                available: true,
             })
             .collect();
         let active_preset = app.active_runtime_preset().map(RuntimePreset::id);

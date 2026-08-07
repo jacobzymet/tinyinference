@@ -726,7 +726,6 @@ impl App {
             share_proxy: ShareProxyManager::default(),
             update_cache: UpdateCache::default(),
         };
-        app.sanitize_unified_memory_presets();
         app.sync_remote_model_size();
         let _ = app.sync_share_tls();
         app
@@ -2553,20 +2552,6 @@ impl App {
     }
 
     pub fn apply_runtime_preset(&mut self, preset: RuntimePreset) -> Result<(), String> {
-        self.apply_runtime_preset_with(preset, crate::system::likely_unified_memory())
-    }
-
-    fn apply_runtime_preset_with(
-        &mut self,
-        preset: RuntimePreset,
-        unified_memory: bool,
-    ) -> Result<(), String> {
-        if unified_memory && preset.blocked_on_unified_memory() {
-            return Err(
-                "GPU + CPU spill is for discrete GPUs only. On unified memory it can exhaust the shared RAM pool and crash the system. Use Max RAM efficiency instead."
-                    .into(),
-            );
-        }
         self.config.runtime = preset.runtime();
         self.persist_config();
         self.status_detail = if self.process.is_some() {
@@ -2576,21 +2561,6 @@ impl App {
         };
         self.push_log(format!("applied runtime preset {}", preset.id()));
         Ok(())
-    }
-
-    /// Drop a saved GPU-spill profile on unified memory before it can be launched again.
-    fn sanitize_unified_memory_presets(&mut self) {
-        if !crate::system::likely_unified_memory() {
-            return;
-        }
-        if RuntimePreset::matching(&self.config.runtime) != Some(RuntimePreset::GpuFit) {
-            return;
-        }
-        self.config.runtime = RuntimePreset::LowRam.runtime();
-        self.status_detail =
-            "GPU + CPU spill was reset to Max RAM efficiency on unified memory (shared RAM can be exhausted)."
-                .into();
-        self.push_log("reset gpu_fit preset to max RAM efficiency on unified memory".into());
     }
 
     pub fn active_runtime_preset(&self) -> Option<RuntimePreset> {
@@ -3517,8 +3487,7 @@ mod tests {
         let mut app = App::new(Config::default(), "test.toml".into());
         app.set_field(SettingField::Port, "4242").unwrap();
         assert_eq!(app.active_runtime_preset(), Some(RuntimePreset::LowRam));
-        app.apply_runtime_preset_with(RuntimePreset::GpuFit, false)
-            .unwrap();
+        app.apply_runtime_preset(RuntimePreset::GpuFit).unwrap();
         assert_eq!(app.active_runtime_preset(), Some(RuntimePreset::GpuFit));
         assert!(!app.config.runtime.cpu_only);
         assert!(app.config.runtime.fit);
@@ -3528,13 +3497,11 @@ mod tests {
     }
 
     #[test]
-    fn gpu_fit_preset_blocked_on_unified_memory() {
+    fn gpu_fit_preset_keeps_unified_memory_warning() {
+        assert!(RuntimePreset::GpuFit.warning().unwrap().contains("unified memory"));
         let mut app = App::new(Config::default(), "test.toml".into());
-        let error = app
-            .apply_runtime_preset_with(RuntimePreset::GpuFit, true)
-            .unwrap_err();
-        assert!(error.contains("unified memory"));
-        assert_eq!(app.active_runtime_preset(), Some(RuntimePreset::LowRam));
+        app.apply_runtime_preset(RuntimePreset::GpuFit).unwrap();
+        assert_eq!(app.active_runtime_preset(), Some(RuntimePreset::GpuFit));
     }
 
     #[test]
