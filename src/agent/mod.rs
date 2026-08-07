@@ -163,8 +163,9 @@ fn run_agent_loop(
 
         // Stream tokens live from llama-server. Tool-call rounds suppress the
         // XML once detected; final answers appear token-by-token in the UI.
-        let reply = stream_once(api_base, api_key, request, tx)?;
+        let reply = stream_once(api_base, api_key, request, user_skills, tx)?;
         let visible = strip_think_blocks(&reply);
+        let visible_trim = visible.trim();
 
         if let Some(call) = extract_tool_call(&visible) {
             if !capability_allowed(&call.name, &request.skills, user_skills) {
@@ -204,6 +205,25 @@ fn run_agent_loop(
                     "<tool_result name=\"{}\">\n{}\n</tool_result>\n\n{follow_up}",
                     call.name, result
                 ),
+            }));
+            continue;
+        }
+
+        // Reasoning-only / empty visible replies used to end the turn blank in the UI.
+        // Nudge the model to either call a tool or answer plainly.
+        if visible_trim.is_empty() {
+            let _ = tx.blocking_send(Ok(sse_agent(json!({ "phase": "content_clear" }))));
+            let _ = tx.blocking_send(Ok(sse_agent(json!({
+                "phase": "status",
+                "message": "Retrying…"
+            }))));
+            request.messages.push(json!({
+                "role": "assistant",
+                "content": reply,
+            }));
+            request.messages.push(json!({
+                "role": "user",
+                "content": "You did not produce a user-visible answer or a tool call. Emit a tool_call if you need a capability, or answer the user directly with no tool_call.",
             }));
             continue;
         }
@@ -316,24 +336,44 @@ pub fn inject_skill_catalog_into_messages(messages: &mut Vec<Value>, user_skills
     messages.insert(0, json!({ "role": "system", "content": note }));
 }
 
-/// Stream one chat completion from llama-server, forwarding content deltas to
-/// the client as they arrive. Returns the full assistant text.
+#[derive(Debug, Default, Clone)]
+struct AccumToolCall {
+    name: String,
+    /// JSON object text accumulated across OpenAI-style argument deltas.
+    arguments: String,
+}
+
+/// Stream one chat completion from llama-server, forwarding content/reasoning
+/// deltas to the client as they arrive. Returns the full assistant text.
 ///
-/// Once a `<tool_call>` marker appears, further deltas are withheld and a
-/// `content_clear` agent event is sent so the UI does not keep tool XML.
+/// With `--jinja`, llama-server often lifts our Hermes-style `<tool_call>` XML
+/// into native `delta.tool_calls` and leaves `content` empty. We re-synthesize
+/// XML so the rest of the agent loop can keep using `extract_tool_call`.
+///
+/// Once a tool call is detected (XML or native), further answer deltas are
+/// withheld and a `content_clear` agent event is sent so the UI does not keep
+/// tool XML.
 fn stream_once(
     api_base: &str,
     api_key: Option<&str>,
     request: &AgentRequest,
+    user_skills: &[UserSkill],
     tx: &mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
 ) -> Result<String, String> {
     let url = format!("{api_base}/chat/completions");
+    let tools = openai_tools_payload(&request.skills, user_skills);
     let mut payload = json!({
         "model": "local",
         "stream": true,
         "messages": request.messages,
     });
     if let Some(object) = payload.as_object_mut() {
+        if !tools.is_empty() {
+            // Required for jinja/harmony models (e.g. gpt-oss) to emit native tool_calls
+            // instead of stopping after analysis-only reasoning.
+            object.insert("tools".into(), Value::Array(tools));
+            object.insert("tool_choice".into(), json!("auto"));
+        }
         if let Some(kwargs) = &request.chat_template_kwargs {
             object.insert("chat_template_kwargs".into(), kwargs.clone());
         }
@@ -364,6 +404,8 @@ fn stream_once(
     let reader = response.body_mut().as_reader();
     let mut lines = BufReader::new(reader);
     let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut native_tools: Vec<Option<AccumToolCall>> = Vec::new();
     let mut forwarding = true;
     let mut line = String::new();
 
@@ -386,17 +428,47 @@ fn stream_once(
         let Ok(value) = serde_json::from_str::<Value>(data) else {
             continue;
         };
-        let Some(delta) = value
-            .pointer("/choices/0/delta/content")
-            .and_then(|v| v.as_str())
-        else {
+        let Some(delta) = value.pointer("/choices/0/delta") else {
             continue;
         };
-        if delta.is_empty() {
+
+        if let Some(chunk) = delta_string(delta, "reasoning_content")
+            .or_else(|| delta_string(delta, "reasoning"))
+        {
+            reasoning.push_str(chunk);
+            if forwarding {
+                let frame = json!({
+                    "choices": [{ "delta": { "reasoning_content": chunk }, "index": 0 }]
+                });
+                if tx
+                    .blocking_send(Ok(format!("data: {frame}\n\n").into_bytes()))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }
+
+        if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+            for tc in tool_calls {
+                merge_tool_call_delta(&mut native_tools, tc);
+            }
+            // Wait until a function name arrives so empty placeholder tool_calls
+            // arrays do not wipe a partial answer.
+            if forwarding && native_tools.iter().flatten().any(|c| !c.name.is_empty()) {
+                forwarding = false;
+                let _ = tx.blocking_send(Ok(sse_agent(json!({ "phase": "content_clear" }))));
+            }
+        }
+
+        let Some(chunk) = delta_string(delta, "content") else {
+            continue;
+        };
+        if chunk.is_empty() {
             continue;
         }
 
-        content.push_str(delta);
+        content.push_str(chunk);
 
         if forwarding && content.contains("<tool_call>") {
             forwarding = false;
@@ -408,22 +480,178 @@ fn stream_once(
         }
 
         let frame = json!({
-            "choices": [{ "delta": { "content": delta }, "index": 0 }]
+            "choices": [{ "delta": { "content": chunk }, "index": 0 }]
         });
         if tx
             .blocking_send(Ok(format!("data: {frame}\n\n").into_bytes()))
             .is_err()
         {
-            // Client disconnected; still drain? Stop early — llama will cancel
-            // when we drop the reader.
+            // Client disconnected; stop early — llama will cancel when we drop the reader.
             break;
         }
     }
 
-    if content.is_empty() {
+    let reply = finalize_streamed_reply(&reasoning, &content, &native_tools);
+    if reply.trim().is_empty() {
         return Err("Model returned no message content.".into());
     }
-    Ok(content)
+    Ok(reply)
+}
+
+fn delta_string<'a>(delta: &'a Value, key: &str) -> Option<&'a str> {
+    delta.get(key).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+}
+
+fn append_tool_arguments(slot: &mut AccumToolCall, args: &Value) {
+    match args {
+        Value::String(text) => slot.arguments.push_str(text),
+        other => {
+            // Non-streaming / odd servers may send a full object once.
+            slot.arguments = other.to_string();
+        }
+    }
+}
+
+fn merge_tool_call_delta(slots: &mut Vec<Option<AccumToolCall>>, delta: &Value) {
+    let index = delta.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    while slots.len() <= index {
+        slots.push(None);
+    }
+    let slot = slots[index].get_or_insert_with(AccumToolCall::default);
+
+    // OpenAI-style: {"function":{"name":"...","arguments":"..."}}
+    if let Some(func) = delta.get("function") {
+        if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+            let name = name.trim();
+            if !name.is_empty() {
+                slot.name = name.to_string();
+            }
+        }
+        if let Some(args) = func.get("arguments") {
+            append_tool_arguments(slot, args);
+        }
+    }
+
+    // llama.cpp docs / some non-stream payloads flatten name + arguments.
+    if let Some(name) = delta.get("name").and_then(|v| v.as_str()) {
+        let name = name.trim();
+        if !name.is_empty() {
+            slot.name = name.to_string();
+        }
+    }
+    if let Some(args) = delta.get("arguments") {
+        append_tool_arguments(slot, args);
+    }
+}
+
+fn openai_tools_payload(skills: &AgentSkills, user_skills: &[UserSkill]) -> Vec<Value> {
+    let mut tools = Vec::new();
+    if skills.web_search {
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": "Search the public web via DuckDuckGo and read result pages. Use when the user wants you to look something up and has not given a specific URL.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search terms"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            }
+        }));
+    }
+    if skills.fetch_url {
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": "fetch_url",
+                "description": "Open one specific http(s) URL and extract readable page text. Prefer when the user already gave a concrete URL.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "Absolute http(s) URL to fetch"
+                        }
+                    },
+                    "required": ["url"]
+                }
+            }
+        }));
+    }
+    if !user_skills.is_empty() {
+        let names: Vec<String> = user_skills
+            .iter()
+            .map(|skill| skill.name.clone())
+            .collect();
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": "activate_skill",
+                "description": "Load a skill's full SKILL.md instructions into context. Only activate skills that match the user's request.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": format!(
+                                "Skill name or id. Available: {}",
+                                names.join(", ")
+                            )
+                        }
+                    },
+                    "required": ["name"]
+                }
+            }
+        }));
+    }
+    tools
+}
+
+fn synthesize_native_tool_xml(slots: &[Option<AccumToolCall>]) -> Option<String> {
+    let call = slots.iter().flatten().find(|c| !c.name.is_empty())?;
+    let arguments = if call.arguments.trim().is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str::<Value>(&call.arguments).unwrap_or_else(|_| {
+            // Model sometimes emits a bare query string; keep it inspectable.
+            json!({ "raw": call.arguments })
+        })
+    };
+    let payload = json!({
+        "name": call.name,
+        "arguments": arguments,
+    });
+    Some(format!("<tool_call>\n{payload}\n</tool_call>"))
+}
+
+fn finalize_streamed_reply(
+    reasoning: &str,
+    content: &str,
+    native_tools: &[Option<AccumToolCall>],
+) -> String {
+    let mut body = content.to_string();
+    if !body.contains("<tool_call>")
+        && let Some(xml) = synthesize_native_tool_xml(native_tools)
+    {
+        if !body.is_empty() && !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body.push_str(&xml);
+    }
+    if reasoning.is_empty() {
+        return body;
+    }
+    if body.is_empty() {
+        format!("<think>{reasoning}</think>")
+    } else {
+        format!("<think>{reasoning}</think>\n{body}")
+    }
 }
 
 fn sse_agent(payload: Value) -> Vec<u8> {
@@ -438,7 +666,9 @@ fn strip_think_blocks(text: &str) -> String {
                 let end = start + open.len() + rel + close.len();
                 out.replace_range(start..end, "");
             } else {
-                out.replace_range(start.., "");
+                // Unclosed think: drop the opener only. Wiping the rest used to
+                // delete a trailing <tool_call> synthesized after partial thoughts.
+                out.replace_range(start..start + open.len(), "");
                 break;
             }
         }
@@ -1046,6 +1276,98 @@ mod tests {
         let call = extract_tool_call(text).unwrap();
         assert_eq!(call.name, "web_search");
         assert_eq!(call.arguments["query"], "rust async");
+    }
+
+    #[test]
+    fn synthesizes_native_openai_tool_calls() {
+        let mut slots = Vec::new();
+        merge_tool_call_delta(
+            &mut slots,
+            &json!({
+                "index": 0,
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "web_search", "arguments": "" }
+            }),
+        );
+        merge_tool_call_delta(
+            &mut slots,
+            &json!({
+                "index": 0,
+                "function": { "arguments": "{\"query\":\"latest news on grok\"}" }
+            }),
+        );
+        let reply = finalize_streamed_reply("", "", &slots);
+        let visible = strip_think_blocks(&reply);
+        let call = extract_tool_call(&visible).unwrap();
+        assert_eq!(call.name, "web_search");
+        assert_eq!(call.arguments["query"], "latest news on grok");
+    }
+
+    #[test]
+    fn synthesizes_flattened_tool_call_deltas() {
+        let mut slots = Vec::new();
+        merge_tool_call_delta(
+            &mut slots,
+            &json!({
+                "index": 0,
+                "name": "web_search",
+                "arguments": "{\"query\":\"elon musk\"}"
+            }),
+        );
+        let reply = finalize_streamed_reply("", "", &slots);
+        let call = extract_tool_call(&reply).unwrap();
+        assert_eq!(call.name, "web_search");
+        assert_eq!(call.arguments["query"], "elon musk");
+    }
+
+    #[test]
+    fn unclosed_think_does_not_swallow_tool_call() {
+        let text = "<think>planning\n<tool_call>\n{\"name\":\"web_search\",\"arguments\":{\"query\":\"x\"}}\n</tool_call>";
+        let visible = strip_think_blocks(text);
+        let call = extract_tool_call(&visible).unwrap();
+        assert_eq!(call.arguments["query"], "x");
+    }
+
+    #[test]
+    fn openai_tools_include_enabled_skills() {
+        let skills = AgentSkills {
+            web_search: true,
+            fetch_url: true,
+            ..AgentSkills::default()
+        };
+        let tools = openai_tools_payload(&skills, &[]);
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t.pointer("/function/name").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(names, ["web_search", "fetch_url"]);
+    }
+
+    #[test]
+    fn finalize_keeps_reasoning_when_content_empty() {
+        let reply = finalize_streamed_reply("planning a search", "", &[]);
+        assert!(reply.contains("<think>planning a search</think>"));
+        assert!(extract_tool_call(&strip_think_blocks(&reply)).is_none());
+    }
+
+    #[test]
+    fn finalize_prefers_inline_xml_over_native() {
+        let mut slots = Vec::new();
+        merge_tool_call_delta(
+            &mut slots,
+            &json!({
+                "index": 0,
+                "function": {
+                    "name": "web_search",
+                    "arguments": "{\"query\":\"from-native\"}"
+                }
+            }),
+        );
+        let inline = "<tool_call>\n{\"name\":\"web_search\",\"arguments\":{\"query\":\"from-xml\"}}\n</tool_call>";
+        let reply = finalize_streamed_reply("", inline, &slots);
+        let call = extract_tool_call(&reply).unwrap();
+        assert_eq!(call.arguments["query"], "from-xml");
     }
 
     #[test]
