@@ -1076,8 +1076,7 @@ impl App {
         token: &str,
         catalog: Vec<network::RemoteModelOption>,
     ) {
-        self.remote_catalog
-            .put(base.trim(), token.trim(), catalog);
+        self.remote_catalog.put(base.trim(), token.trim(), catalog);
     }
 
     /// True when Devices / Dash should schedule a background warm of remote caches.
@@ -1087,15 +1086,12 @@ impl App {
             if base.is_empty() {
                 continue;
             }
-            if self
-                .remote_health
-                .peek(base, remote.token.trim())
-                .is_none()
-            {
+            if self.remote_health.peek(base, remote.token.trim()).is_none() {
                 return true;
             }
         }
-        if self.config.network.active_remote().is_some() && self.remote_model_catalog_peek().is_none()
+        if self.config.network.active_remote().is_some()
+            && self.remote_model_catalog_peek().is_none()
         {
             return true;
         }
